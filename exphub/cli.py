@@ -17,6 +17,12 @@ from .meta import sanitize_token, write_exp_meta
 from .runner import RunnerConfig, StepRunner, conda_exec, detect_conda_base, RunError
 
 
+_ANSI_RESET = "\033[0m"
+_ANSI_BOLD = "\033[1m"
+_ANSI_STEP = "\033[1;36m"
+_STEP_SEPARATOR = "=" * 70
+
+
 def _info(msg: str) -> None:
     print(f"[INFO] {msg}")
 
@@ -26,7 +32,22 @@ def _run(msg: str) -> None:
 
 
 def _step(msg: str) -> None:
-    print(f"[STEP] {msg}")
+    line = "{}[STEP] {}{}".format(_ANSI_STEP, msg, _ANSI_RESET)
+    sep = "{}{}{}".format(_ANSI_BOLD, _STEP_SEPARATOR, _ANSI_RESET)
+    lower_msg = msg.strip().lower()
+    is_start = (" start " in lower_msg) or lower_msg.endswith(" start")
+    is_done = (" done " in lower_msg) or lower_msg.endswith(" done")
+    is_fail = (" fail " in lower_msg) or lower_msg.endswith(" fail")
+
+    if is_start:
+        print(sep)
+        print(line)
+        print(sep)
+        return
+
+    print(line)
+    if is_done or is_fail:
+        print(sep)
 
 
 def _warn(msg: str) -> None:
@@ -174,7 +195,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--keyframes_mode", default="symlink", choices=["symlink", "hardlink", "copy"], help="how to materialize segment/keyframes")
     ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
-    ap.add_argument("--gpus", type=int, default=1)
+    ap.add_argument("--gpus", type=int, default=2)
 
     ap.add_argument("--infer_extra", default="", help="extra args passed to infer_i2v.py (quoted string)")
 
@@ -189,7 +210,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     ap.add_argument("--log_level", default="info", choices=["info", "debug", "quiet"], help="child process terminal verbosity")
 
-    ap.add_argument("--auto_conda", action="store_true")
+    ap.add_argument(
+        "--no_auto_conda",
+        action="store_false",
+        dest="auto_conda",
+        default=True,
+        help="disable automatic conda activation and use current shell env for child commands",
+    )
     ap.add_argument("--conda_env_vlm", default=os.environ.get("CONDA_ENV_VLM", "vlm_prompt"))
     ap.add_argument("--conda_env_videox", default=os.environ.get("CONDA_ENV_VIDEOX", "videox"))
     ap.add_argument("--conda_env_droid", default=os.environ.get("CONDA_ENV_DROID", "droid"))
@@ -440,7 +467,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                             has_optional_missing = True
                             _warn(f"DOCTOR env/tool check exception: env={env_name} tool={tool_name} ({e})")
         else:
-            _info("STEP doctor: skip conda checks (--auto_conda=0)")
+            _info("STEP doctor: skip conda checks (--no_auto_conda)")
 
         if has_critical_missing:
             _warn("DOCTOR result=FAIL (critical missing)")
@@ -807,9 +834,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             out_txt = ctx.eval_artifact_path("evo_traj_" + name + ".txt")
             if viz_enable:
                 out_png = ctx.eval_artifact_path("traj_" + name + ".png")
-                cmd = f"MPLBACKEND=Agg evo_traj tum {tum} -p --save_plot {out_png} > {out_txt} 2>&1"
+                cmd = f"MPLBACKEND=Agg evo_traj tum {tum} -p --save_plot {out_png} 2>&1 | tee {out_txt}"
             else:
-                cmd = f"evo_traj tum {tum} > {out_txt} 2>&1"
+                cmd = f"evo_traj tum {tum} 2>&1 | tee {out_txt}"
 
             step_runner.run_conda(
                 ["bash", "-lc", cmd],
@@ -834,9 +861,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             out_txt = ctx.eval_artifact_path("evo_ape_gen_vs_ori.txt")
             if viz_enable:
                 out_png = ctx.eval_artifact_path("ape_gen_vs_ori.png")
-                cmd = f"MPLBACKEND=Agg evo_ape tum {tum_ori} {tum_gen} -a -p --save_plot {out_png} > {out_txt} 2>&1"
+                cmd = f"MPLBACKEND=Agg evo_ape tum {tum_ori} {tum_gen} -a -p --save_plot {out_png} 2>&1 | tee {out_txt}"
             else:
-                cmd = f"evo_ape tum {tum_ori} {tum_gen} -a > {out_txt} 2>&1"
+                cmd = f"evo_ape tum {tum_ori} {tum_gen} -a 2>&1 | tee {out_txt}"
 
             step_runner.run_conda(
                 ["bash", "-lc", cmd],

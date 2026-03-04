@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 
+_ANSI_RESET = "\033[0m"
+_ANSI_STEP = "\033[1;36m"
+_ANSI_ERR = "\033[31m"
+_ANSI_WARN = "\033[33m"
+
+
 class RunError(RuntimeError):
     def __init__(
         self,
@@ -65,6 +71,7 @@ class StepRunner:
             "pass_prefixes": self.pass_prefixes,
             "fail_tail_lines": self.fail_tail_lines,
             "log_append": append,
+            "stderr": subprocess.STDOUT,
         }
 
     def run_conda(
@@ -129,6 +136,7 @@ def run_cmd(
     pass_prefixes: Optional[Sequence[str]] = None,
     fail_tail_lines: int = 30,
     log_append: bool = False,
+    stderr: Optional[int] = None,
 ) -> int:
     lvl = (log_level or "debug").strip().lower()
     if lvl not in ("debug", "info", "quiet"):
@@ -138,6 +146,17 @@ def run_cmd(
     tail_cap = int(fail_tail_lines) if fail_tail_lines and int(fail_tail_lines) > 0 else 30
     tail = deque(maxlen=tail_cap)
     rc = -1
+    bar_line_active = False
+
+    def _colorize_terminal_line(line: str) -> str:
+        stripped = line.lstrip()
+        if stripped.startswith("[STEP]"):
+            return "{}{}{}".format(_ANSI_STEP, line, _ANSI_RESET)
+        if stripped.startswith("[ERR]"):
+            return "{}{}{}".format(_ANSI_ERR, line, _ANSI_RESET)
+        if stripped.startswith("[WARN]"):
+            return "{}{}{}".format(_ANSI_WARN, line, _ANSI_RESET)
+        return line
 
     lf = None
     try:
@@ -151,7 +170,7 @@ def run_cmd(
             cwd=str(cwd) if cwd else None,
             env=env,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.STDOUT if stderr is None else stderr,
             text=True,
             bufsize=1,
             universal_newlines=True,
@@ -159,24 +178,35 @@ def run_cmd(
         assert proc.stdout is not None
 
         for raw_line in proc.stdout:
-            if lf is not None:
-                lf.write(raw_line)
-            line = raw_line.rstrip("\n")
+            line = raw_line.rstrip("\r\n")
             tail.append(line)
+            stripped = line.lstrip()
+            is_bar = ("[BAR]" in raw_line) or stripped.startswith("[BAR]")
+
+            if lf is not None and not is_bar:
+                lf.write(raw_line)
 
             if lvl == "quiet":
                 continue
+            if is_bar:
+                print("\r{}".format(line), end="", flush=True)
+                bar_line_active = True
+                continue
+            if bar_line_active:
+                print("")
+                bar_line_active = False
             if lvl == "debug":
-                print(line)
+                print(_colorize_terminal_line(line))
                 continue
 
             # info: only pass through key prefixed lines
-            stripped = line.lstrip()
             for p in prefixes:
                 if stripped.startswith(p):
-                    print(line)
+                    print(_colorize_terminal_line(line))
                     break
 
+        if bar_line_active and lvl != "quiet":
+            print("")
         rc = proc.wait()
         if lf is not None:
             lf.flush()
@@ -206,6 +236,7 @@ def run_in_bash_login(
     pass_prefixes: Optional[Sequence[str]] = None,
     fail_tail_lines: int = 30,
     log_append: bool = False,
+    stderr: Optional[int] = None,
 ) -> int:
     """Run a command string in `bash -lc`."""
     argv = ["bash", "-lc", script]
@@ -219,6 +250,7 @@ def run_in_bash_login(
         pass_prefixes=pass_prefixes,
         fail_tail_lines=fail_tail_lines,
         log_append=log_append,
+        stderr=stderr,
     )
 
 
@@ -235,6 +267,7 @@ def conda_exec(
     pass_prefixes: Optional[Sequence[str]] = None,
     fail_tail_lines: int = 30,
     log_append: bool = False,
+    stderr: Optional[int] = None,
 ) -> int:
     """Execute cmd within conda env using bash -lc + conda activate.
 
@@ -253,6 +286,7 @@ def conda_exec(
             pass_prefixes=pass_prefixes,
             fail_tail_lines=fail_tail_lines,
             log_append=log_append,
+            stderr=stderr,
         )
 
     if cfg.conda_base is None:
@@ -277,6 +311,7 @@ def conda_exec(
         pass_prefixes=pass_prefixes,
         fail_tail_lines=fail_tail_lines,
         log_append=log_append,
+        stderr=stderr,
     )
 
 
@@ -292,6 +327,7 @@ def ros_exec(
     pass_prefixes: Optional[Sequence[str]] = None,
     fail_tail_lines: int = 30,
     log_append: bool = False,
+    stderr: Optional[int] = None,
 ) -> int:
     """Execute cmd with ROS setup sourced (bash -lc)."""
 
@@ -313,4 +349,5 @@ def ros_exec(
         pass_prefixes=pass_prefixes,
         fail_tail_lines=fail_tail_lines,
         log_append=log_append,
+        stderr=stderr,
     )
