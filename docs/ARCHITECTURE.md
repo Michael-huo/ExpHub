@@ -57,6 +57,7 @@
 ## 6. 关键行为约束
 - `prompt` 依赖 `segment/frames`，缺失时提前给出清晰错误。
 - `infer` 不会自动生成 prompt，必须已有 `prompt/manifest.json`。
+- `stats` 仅从 `segment/prompt/infer/merge/step_meta.json` 读取统计来源；不再扫描 `frames/*.png` 与 `prompt/manifest.json` 文件大小。
 - `doctor` 只检查不落盘：不会创建 `EXP_DIR` 或任何实验产物。
 - `eval` 在 `droid` conda env 内检测与执行 `evo_traj/evo_ape`；缺失时 `WARN`，不崩溃。
 - 日志收口：子进程完整输出写入 `EXP_DIR/logs/*.log`，终端按 `--log_level` 透传（详见 `docs/LOGGING.md`）。

@@ -130,7 +130,8 @@ python -m exphub --mode stats --dataset scand --sequence A_Jackal_AHG_Library_Th
 - 内容包含 `ori/compressed/ratios` 三段。
 
 ### 常见失败
-- `segment/keyframes` 不存在：先跑 `segment`，并保证 `kf_gap>0`。
+- 缺少 `segment/step_meta.json` 或 `prompt/step_meta.json`：先跑 `segment/prompt`，确认上游 step_meta 落盘成功。
+- 旧版 step_meta 缺少 `bytes_sum`：`stats` 会回退 `null/0` 并给出 `WARN`，建议升级上游脚本后重跑。
 
 ## 8) doctor（只读）
 

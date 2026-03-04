@@ -5,46 +5,40 @@ import argparse
 import datetime
 from pathlib import Path
 
-from _common import log_info, log_warn, write_json_atomic
+from _common import log_info, log_warn, read_step_meta, write_json_atomic
 
 
-def _sum_png_bytes(dir_path):
-    p = Path(dir_path).resolve()
-    if not p.is_dir():
-        return None, None
-    n = 0
-    b = 0
-    for fp in sorted(p.glob("*.png")):
-        if not fp.is_file():
-            continue
-        n += 1
-        try:
-            b += int(fp.stat().st_size)
-        except Exception:
-            pass
-    return int(n), int(b)
-
-
-def _file_size(path):
-    p = Path(path).resolve()
-    if not p.is_file():
-        return None
+def _as_int_or_none(value):
     try:
-        return int(p.stat().st_size)
+        if value is None:
+            return None
+        return int(value)
     except Exception:
         return None
 
 
-def _read_created_at(path):
-    p = Path(path).resolve()
-    if not p.is_file():
-        return None
-    try:
-        import json
-        obj = json.loads(p.read_text(encoding="utf-8"))
-        return obj.get("created_at")
-    except Exception:
-        return None
+def _get_nested(obj, path):
+    cur = obj
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+    return cur
+
+
+def _pick_int(meta, candidate_paths):
+    for path in candidate_paths:
+        raw = _get_nested(meta, path)
+        val = _as_int_or_none(raw)
+        if val is not None:
+            return val
+    return None
+
+
+def _meta_created_at(meta):
+    if isinstance(meta, dict):
+        return meta.get("created_at")
+    return None
 
 
 def main():
@@ -58,25 +52,106 @@ def main():
 
     warnings = []
 
-    segment_frames = exp_dir / "segment" / "frames"
-    keyframes_dir = exp_dir / "segment" / "keyframes"
-    prompt_manifest = exp_dir / "prompt" / "manifest.json"
+    segment_meta_path = exp_dir / "segment" / "step_meta.json"
+    prompt_meta_path = exp_dir / "prompt" / "step_meta.json"
+    infer_meta_path = exp_dir / "infer" / "step_meta.json"
+    merge_meta_path = exp_dir / "merge" / "step_meta.json"
 
-    ori_frames, ori_bytes = _sum_png_bytes(segment_frames)
+    segment_meta = read_step_meta(segment_meta_path)
+    prompt_meta = read_step_meta(prompt_meta_path)
+    infer_meta = read_step_meta(infer_meta_path)
+    merge_meta = read_step_meta(merge_meta_path)
+
+    if not segment_meta_path.is_file():
+        msg = "missing segment/step_meta.json; segment compression fields set to null"
+        warnings.append(msg)
+        log_warn(msg)
+    elif not segment_meta:
+        msg = "invalid or empty segment/step_meta.json; segment compression fields set to null"
+        warnings.append(msg)
+        log_warn(msg)
+
+    if not prompt_meta_path.is_file():
+        msg = "missing prompt/step_meta.json; prompt bytes set to null"
+        warnings.append(msg)
+        log_warn(msg)
+    elif not prompt_meta:
+        msg = "invalid or empty prompt/step_meta.json; prompt bytes set to null"
+        warnings.append(msg)
+        log_warn(msg)
+
+    ori_frames = _pick_int(
+        segment_meta,
+        [
+            ("outputs", "ori", "frame_count"),
+            ("outputs", "frame_count"),
+            ("frame_count",),
+            ("frames_count",),
+        ],
+    )
     if ori_frames is None:
-        msg = "missing segment/frames; ori compression fields set to null"
+        msg = "missing segment frame_count in segment/step_meta.json; ori_frames set to null"
         warnings.append(msg)
         log_warn(msg)
 
-    keyframes_frames, keyframes_bytes = _sum_png_bytes(keyframes_dir)
+    ori_bytes = _pick_int(
+        segment_meta,
+        [
+            ("outputs", "ori", "bytes_sum"),
+            ("outputs", "bytes_sum"),
+            ("outputs", "ori_bytes"),
+            ("bytes_sum",),
+            ("ori_bytes",),
+        ],
+    )
+    if ori_bytes is None:
+        msg = "missing segment bytes_sum in segment/step_meta.json; ori_bytes set to null"
+        warnings.append(msg)
+        log_warn(msg)
+
+    keyframes_frames = _pick_int(
+        segment_meta,
+        [
+            ("outputs", "keyframes", "frame_count"),
+            ("outputs", "keyframes_frames"),
+            ("outputs", "keyframe_count"),
+            ("keyframes_frames",),
+            ("keyframe_count",),
+        ],
+    )
     if keyframes_frames is None:
-        msg = "missing segment/keyframes; keyframes compression fields set to null"
+        msg = "missing keyframes frame_count in segment/step_meta.json; keyframes_frames set to null"
         warnings.append(msg)
         log_warn(msg)
 
-    prompt_bytes = _file_size(prompt_manifest)
+    keyframes_bytes = _pick_int(
+        segment_meta,
+        [
+            ("outputs", "keyframes", "bytes_sum"),
+            ("outputs", "keyframes_bytes"),
+            ("outputs", "keyframe_bytes_sum"),
+            ("keyframes_bytes",),
+            ("keyframe_bytes_sum",),
+        ],
+    )
+    if keyframes_bytes is None:
+        msg = "missing keyframes bytes_sum in segment/step_meta.json; keyframes_bytes set to null"
+        warnings.append(msg)
+        log_warn(msg)
+
+    prompt_bytes = _pick_int(
+        prompt_meta,
+        [
+            ("outputs", "prompt", "bytes_sum"),
+            ("outputs", "prompt_bytes"),
+            ("outputs", "bytes_sum"),
+            ("prompt_bytes",),
+            ("manifest_size",),
+            ("outputs", "manifest_size"),
+        ],
+    )
     if prompt_bytes is None:
-        msg = "missing prompt/manifest.json; prompt bytes set to null"
+        msg = "missing prompt bytes_sum in prompt/step_meta.json; prompt_bytes set to null"
         warnings.append(msg)
         log_warn(msg)
 
@@ -88,18 +163,22 @@ def main():
     if ori_frames is not None and ori_frames > 0 and keyframes_frames is not None:
         ratio_frames = float(keyframes_frames) / float(ori_frames)
 
+    segment_frames = exp_dir / "segment" / "frames"
+    keyframes_dir = exp_dir / "segment" / "keyframes"
+    prompt_manifest = exp_dir / "prompt" / "manifest.json"
+
     inputs = {
-        "segment_step_meta": str((exp_dir / "segment" / "step_meta.json").resolve()) if (exp_dir / "segment" / "step_meta.json").is_file() else None,
-        "prompt_step_meta": str((exp_dir / "prompt" / "step_meta.json").resolve()) if (exp_dir / "prompt" / "step_meta.json").is_file() else None,
-        "infer_step_meta": str((exp_dir / "infer" / "step_meta.json").resolve()) if (exp_dir / "infer" / "step_meta.json").is_file() else None,
-        "merge_step_meta": str((exp_dir / "merge" / "step_meta.json").resolve()) if (exp_dir / "merge" / "step_meta.json").is_file() else None,
+        "segment_step_meta": str(segment_meta_path.resolve()) if segment_meta_path.is_file() else None,
+        "prompt_step_meta": str(prompt_meta_path.resolve()) if prompt_meta_path.is_file() else None,
+        "infer_step_meta": str(infer_meta_path.resolve()) if infer_meta_path.is_file() else None,
+        "merge_step_meta": str(merge_meta_path.resolve()) if merge_meta_path.is_file() else None,
     }
 
     timing = {
-        "segment_created_at": _read_created_at(exp_dir / "segment" / "step_meta.json"),
-        "prompt_created_at": _read_created_at(exp_dir / "prompt" / "step_meta.json"),
-        "infer_created_at": _read_created_at(exp_dir / "infer" / "step_meta.json"),
-        "merge_created_at": _read_created_at(exp_dir / "merge" / "step_meta.json"),
+        "segment_created_at": _meta_created_at(segment_meta),
+        "prompt_created_at": _meta_created_at(prompt_meta),
+        "infer_created_at": _meta_created_at(infer_meta),
+        "merge_created_at": _meta_created_at(merge_meta),
     }
 
     report = {

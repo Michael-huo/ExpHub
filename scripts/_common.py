@@ -81,3 +81,15 @@ def write_json_atomic(path, obj, indent=2):
         json.dump(obj, f, ensure_ascii=False, indent=indent)
     os.replace(str(tmp), str(p))
 
+
+def read_step_meta(meta_path: Path) -> dict:
+    p = Path(meta_path).resolve()
+    if not p.is_file():
+        return {}
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    return {}

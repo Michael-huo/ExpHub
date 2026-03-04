@@ -120,16 +120,16 @@
 ### 2.7 `scripts/stats_collect.py`
 - 职责：收集当前实验可得统计并输出统一 `stats/report.json`，兼容产出 `stats/compression.json`。
 - 关键参数：`--exp_dir`。
-- 输入依赖：`segment/frames`、`segment/keyframes`、`prompt/manifest.json`（均为可选输入，有缺失也能生成部分结果）。
+- 输入依赖：`segment/step_meta.json`、`prompt/step_meta.json`、`infer/step_meta.json`、`merge/step_meta.json`（统计字段严格来自 step metadata，不再扫描 `frames/*.png` 或读取 `manifest.json` 文件大小）。
 - 输出产物：
   - 必需：`stats/report.json`
   - 兼容：`stats/compression.json`
 - 被调用：`--mode stats`。
-- 容错行为：缺少 keyframes 或 manifest 时，字段置 `null` 并输出 `WARN`，不崩溃。
+- 容错行为：缺少/损坏 step_meta 或字段缺失时，相关统计字段置 `null`（部分字段可回退 `0`），并输出 `WARN`，不崩溃。
 - 风险点：
-  - 统计字段依赖上游文件存在性，跨实验可比性需结合 warnings 判断。
+  - 统计字段依赖上游 step metadata 的完整性，跨实验可比性需结合 warnings 判断。
 - 建议：
-  - 低风险：后续增加更多 timing 来源（例如 step 开始/结束时间）。
+  - 低风险：统一各 step 的 `outputs.frame_count/outputs.bytes_sum` 字段命名，减少兼容分支。
 
 ## 3. 优先优化清单（低风险优先）
 1. 增强 infer 子进程日志可观测性（提供完整日志开关）。
