@@ -6,13 +6,14 @@
 - 示例参数（可替换为本地真实序列）：
   - `--dataset scand`
   - `--sequence A_Jackal_AHG_Library_Thu_Oct_28_2`
-  - `--tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24 --auto_conda`
+  - `--tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24`
+- conda 自动切换默认开启；若需禁用请追加 `--no_auto_conda`。
 
 ## 1) segment（调用 `segment_make.py`）
 
 ### 最小命令
 ```bash
-python -m exphub --mode segment --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24 --auto_conda
+python -m exphub --mode segment --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24
 ```
 
 ### 成功判据
@@ -27,7 +28,7 @@ python -m exphub --mode segment --dataset scand --sequence A_Jackal_AHG_Library_
 
 ### 最小命令
 ```bash
-python -m exphub --mode prompt --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24 --auto_conda
+python -m exphub --mode prompt --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24
 ```
 
 ### 最小输入准备
@@ -46,7 +47,7 @@ python -m exphub --mode prompt --dataset scand --sequence A_Jackal_AHG_Library_T
 
 ### 最小命令
 ```bash
-python -m exphub --mode infer --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24 --auto_conda
+python -m exphub --mode infer --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24
 ```
 
 ### 最小输入准备
@@ -66,7 +67,7 @@ python -m exphub --mode infer --dataset scand --sequence A_Jackal_AHG_Library_Th
 
 ### 最小命令
 ```bash
-python -m exphub --mode merge --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24 --auto_conda
+python -m exphub --mode merge --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24
 ```
 
 ### 最小输入准备
@@ -86,7 +87,7 @@ python -m exphub --mode merge --dataset scand --sequence A_Jackal_AHG_Library_Th
 
 ### 最小命令
 ```bash
-python -m exphub --mode slam --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24 --auto_conda
+python -m exphub --mode slam --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24
 ```
 
 ### 最小输入准备
@@ -107,7 +108,7 @@ python -m exphub --mode slam --dataset scand --sequence A_Jackal_AHG_Library_Thu
 
 ### 最小命令
 ```bash
-python -m exphub --mode eval --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24 --auto_conda
+python -m exphub --mode eval --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24
 ```
 
 ### 成功判据
@@ -121,7 +122,7 @@ python -m exphub --mode eval --dataset scand --sequence A_Jackal_AHG_Library_Thu
 
 ### 最小命令
 ```bash
-python -m exphub --mode stats --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24 --auto_conda
+python -m exphub --mode stats --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24
 ```
 
 ### 成功判据
@@ -137,7 +138,7 @@ python -m exphub --mode stats --dataset scand --sequence A_Jackal_AHG_Library_Th
 
 ### 最小命令
 ```bash
-python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 60 --kf_gap 24 --auto_conda
+python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 60 --kf_gap 24
 ```
 
 ### 成功判据
@@ -149,7 +150,7 @@ python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_T
 
 ### 建议命令
 ```bash
-python -m exphub --mode all --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --start_sec 30 --fps 24 --kf_gap 24 --dur 4 --auto_conda
+python -m exphub --mode all --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag baseline --w 480 --h 320 --start_sec 30 --fps 24 --kf_gap 24 --dur 4
 ```
 
 ### 必查产物清单

@@ -65,6 +65,7 @@ class StepRunner:
             "pass_prefixes": self.pass_prefixes,
             "fail_tail_lines": self.fail_tail_lines,
             "log_append": append,
+            "stderr": subprocess.STDOUT,
         }
 
     def run_conda(
@@ -129,6 +130,7 @@ def run_cmd(
     pass_prefixes: Optional[Sequence[str]] = None,
     fail_tail_lines: int = 30,
     log_append: bool = False,
+    stderr: Optional[int] = None,
 ) -> int:
     lvl = (log_level or "debug").strip().lower()
     if lvl not in ("debug", "info", "quiet"):
@@ -151,7 +153,7 @@ def run_cmd(
             cwd=str(cwd) if cwd else None,
             env=env,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.STDOUT if stderr is None else stderr,
             text=True,
             bufsize=1,
             universal_newlines=True,
@@ -206,6 +208,7 @@ def run_in_bash_login(
     pass_prefixes: Optional[Sequence[str]] = None,
     fail_tail_lines: int = 30,
     log_append: bool = False,
+    stderr: Optional[int] = None,
 ) -> int:
     """Run a command string in `bash -lc`."""
     argv = ["bash", "-lc", script]
@@ -219,6 +222,7 @@ def run_in_bash_login(
         pass_prefixes=pass_prefixes,
         fail_tail_lines=fail_tail_lines,
         log_append=log_append,
+        stderr=stderr,
     )
 
 
@@ -235,6 +239,7 @@ def conda_exec(
     pass_prefixes: Optional[Sequence[str]] = None,
     fail_tail_lines: int = 30,
     log_append: bool = False,
+    stderr: Optional[int] = None,
 ) -> int:
     """Execute cmd within conda env using bash -lc + conda activate.
 
@@ -253,6 +258,7 @@ def conda_exec(
             pass_prefixes=pass_prefixes,
             fail_tail_lines=fail_tail_lines,
             log_append=log_append,
+            stderr=stderr,
         )
 
     if cfg.conda_base is None:
@@ -277,6 +283,7 @@ def conda_exec(
         pass_prefixes=pass_prefixes,
         fail_tail_lines=fail_tail_lines,
         log_append=log_append,
+        stderr=stderr,
     )
 
 
@@ -292,6 +299,7 @@ def ros_exec(
     pass_prefixes: Optional[Sequence[str]] = None,
     fail_tail_lines: int = 30,
     log_append: bool = False,
+    stderr: Optional[int] = None,
 ) -> int:
     """Execute cmd with ROS setup sourced (bash -lc)."""
 
@@ -313,4 +321,5 @@ def ros_exec(
         pass_prefixes=pass_prefixes,
         fail_tail_lines=fail_tail_lines,
         log_append=log_append,
+        stderr=stderr,
     )

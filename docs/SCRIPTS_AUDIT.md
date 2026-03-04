@@ -55,6 +55,7 @@
 ### 2.3 `scripts/infer_i2v.py`
 - 职责：根据 `segment/frames` 生成分段计划并触发 i2v 批量推理。
 - 关键参数：`--segment_dir`、`--exp_dir`、`--videox_root`、`--fps`、`--kf_gap`、`--base_idx`、`--num_segments`、`--gpus`。
+- 编排层默认传参：`--gpus=2`（可由 CLI 显式覆盖）。
 - 输入依赖：VideoX-Fun 仓库与环境、推理脚本、可用 GPU。
 - 输出产物：
   - 必需：`infer/runs/`、`infer/runs_plan.json`
