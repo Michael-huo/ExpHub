@@ -25,6 +25,8 @@
 
 说明：同一步骤内若包含多次子命令（如 `eval`），会追加写入同一个 step 日志文件。
 实现说明：`exphub/runner.py::StepRunner` 统一维护每个 `log_name` 的打开状态（首次 `w`，后续 `a`），并负责将 step 子命令路由到对应日志文件。
+补充：子进程执行统一使用 `stderr=subprocess.STDOUT`，`stderr` 与 `stdout` 会合流写入同一 `logs/<step>.log`。
+补充：`eval` 步骤中 `evo_traj/evo_ape` 输出会同时写入 `eval/*.txt` 与 `logs/eval.log`。
 
 ## 4. `--log_level` 行为
 - `info`（默认）：

@@ -6,6 +6,8 @@
 - `--mode` 仅支持：`all`、`segment`、`prompt`、`stats`、`infer`、`merge`、`slam`、`eval`、`doctor`
 - 旧 mode `droid` 已移除，不保留 alias。
 - 默认保留策略：`keep_level=max`
+- conda 自动切换默认开启；可用 `--no_auto_conda` 关闭。
+- `--gpus` 默认值为 `2`（用于 infer 阶段传参）。
 
 ## 2. 命名契约（固定不变）
 - `EXP_NAME`：`{tag}_{w}x{h}_t{start}s_dur{dur}s_fps{fps}_gap{kf_gap}`
@@ -28,6 +30,7 @@
   - `StepRunner.run_ros(...)`（ROS 相关命令）
   - `StepRunner.run_conda(...)`（conda 环境命令）
 - `StepRunner` 统一封装日志参数与路由（`log_path/log_level/pass_prefixes/fail_tail_lines`），并维护日志写入状态（同名日志首次 `w`，后续 `a`）。
+- `StepRunner` 显式以 `stderr=subprocess.STDOUT` 执行子进程，保证 stdout/stderr 汇总到同一 step 日志文件。
 - 底层执行仍由 `conda_exec/ros_exec` 实现，不改变实验语义与产物契约。
 
 ## 4. 新 mode 职责
@@ -70,7 +73,7 @@
   - 关键脚本存在（按当前真实调用脚本清单）
 - Optional（缺失仅 WARN）：
   - 外部路径：`videox_root`、`droid_repo`、`qwen_model_dir`
-  - `--auto_conda` 下 env 工具检查（`python/evo_traj/evo_ape`）
+  - 自动 conda 开启时（默认；可用 `--no_auto_conda` 关闭）env 工具检查（`python/evo_traj/evo_ape`）
 - Informational：
   - 打印新 mode 列表与目录契约摘要
   - 打印推导出的 `EXP_NAME` 与 `EXP_DIR`
