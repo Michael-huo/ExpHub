@@ -5,7 +5,7 @@
 - Python 入口链路：`exphub/__main__.py` -> `exphub/cli.py:main()`
 - `--mode` 仅支持：`all`、`segment`、`prompt`、`stats`、`infer`、`merge`、`slam`、`eval`、`doctor`
 - 旧 mode `droid` 已移除，不保留 alias。
-- 默认保留策略：`keep_level=repro`
+- 默认保留策略：`keep_level=max`
 
 ## 2. 命名契约（固定不变）
 - `EXP_NAME`：`{tag}_{w}x{h}_t{start}s_dur{dur}s_fps{fps}_gap{kf_gap}`
@@ -76,27 +76,23 @@
   - 打印推导出的 `EXP_NAME` 与 `EXP_DIR`
 
 ## 8. Cleanup Strategy（`keep_level`）
-- `keep_level` 规范值：`all`、`repro`、`min`（默认 `repro`）。
-- 兼容别名：
-  - `clean` 等价 `repro`
-  - `debug` 等价 `all`
-- 清理逻辑仅基于当前目录契约（`segment/prompt/infer/merge/slam/eval/stats`），不再对历史命名做特判。
+- `keep_level` 仅支持两档：`max`、`min`（默认 `max`）。
+- 历史 aliases 已移除；旧值 `all` 已重命名为 `max`，避免与 `--mode all` 语义冲突。
+- 非 `min` 输入统一回退到 `max`。
+- 清理逻辑仅基于当前目录契约（`segment/prompt/infer/merge/slam/eval/stats/logs`），不再对历史命名做特判。
 
-- `all`：
+- `max`（默认）：
   - 不做清理，完整保留所有产物与日志。
 
-- `repro`（可复现实验优先）：
-  - 保留：`logs/*`、各阶段 `step_meta.json`（若存在）、`segment|merge` 的 `calib.txt/timestamps.txt`、`prompt/manifest.json`、`slam/<track>/traj_est.tum` 与 `run_meta.json`、`eval/*`、`stats/report.json`（及 `stats/compression.json`）。
-  - 删除重型中间图像产物：
+- `min`（批跑优化）：
+  - 保留轻量关键文件：
+    - `logs/*`
+    - 各阶段 `step_meta.json`（若存在）
+    - `segment|merge` 的 `calib.txt` 与 `timestamps.txt`
+    - `prompt/manifest.json`
+  - 保留最终输出目录：`slam/`、`eval/`、`stats/`（目录与内容保留）。
+  - 强清理重型中间目录：
     - `segment/frames/`
     - `segment/keyframes/`
     - `infer/runs/`
     - `merge/frames/`
-    - `slam/<track>/traj_est.npz`
-
-- `min`（最小归档）：
-  - 仅保留最终分析相关结果：
-    - `stats/{report.json,compression.json}`
-    - `eval/*`
-    - `slam/<track>/{traj_est.tum,run_meta.json}`
-  - 删除其它中间目录与调试产物（如 `segment/`、`prompt/`、`infer/`、`merge/`、`logs/` 等）。
