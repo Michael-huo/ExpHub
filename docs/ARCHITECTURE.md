@@ -73,3 +73,29 @@
 - Informational：
   - 打印新 mode 列表与目录契约摘要
   - 打印推导出的 `EXP_NAME` 与 `EXP_DIR`
+
+## 8. Cleanup Strategy（`keep_level`）
+- `keep_level` 规范值：`all`、`repro`、`min`（默认 `repro`）。
+- 兼容别名：
+  - `clean` 等价 `repro`
+  - `debug` 等价 `all`
+- 清理逻辑仅基于当前目录契约（`segment/prompt/infer/merge/slam/eval/stats`），不再对历史命名做特判。
+
+- `all`：
+  - 不做清理，完整保留所有产物与日志。
+
+- `repro`（可复现实验优先）：
+  - 保留：`logs/*`、各阶段 `step_meta.json`（若存在）、`segment|merge` 的 `calib.txt/timestamps.txt`、`prompt/manifest.json`、`slam/<track>/traj_est.tum` 与 `run_meta.json`、`eval/*`、`stats/report.json`（及 `stats/compression.json`）。
+  - 删除重型中间图像产物：
+    - `segment/frames/`
+    - `segment/keyframes/`
+    - `infer/runs/`
+    - `merge/frames/`
+    - `slam/<track>/traj_est.npz`
+
+- `min`（最小归档）：
+  - 仅保留最终分析相关结果：
+    - `stats/{report.json,compression.json}`
+    - `eval/*`
+    - `slam/<track>/{traj_est.tum,run_meta.json}`
+  - 删除其它中间目录与调试产物（如 `segment/`、`prompt/`、`infer/`、`merge/`、`logs/` 等）。

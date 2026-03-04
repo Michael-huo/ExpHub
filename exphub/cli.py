@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from .cleanup import apply_keep_level
+from .cleanup import apply_keep_level, normalize_keep_level
 from .config import ConfigError, load_datasets_cfg, resolve_dataset
 from .context import ExperimentContext
 from .meta import sanitize_token, write_exp_meta
@@ -66,8 +66,8 @@ def write_compression_stats(ctx: ExperimentContext) -> None:
     frames_dir = ctx.segment_frames_dir
     keyframes_dir = ctx.segment_keyframes_dir
 
-    # Only count prompt payloads that are kept under keep_level=clean|repro.
-    # (clip_prompts.json is treated as debug and will be removed by cleanup.)
+    # Prompt manifest is a stable payload across keep levels.
+    # (segment/clip_prompts.json is optional and may be pruned by cleanup.)
     manifest = ctx.prompt_manifest_path
 
     ori_n, ori_b = _sum_files(frames_dir, "*.png", follow_symlinks=True)
@@ -181,7 +181,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--datasets_cfg", default="", help="datasets.json path (default: <exphub>/config/datasets.json)")
     ap.add_argument("--exp_root", default="", help="override experiments root (default: <exphub>/experiments/<dataset>/<sequence>)")
 
-    ap.add_argument("--keep_level", default="repro", choices=["clean", "repro", "debug"])
+    ap.add_argument(
+        "--keep_level",
+        default="repro",
+        choices=["all", "repro", "min", "clean", "debug"],
+        help="artifact retention level; legacy aliases: clean->repro, debug->all",
+    )
     ap.add_argument("--log_level", default="info", choices=["info", "debug", "quiet"], help="child process terminal verbosity")
 
     ap.add_argument("--auto_conda", action="store_true")
@@ -211,6 +216,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--no_viz", action="store_true")
 
     args = ap.parse_args(argv)
+    args.keep_level = normalize_keep_level(args.keep_level)
 
     fps_arg = _fmt_intlike(args.fps)
 
