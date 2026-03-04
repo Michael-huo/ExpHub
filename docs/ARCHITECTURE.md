@@ -22,6 +22,14 @@
   - 关键产物路径（如 `prompt/manifest.json`、`slam/<track>/traj_est.tum`、`stats/report.json`）
 - 各 `step_*` 只消费上下文路径属性，避免重复路径拼接逻辑与漂移风险。
 
+## 3.1 执行封装（StepRunner）
+- `cli.main()` 创建 `StepRunner(logs_dir, log_level, runner_cfg, ...)`。
+- `step_*` 内子进程调用统一通过：
+  - `StepRunner.run_ros(...)`（ROS 相关命令）
+  - `StepRunner.run_conda(...)`（conda 环境命令）
+- `StepRunner` 统一封装日志参数与路由（`log_path/log_level/pass_prefixes/fail_tail_lines`），并维护日志写入状态（同名日志首次 `w`，后续 `a`）。
+- 底层执行仍由 `conda_exec/ros_exec` 实现，不改变实验语义与产物契约。
+
 ## 4. 新 mode 职责
 - `segment`：只跑数据切段（`scripts/segment_make.py`）
 - `prompt`：只跑提示词生成（`scripts/prompt_gen.py`）
