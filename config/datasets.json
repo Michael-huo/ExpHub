@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "datasets": {
+    "scand": {
+      "format": "rosbag",
+      "root": "datasets/scand",
+      "topic": "/camera/rgb/image_raw/compressed",
+      "intrinsics": {
+        "image_size": [1280, 720],
+        "fx": 608.1159057617188,
+        "fy": 607.8717041015625,
+        "cx": 639.1864013671875,
+        "cy": 363.0690612792969,
+        "dist": [
+          0.6671934723854065,
+          -3.1600592136383057,
+          0.0004678548430092633,
+          -0.0004770300292875618,
+          1.8223274946212769,
+          0.5343461036682129,
+          -2.9515035152435303,
+          1.7315576076507568
+        ]
+      },
+      "sequences": {
+        "A_Jackal_AHG_Library_Thu_Oct_28_2": {
+          "bag": "A_Jackal_AHG_Library_Thu_Oct_28_2.bag"
+        }
+      }
+    },
+    "tum": {
+      "format": "rosbag",
+      "root": "datasets/tum",
+      "topic": "/camera/rgb/image_color",
+      "intrinsics": {
+        "image_size": [640, 480],
+        "fx": 525.0,
+        "fy": 525.0,
+        "cx": 319.5,
+        "cy": 239.5,
+        "dist": [0.0, 0.0, 0.0, 0.0, 0.0]
+      },
+      "sequences": {
+        "rgbd_dataset_freiburg2_pioneer_360": {
+          "bag": "rgbd_dataset_freiburg2_pioneer_360.bag"
+        },
+        "rgbd_dataset_freiburg2_pioneer_slam": {
+          "bag": "rgbd_dataset_freiburg2_pioneer_slam.bag"
+        },
+        "rgbd_dataset_freiburg2_pioneer_slam2": {
+          "bag": "rgbd_dataset_freiburg2_pioneer_slam2.bag"
+        },
+        "rgbd_dataset_freiburg2_pioneer_slam3": {
+          "bag": "rgbd_dataset_freiburg2_pioneer_slam3.bag"
+        }
+      }
+    },
+    "ncd": {
+      "format": "rosbag",
+      "root": "datasets/ncd",
+      "topic": "/camera/infra1/image_rect_raw",
+      "intrinsics": {
+        "image_size": [848, 480],
+        "fx": 431.3873911369959,
+        "fy": 430.2496176152663,
+        "cx": 427.4407802012019,
+        "cy": 238.52694867508183,
+        "dist": [
+          0.007017508922248575,
+          -0.002598448110748391,
+          -0.0014755213248257705,
+          0.0006646077515219394
+        ]
+      },
+      "sequences": {
+        "rooster_2020-03-10-10-36-30_0": { "bag": "rooster_2020-03-10-10-36-30_0.bag" },
+        "rooster_2020-03-10-10-39-18_1": { "bag": "rooster_2020-03-10-10-39-18_1.bag" },
+        "rooster_2020-03-10-10-42-05_2": { "bag": "rooster_2020-03-10-10-42-05_2.bag" },
+        "rooster_2020-03-10-10-44-52_3": { "bag": "rooster_2020-03-10-10-44-52_3.bag" },
+        "rooster_2020-03-10-10-47-39_4": { "bag": "rooster_2020-03-10-10-47-39_4.bag" }
+      }
+    }
+  }
+}

@@ -1,0 +1,59 @@
+# Python
+
+__pycache__/
+
+*.pyc
+
+*.pyo
+
+*.pyd
+
+
+
+# VSCode
+
+.vscode/
+
+
+
+# Experiments (禁止提交)
+
+experiments/
+
+
+
+# Datasets (禁止提交)
+
+datasets/
+
+
+
+# Logs
+
+*.log
+
+
+
+# 临时文件
+
+*.tmp
+
+*.bak
+
+
+
+# Conda
+
+.env
+
+.venv
+
+
+
+# 模型权重
+
+*.ckpt
+
+*.pt
+
+*.bin
