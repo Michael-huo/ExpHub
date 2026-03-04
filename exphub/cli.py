@@ -183,9 +183,9 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     ap.add_argument(
         "--keep_level",
-        default="repro",
-        choices=["all", "repro", "min", "clean", "debug"],
-        help="artifact retention level; legacy aliases: clean->repro, debug->all",
+        default="max",
+        choices=["max", "min"],
+        help="artifact retention level: max (keep all) or min (batch-optimized cleanup)",
     )
     ap.add_argument("--log_level", default="info", choices=["info", "debug", "quiet"], help="child process terminal verbosity")
 

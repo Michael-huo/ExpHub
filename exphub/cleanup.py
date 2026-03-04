@@ -7,22 +7,16 @@ from pathlib import Path
 # NOTE: Python 3.7 compatibility:
 # - typing.Literal is not available in stdlib typing
 # - Path.unlink(missing_ok=...) is 3.8+
-KeepLevel = str  # "all" | "repro" | "min"
+KeepLevel = str  # "max" | "min"
 
-_KEEP_LEVEL_ALIASES = {
-    "clean": "repro",  # legacy alias
-    "debug": "all",    # legacy alias
-}
-
-_KEEP_LEVELS = ("all", "repro", "min")
+_KEEP_LEVELS = ("max", "min")
 
 
 def normalize_keep_level(keep: KeepLevel) -> KeepLevel:
     k = str(keep or "").strip().lower()
-    k = _KEEP_LEVEL_ALIASES.get(k, k)
-    if k in _KEEP_LEVELS:
+    if k == _KEEP_LEVELS[1]:
         return k
-    return "repro"
+    return _KEEP_LEVELS[0]
 
 
 def _is_within(root: Path, target: Path) -> bool:
@@ -58,9 +52,9 @@ def _prune_dir_keep_names(root: Path, d: Path, keep_names) -> None:
         _rm_if_exists(root, child)
 
 
-def _cleanup_repro(exp_dir: Path) -> None:
-    # Keep reproducibility-critical metadata and final artifacts,
-    # remove heavy image/video intermediates.
+def _cleanup_min(exp_dir: Path) -> None:
+    # Aggressively prune heavy intermediates while preserving light metadata
+    # and final outputs for batch runs.
     heavy_dirs = [
         exp_dir / "segment" / "frames",
         exp_dir / "segment" / "keyframes",
@@ -70,57 +64,33 @@ def _cleanup_repro(exp_dir: Path) -> None:
     for d in heavy_dirs:
         _rm_if_exists(exp_dir, d)
 
-    # Keep TUM + run_meta; npz is optional and can be large.
-    slam_dir = exp_dir / "slam"
-    if slam_dir.is_dir():
-        for track_dir in list(slam_dir.iterdir()):
-            if not track_dir.is_dir():
-                continue
-            _rm_if_exists(exp_dir, track_dir / "traj_est.npz")
-
-
-def _cleanup_min(exp_dir: Path) -> None:
-    # Keep only final outputs: trajectory/eval/stats.
-    root_keep = {"slam", "eval", "stats"}
+    # Keep stage roots required by directory contract.
+    root_keep = {"segment", "prompt", "infer", "merge", "slam", "eval", "stats", "logs"}
     if exp_dir.is_dir():
         for child in list(exp_dir.iterdir()):
             if child.name in root_keep:
                 continue
             _rm_if_exists(exp_dir, child)
 
-    # Keep only final stats payloads.
-    _prune_dir_keep_names(exp_dir, exp_dir / "stats", {"report.json", "compression.json"})
-
-    # Keep only trajectory essentials under each SLAM track.
-    slam_dir = exp_dir / "slam"
-    if slam_dir.is_dir():
-        for child in list(slam_dir.iterdir()):
-            if not child.is_dir():
-                _rm_if_exists(exp_dir, child)
-                continue
-            _prune_dir_keep_names(exp_dir, child, {"traj_est.tum", "run_meta.json"})
+    # Keep lightweight, reproducibility-critical metadata.
+    _prune_dir_keep_names(exp_dir, exp_dir / "segment", {"step_meta.json", "calib.txt", "timestamps.txt"})
+    _prune_dir_keep_names(exp_dir, exp_dir / "prompt", {"manifest.json", "step_meta.json"})
+    _prune_dir_keep_names(exp_dir, exp_dir / "infer", {"step_meta.json"})
+    _prune_dir_keep_names(exp_dir, exp_dir / "merge", {"step_meta.json", "calib.txt", "timestamps.txt"})
 
 
 def apply_keep_level(exp_dir: Path, keep: KeepLevel) -> None:
     """Remove non-essential artifacts according to keep level.
 
     Canonical levels:
-    - all: keep everything.
-    - repro: keep reproducibility-critical artifacts; prune heavy intermediates.
-    - min: keep only final stats + trajectory/eval outputs.
-
-    Backward compatible aliases:
-    - clean -> repro
-    - debug -> all
+    - max: keep everything.
+    - min: keep lightweight metadata + final outputs; prune heavy intermediates.
     """
 
     keep_norm = normalize_keep_level(keep)
-    if keep_norm == "all":
+    if keep_norm == "max":
         return
     if not exp_dir.exists():
         return
 
-    if keep_norm == "repro":
-        _cleanup_repro(exp_dir)
-        return
     _cleanup_min(exp_dir)
