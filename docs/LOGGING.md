@@ -24,6 +24,7 @@
   - `stats.log`
 
 说明：同一步骤内若包含多次子命令（如 `eval`），会追加写入同一个 step 日志文件。
+实现说明：`exphub/runner.py::StepRunner` 统一维护每个 `log_name` 的打开状态（首次 `w`，后续 `a`），并负责将 step 子命令路由到对应日志文件。
 
 ## 4. `--log_level` 行为
 - `info`（默认）：

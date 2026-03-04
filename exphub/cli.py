@@ -8,13 +8,13 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from .cleanup import apply_keep_level
 from .config import ConfigError, load_datasets_cfg, resolve_dataset
 from .context import ExperimentContext
 from .meta import sanitize_token, write_exp_meta
-from .runner import RunnerConfig, conda_exec, detect_conda_base, ros_exec, RunError
+from .runner import RunnerConfig, StepRunner, conda_exec, detect_conda_base, RunError
 
 
 def _info(msg: str) -> None:
@@ -283,50 +283,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     logs_dir = ctx.logs_dir
     child_pass_prefixes = ("[INFO]", "[WARN]", "[ERR]", "[PROG]", "[STEP]")
     fail_tail_lines = 30
-    _step_log_opened = {}  # type: Dict[str, bool]
-
-    def _cmd_log_kwargs(log_name: str) -> Dict[str, object]:
-        logs_dir.mkdir(parents=True, exist_ok=True)
-        lp = logs_dir / log_name
-        append = bool(_step_log_opened.get(log_name, False))
-        _step_log_opened[log_name] = True
-        return {
-            "log_path": lp,
-            "log_level": args.log_level,
-            "pass_prefixes": child_pass_prefixes,
-            "fail_tail_lines": fail_tail_lines,
-            "log_append": append,
-        }
-
-    def _conda_exec_logged(
-        cmd: List[str],
-        *,
-        env_name: str,
-        log_name: str,
-        check: bool = True,
-    ) -> int:
-        return conda_exec(
-            cmd,
-            env_name=env_name,
-            cfg=runner_cfg,
-            cwd=exphub_root,
-            check=check,
-            **_cmd_log_kwargs(log_name),
-        )
-
-    def _ros_exec_logged(
-        cmd: List[str],
-        *,
-        log_name: str,
-        check: bool = True,
-    ) -> int:
-        return ros_exec(
-            cmd,
-            cfg=runner_cfg,
-            cwd=exphub_root,
-            check=check,
-            **_cmd_log_kwargs(log_name),
-        )
+    step_runner = StepRunner(
+        logs_dir=logs_dir,
+        log_level=args.log_level,
+        runner_cfg=runner_cfg,
+        pass_prefixes=child_pass_prefixes,
+        fail_tail_lines=fail_tail_lines,
+    )
 
     def _read_log_tail(log_path: Path, n: int) -> List[str]:
         try:
@@ -620,7 +583,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             *dist_args,
         ]
 
-        _ros_exec_logged(cmd, log_name="segment.log")
+        step_runner.run_ros(cmd, log_name="segment.log", cwd=exphub_root)
         _ensure(ctx.segment_calib_path, "file")
         _ensure(ctx.segment_timestamps_path, "file")
         # recommended keep
@@ -660,7 +623,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(ctx.prompt_manifest_path),
         ]
 
-        _conda_exec_logged(cmd, env_name=args.conda_env_vlm, log_name="prompt.log")
+        step_runner.run_conda(cmd, env_name=args.conda_env_vlm, log_name="prompt.log", cwd=exphub_root)
         _ensure(ctx.prompt_manifest_path, "file")
 
     def step_stats() -> None:
@@ -670,7 +633,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "--exp_dir",
             str(exp_dir),
         ]
-        _conda_exec_logged(cmd, env_name=args.conda_env_vlm, log_name="stats.log")
+        step_runner.run_conda(cmd, env_name=args.conda_env_vlm, log_name="stats.log", cwd=exphub_root)
         _ensure(ctx.stats_report_path, "file")
 
     def step_infer() -> None:
@@ -708,7 +671,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         if args.infer_extra:
             import shlex as _sh
             cmd_infer.extend(_sh.split(args.infer_extra))
-        _conda_exec_logged(cmd_infer, env_name=args.conda_env_videox, log_name="infer.log")
+        step_runner.run_conda(cmd_infer, env_name=args.conda_env_videox, log_name="infer.log", cwd=exphub_root)
         _ensure(ctx.infer_runs_dir, "dir")
         _ensure(ctx.infer_runs_plan_path, "file")
 
@@ -733,7 +696,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "--out_dir",
             str(merge_dir),
         ]
-        _conda_exec_logged(cmd_merge, env_name=args.conda_env_videox, log_name="merge.log")
+        step_runner.run_conda(cmd_merge, env_name=args.conda_env_videox, log_name="merge.log", cwd=exphub_root)
 
         _ensure(ctx.merge_frames_dir, "dir")
         _ensure(ctx.merge_calib_path, "file")
@@ -775,7 +738,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             if not viz_enable:
                 cmd.append("--disable_vis")
 
-            _conda_exec_logged(cmd, env_name=args.conda_env_droid, log_name=f"slam_{tag_name}.log")
+            step_runner.run_conda(cmd, env_name=args.conda_env_droid, log_name=f"slam_{tag_name}.log", cwd=exphub_root)
             _ensure(ctx.slam_traj_path(tag_name), "file")
             _ensure(ctx.slam_run_meta_path(tag_name), "file")
 
@@ -817,11 +780,12 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         def _has_tool(tool: str) -> bool:
             # Check tool availability inside the droid env
-            rc = _conda_exec_logged(
+            rc = step_runner.run_conda(
                 ["bash", "-lc", f"command -v {tool} >/dev/null 2>&1"],
                 env_name=args.conda_env_droid,
                 check=False,
                 log_name="eval.log",
+                cwd=exphub_root,
             )
             return rc == 0
 
@@ -841,11 +805,12 @@ def main(argv: Optional[List[str]] = None) -> None:
             else:
                 cmd = f"evo_traj tum {tum} > {out_txt} 2>&1"
 
-            _conda_exec_logged(
+            step_runner.run_conda(
                 ["bash", "-lc", cmd],
                 env_name=args.conda_env_droid,
                 check=False,
                 log_name="eval.log",
+                cwd=exphub_root,
             )
 
         if tum_ori.exists():
@@ -867,11 +832,12 @@ def main(argv: Optional[List[str]] = None) -> None:
             else:
                 cmd = f"evo_ape tum {tum_ori} {tum_gen} -a > {out_txt} 2>&1"
 
-            _conda_exec_logged(
+            step_runner.run_conda(
                 ["bash", "-lc", cmd],
                 env_name=args.conda_env_droid,
                 check=False,
                 log_name="eval.log",
+                cwd=exphub_root,
             )
 
 

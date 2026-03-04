@@ -38,6 +38,68 @@ class RunnerConfig:
     ros_setup: Optional[Path]
 
 
+class StepRunner:
+    def __init__(
+        self,
+        logs_dir: Path,
+        log_level: str,
+        runner_cfg: RunnerConfig,
+        pass_prefixes: Tuple[str, ...] = ("[INFO]", "[WARN]", "[ERR]", "[PROG]", "[STEP]"),
+        fail_tail_lines: int = 30,
+    ) -> None:
+        self.logs_dir = logs_dir
+        self.log_level = log_level
+        self.runner_cfg = runner_cfg
+        self.pass_prefixes = tuple(pass_prefixes)
+        self.fail_tail_lines = int(fail_tail_lines) if int(fail_tail_lines) > 0 else 30
+        self._log_opened = {}  # type: Dict[str, bool]
+
+    def _cmd_log_kwargs(self, log_name: str) -> Dict[str, object]:
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        log_path = self.logs_dir / log_name
+        append = bool(self._log_opened.get(log_name, False))
+        self._log_opened[log_name] = True
+        return {
+            "log_path": log_path,
+            "log_level": self.log_level,
+            "pass_prefixes": self.pass_prefixes,
+            "fail_tail_lines": self.fail_tail_lines,
+            "log_append": append,
+        }
+
+    def run_conda(
+        self,
+        cmd: Sequence[str],
+        env_name: str,
+        log_name: str,
+        cwd: Optional[Path],
+        check: bool = True,
+    ) -> int:
+        return conda_exec(
+            cmd,
+            env_name=env_name,
+            cfg=self.runner_cfg,
+            cwd=cwd,
+            check=check,
+            **self._cmd_log_kwargs(log_name),
+        )
+
+    def run_ros(
+        self,
+        cmd: Sequence[str],
+        log_name: str,
+        cwd: Optional[Path],
+        check: bool = True,
+    ) -> int:
+        return ros_exec(
+            cmd,
+            cfg=self.runner_cfg,
+            cwd=cwd,
+            check=check,
+            **self._cmd_log_kwargs(log_name),
+        )
+
+
 def _which(cmd: str) -> Optional[str]:
     from shutil import which
 
