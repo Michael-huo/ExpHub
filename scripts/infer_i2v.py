@@ -34,7 +34,7 @@ from datetime import datetime
 from _common import ensure_dir, ensure_file, list_frames_sorted, write_json_atomic
 
 
-ALLOW_PREFIX = ("[PROG]", "[TIME]", "[WARN]", "[ERR]", "[PROMPT]")
+ALLOW_PREFIX = ("[PROG]", "[INFO]", "[WARN]", "[ERR]", "[BAR]", "[PROMPT]")
 
 
 def _samefile_safe(src: Path, dst: Path) -> bool:
@@ -83,8 +83,10 @@ def _run_filtered(cmd: list, cwd: Path, env: dict) -> int:
     tail = deque(maxlen=250)
     for line in p.stdout:
         tail.append(line)
-        if line.startswith(ALLOW_PREFIX):
-            sys.stdout.write(line)
+        clean_line = line.strip()
+        if any(clean_line.startswith(p) for p in ALLOW_PREFIX):
+            sys.stdout.write(clean_line + "\n")
+            sys.stdout.flush()  # CRITICAL: Force flush the pipe to the outer Runner
 
     rc = p.wait()
     if rc != 0:

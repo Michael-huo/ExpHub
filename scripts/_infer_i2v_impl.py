@@ -21,6 +21,7 @@ warnings.filterwarnings(
 )
 
 import os
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 import sys
 import argparse
 import time
@@ -63,7 +64,7 @@ T_ALL_START = time.time()
 #         return
 #     print(msg, flush=True)
 
-ALLOW_PREFIX = ("[PROG]", "[TIME]", "[WARN]", "[ERR]", "[PROMPT]")
+ALLOW_PREFIX = ("[PROG]", "[INFO]", "[WARN]", "[ERR]", "[BAR]", "[PROMPT]")
 
 def rprint(msg: str):
     """Rank0-only print, and keep output minimal."""
@@ -505,7 +506,7 @@ if os.environ.get("RANK", "0") == "0":
 T_INIT_START = time.time()
 t_quant_low = 0.0
 t_quant_high = 0.0
-rprint(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [INIT] Begin model loading, pipeline construction, and memory optimization...")
+rprint("[INFO] Initializing model pipeline and loading weights from disk...")
 device = set_multi_gpus_devices(ulysses_degree, ring_degree)
 if dist.is_available() and dist.is_initialized():
     rank = dist.get_rank()
@@ -667,17 +668,21 @@ if GPU_memory_mode == "sequential_cpu_offload":
         transformer_2.freqs = transformer_2.freqs.to(device=device)
     pipeline.enable_sequential_cpu_offload(device=device)
 elif GPU_memory_mode == "model_cpu_offload_and_qfloat8":
-    rprint("[PROG] Start Quantification")
+    rprint("[INFO] Starting float8 quantization (CPU/Mem bound process, please wait...)")
     _t = time.time()
+    rprint("[INFO] Quantizing transformer 1/2...")
     convert_model_weight_to_float8(transformer, exclude_module_name=["modulation",], device=device)
     convert_weight_dtype_wrapper(transformer, weight_dtype)
     t_quant_low = time.time() - _t
+    rprint(f"[INFO] Transformer 1/2 quantized in {t_quant_low:.2f}s")
 
     if transformer_2 is not None:
         _t = time.time()
+        rprint("[INFO] Quantizing transformer 2/2...")
         convert_model_weight_to_float8(transformer_2, exclude_module_name=["modulation",], device=device)
         convert_weight_dtype_wrapper(transformer_2, weight_dtype)
         t_quant_high = time.time() - _t
+        rprint(f"[INFO] Transformer 2/2 quantized in {t_quant_high:.2f}s")
 
     pipeline.enable_model_cpu_offload(device=device)
 
@@ -685,17 +690,21 @@ elif GPU_memory_mode == "model_cpu_offload":
     pipeline.enable_model_cpu_offload(device=device)
     
 elif GPU_memory_mode == "model_full_load_and_qfloat8":
-    rprint("[PROG] Start Quantification")
+    rprint("[INFO] Starting float8 quantization (CPU/Mem bound process, please wait...)")
     _t = time.time()
+    rprint("[INFO] Quantizing transformer 1/2...")
     convert_model_weight_to_float8(transformer, exclude_module_name=["modulation",], device=device)
     convert_weight_dtype_wrapper(transformer, weight_dtype)
     t_quant_low = time.time() - _t
+    rprint(f"[INFO] Transformer 1/2 quantized in {t_quant_low:.2f}s")
 
     if transformer_2 is not None:
         _t = time.time()
+        rprint("[INFO] Quantizing transformer 2/2...")
         convert_model_weight_to_float8(transformer_2, exclude_module_name=["modulation",], device=device)
         convert_weight_dtype_wrapper(transformer_2, weight_dtype)
         t_quant_high = time.time() - _t
+        rprint(f"[INFO] Transformer 2/2 quantized in {t_quant_high:.2f}s")
 
     pipeline.to(device=device)
 
@@ -731,8 +740,12 @@ if lora_path is not None:
             sub_transformer_name="transformer_2",
         )
 
+pipeline.set_progress_bar_config(bar_format="[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
 T_INIT_END = time.time()
-rprint(f"[TIME] init: {(T_INIT_END - T_INIT_START):.2f}s (float8_quant={t_quant_low + t_quant_high:.2f}s)")
+t_init_total = T_INIT_END - T_INIT_START
+t_quant_total = t_quant_low + t_quant_high
+t_load = t_init_total - t_quant_total
+rprint(f"[INFO] Initialization completed in {t_init_total:.2f}s (Loading: {t_load:.2f}s, Quantization: {t_quant_total:.2f}s)")
 
 # ===== Align video_length with VAE temporal compression =====
 video_length_desired = video_length
@@ -963,7 +976,6 @@ if args.batch:
     step = stride + 1
 
     rprint(f"[PROG] batch: segments={int(args.num_segments)} base_idx={int(args.base_idx)} step={int(step)} stride={int(stride)} fps={int(fps)}")
-    rprint("[PROG] Start Inference")
     # ---- write plan (rank0) so merger only consumes THIS run set ----
     if os.environ.get("RANK", "0") == "0":
         try:
@@ -1024,7 +1036,11 @@ if args.batch:
 
         seg_i = int(seg) + 1
         total = int(args.num_segments)
-        rprint(f"[PROG] seg {seg_i}/{total}: idx {s}->{e} seed={seg_seed}")
+        hash_str = ""
+        if "resolved_prompts" in globals() and int(seg) < len(resolved_prompts):
+            _rp = resolved_prompts[int(seg)]
+            hash_str = f" hash={_rp['prompt_hash8']}"
+        rprint(f"[PROG] seg {seg_i}/{total}: idx {s}->{e} seed={seg_seed}{hash_str}")
         # prompt per segment (base + optional delta)
         if "resolved_prompts" in globals() and int(seg) < len(resolved_prompts):
             _rp = resolved_prompts[int(seg)]
@@ -1033,7 +1049,7 @@ if args.batch:
             # Print prompts without embedded newlines to keep logs clean and unambiguous.
             # We print base/delta separately (delta is optional). The model still receives
             # the real final prompt (base + "\n" + delta when delta exists).
-            rprint(f"[PROMPT] seg {seg_i}/{total} hash={_rp['prompt_hash8']} base={_escape_one_line(_rp.get('base_prompt',''))}")
+            rprint(f"[PROMPT] seg {seg_i}/{total} base={_escape_one_line(_rp.get('base_prompt',''))}")
             if _rp.get("delta_prompt"):
                 rprint(f"[PROMPT] seg {seg_i}/{total} delta={_escape_one_line(_rp.get('delta_prompt',''))}")
             if negative_prompt:
@@ -1049,7 +1065,7 @@ if args.batch:
         elapsed = time.time() - t_batch0
         left = total - seg_i
         eta = (elapsed / seg_i * left) if seg_i > 0 and left > 0 else 0.0
-        rprint(f"[TIME] seg {seg_i}/{total}: infer={dt:.2f}s save={t_save:.2f}s elapsed={elapsed:.1f}s eta={eta:.1f}s")
+        rprint(f"[INFO] seg {seg_i}/{total}: infer={dt:.2f}s save={t_save:.2f}s elapsed={elapsed:.1f}s eta={eta:.1f}s")
 
         # ---- multi-gpu safety: keep ranks in lockstep across segments ----
         if dist.is_available() and dist.is_initialized():
@@ -1070,12 +1086,13 @@ if args.batch:
 
 else:
     # keep original single-run behavior
-    rprint("[PROG] Start Inference")
+    _rp = None
     if "resolved_prompts" in globals() and len(resolved_prompts) > 0:
         _rp = resolved_prompts[0]
+    if _rp is not None:
         prompt = _rp["final_prompt"]
         negative_prompt = _rp["final_neg_prompt"]
-        rprint(f"[PROMPT] single hash={_rp['prompt_hash8']} base={_escape_one_line(_rp.get('base_prompt',''))}")
+        rprint(f"[PROMPT] single base={_escape_one_line(_rp.get('base_prompt',''))}")
         if _rp.get("delta_prompt"):
             rprint(f"[PROMPT] single delta={_escape_one_line(_rp.get('delta_prompt',''))}")
         if negative_prompt:
@@ -1107,7 +1124,7 @@ frames_per_seg = int(video_length_run if "video_length_run" in globals() else vi
 total_frames = int(segments_ran) * int(frames_per_seg)
 avg_infer_per_frame = (infer_sum / total_frames) if total_frames > 0 else 0.0
 rprint(
-    f"[TIME] done: segments={segments_ran} frames={total_frames} "
+    f"[INFO] done: segments={segments_ran} frames={total_frames} "
     f"init={init_time:.2f}s infer_sum={infer_sum:.2f}s avg_infer={avg_infer:.2f}s "
     f"avg_frame={avg_infer_per_frame:.3f}s total={total_time:.2f}s"
 )
