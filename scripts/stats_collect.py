@@ -5,7 +5,7 @@ import argparse
 import datetime
 from pathlib import Path
 
-from _common import log_info, log_warn, read_step_meta, write_json_atomic
+from _common import log_err, log_info, log_prog, log_warn, read_step_meta, write_json_atomic
 
 
 def _as_int_or_none(value):
@@ -227,6 +227,7 @@ def main():
     comp_path = stats_dir / "compression.json"
     write_json_atomic(report_path, report, indent=2)
     write_json_atomic(comp_path, legacy, indent=2)
+    log_prog("stats collection done")
     log_info("stats report written: {}".format(report_path))
     log_info("legacy compression written: {}".format(comp_path))
 

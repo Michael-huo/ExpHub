@@ -12,6 +12,10 @@
 - 步骤失败：`[STEP] <name> FAIL sec=... rc=... log=...`
 - 失败时会额外打印 log 最后 N 行：`[TAIL] ...`
 - `cli.py::_step` 会在步骤开始时打印上下分隔线，并在步骤完成/失败后打印收尾分隔线。
+- 非 doctor 模式在最终 `DONE. EXP_DIR=...` 前会输出 `EXPERIMENT PERFORMANCE PROFILING` 区块。
+  - Macro：逐 step 打印耗时与占比（数据来源：编排层 `_run_step` 计时）。
+  - Micro（Critical Path）：从 `logs/prompt.log` 解析 `Initialization completed in`，从 `logs/infer.log` 解析 `Initialization completed in` 与 `avg_infer` 并回显。
+  - 该区块是只读汇总，不改变任何 step 语义或产物。
 
 ## 3. 日志目录与文件命名
 - 目录：`EXP_DIR/logs/`
@@ -36,11 +40,15 @@
   - 判定条件：行内包含 `[BAR]`（含前导空格场景）。
   - 路由：只输出到终端，不写入日志文件。
   - 呈现：使用 `\r` 回车原地刷新。
+  - `scripts/segment_make.py` 的 `tqdm` 统一使用 `bar_format="[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"`。
+  - `scripts/slam_droid.py` 在跟踪循环中强制 `disable=True`，默认不输出进度条（降低 DROID C++ 后端输出与终端 UI 耦合）。
   - `scripts/prompt_gen.py` 统一使用 `tqdm(..., bar_format="[BAR] ...")` 输出推理进度，不再使用循环内手工 `[PROG] clip x/y done` 打点。
   - `scripts/_infer_i2v_impl.py` 对 diffusers 管线调用 `pipeline.set_progress_bar_config(bar_format="[BAR] ...")`，统一以 `[BAR]` 前缀输出进度条。
 - `[STEP]` `[INFO]` `[WARN]` `[ERR]` `[PROG]`：
   - 路由：写入日志文件，并按 log level 规则透传到终端。
   - 子脚本应优先通过 `scripts/_common.py` 的日志门面输出：`log_info/log_warn/log_prog/log_err`（统一 `flush=True`，降低子进程管道缓冲导致的日志滞后）。
+  - `scripts/segment_make.py`、`scripts/merge_seq.py`、`scripts/slam_droid.py`、`scripts/stats_collect.py` 已移除 raw `print(...)`，统一经日志门面输出。
+  - `scripts/merge_seq.py` 调用 `ffmpeg` 时会捕获 stdout/stderr，仅在失败时输出 `[WARN]` 摘要，避免外部二进制直接刷屏终端。
   - `infer_i2v` 链路的前缀集合固定为：`[PROG] [INFO] [WARN] [ERR] [BAR] [PROMPT]`。
   - `scripts/infer_i2v.py::_run_filtered` 会对匹配前缀行执行 `strip()+换行` 并立即 `flush()`，避免进度条 `\r` 经过管道时缓冲滞留。
   - `scripts/_infer_i2v_impl.py` 将 `prompt_hash8` 内联到 `[PROG]` 进度行（batch/single），`[PROMPT]` 行仅输出 base/delta/neg 文本。
