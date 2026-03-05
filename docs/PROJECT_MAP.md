@@ -56,6 +56,6 @@
 - 保证无副作用：不创建实验目录与产物。
 
 ## 6. 日志机制
-- 编排层统一输出 `[RUN]/[STEP]` 摘要。
+- 编排层启动时输出 `[INFO] EXPERIMENT SUMMARY` 区块，步骤阶段输出 `[STEP]` 摘要。
 - 子进程完整输出写入 `EXP_DIR/logs/<step>.log`。
 - 终端展示受 `--log_level` 控制（`info|debug|quiet`），失败时会打印日志尾部若干行。

@@ -27,6 +27,10 @@
 - 输出产物：
   - 必需：`segment/frames`、`segment/calib.txt`、`segment/timestamps.txt`、`segment/preprocess_meta.json`
   - 调试/复现：`segment/step_meta.json`、`segment/keyframes`、`segment/keyframes/keyframes_meta.json`
+  - `segment/step_meta.json` 关键字段（用于 `stats_collect.py`）：
+    - `outputs.frame_count`、`outputs.bytes_sum`
+    - `outputs.keyframes_frame_count`、`outputs.keyframes_bytes_sum`
+    - 兼容别名：`outputs.keyframe_count`、`outputs.keyframe_bytes_sum`
 - 被调用：`--mode segment`。
 - 风险点：
   - ROS 环境依赖强，运行前未 `source` 会直接失败。
@@ -43,6 +47,7 @@
 - 输出产物：
   - 必需：`prompt/manifest.json`
   - 调试：`segment/clip_prompts.json`、`prompt/step_meta.json`（若启用）
+  - `prompt/step_meta.json` 关键字段（用于 `stats_collect.py`）：`outputs.bytes_sum`（manifest + clip_prompts 总字节数）
 - 被调用：`--mode prompt`。
 - 风险点：
   - 模型加载耗时和显存占用高。

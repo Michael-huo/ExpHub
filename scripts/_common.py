@@ -21,6 +21,10 @@ def log_warn(msg):
     print("[WARN] {}".format(msg))
 
 
+def log_prog(msg):
+    print("[PROG] {}".format(msg))
+
+
 def log_err(msg):
     print("[ERR] {}".format(msg), file=sys.stderr)
 

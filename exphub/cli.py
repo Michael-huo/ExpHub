@@ -169,6 +169,41 @@ def _fmt_intlike(x: float) -> str:
     return str(x)
 
 
+def _print_experiment_summary(
+    mode: str,
+    dataset: str,
+    sequence: str,
+    tag: str,
+    w: int,
+    h: int,
+    fps_text: str,
+    dur_text: str,
+    gpus: int,
+    keep_level: str,
+    exp_dir: Path,
+) -> None:
+    sep = "=" * 70
+    rows = [
+        ("Mode", mode),
+        ("Dataset", dataset),
+        ("Sequence", sequence),
+        ("Tag", tag),
+        ("Resolution", "{}x{}".format(w, h)),
+        ("FPS", fps_text),
+        ("Duration", dur_text),
+        ("GPUs", str(gpus)),
+        ("Keep Level", keep_level),
+        ("Exp Dir", str(exp_dir)),
+    ]
+    key_w = max(len(k) for k, _ in rows)
+    _info(sep)
+    _info("EXPERIMENT SUMMARY")
+    _info(sep)
+    for key, val in rows:
+        _info("{:<{w}} : {}".format(key, val, w=key_w))
+    _info(sep)
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m exphub", add_help=True)
 
@@ -478,8 +513,21 @@ def main(argv: Optional[List[str]] = None) -> None:
         _info("DOCTOR result=PASS")
         return 0
 
+    _print_experiment_summary(
+        mode=args.mode,
+        dataset=dataset,
+        sequence=sequence,
+        tag=tag,
+        w=int(args.w),
+        h=int(args.h),
+        fps_text=fps_arg,
+        dur_text=str(args.dur),
+        gpus=int(args.gpus),
+        keep_level=str(args.keep_level),
+        exp_dir=exp_dir,
+    )
+
     if args.mode == "doctor":
-        _run(f"mode=doctor dataset={dataset} seq={sequence} exp_dir={exp_dir} log_level={args.log_level}")
         rc = step_doctor()
         if rc != 0:
             raise SystemExit(rc)
@@ -505,11 +553,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         _ensure(p, "file")
 
     _ensure(prompt_gen_py, "file")
-
-    _run(f"mode={args.mode} dataset={dataset} seq={sequence} exp_dir={exp_dir} log_level={args.log_level}")
-    _info(f"EXPHUB={exphub_root}")
-    _info(f"BAG={ds.bag}")
-    _info(f"TOPIC={ds.topic}")
 
     def _assert_under_exp(p: Path) -> None:
         base = exp_dir.resolve()

@@ -8,10 +8,14 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+# 禁用 HuggingFace 原生的模型下载/加载进度条，避免污染日志系统
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+
 import torch
+from tqdm import tqdm
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
-from _common import ensure_dir, list_frames_sorted, log_info, log_warn, write_json_atomic
+from _common import ensure_dir, list_frames_sorted, log_info, log_prog, log_warn, write_json_atomic
 
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 IDX_RE = re.compile(r"(\d+)")
@@ -246,7 +250,11 @@ def main():
     errors: List[str] = []
 
     with torch.inference_mode():
-        for clip_id in range(nclips):
+        for clip_id in tqdm(
+            range(nclips),
+            desc="Prompt Gen",
+            bar_format="[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        ):
             start_idx = base_idx + clip_id * kf_gap
             end_idx = start_idx + kf_gap
             clip_seconds = float(end_idx - start_idx) / float(fps)
@@ -317,9 +325,6 @@ def main():
                 }
             )
 
-            if clip_id == 0 or (clip_id + 1) % 10 == 0 or (clip_id + 1) == nclips:
-                print(f"[PROG] clip {clip_id+1}/{nclips} done")
-
     clip_prompts = {
         "version": 1,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -358,6 +363,15 @@ def main():
 
     # Compact step metadata (additional, non-breaking).
     manifest_bytes = out_manifest.read_bytes()
+    manifest_size = int(len(manifest_bytes))
+    clip_prompts_size = 0
+    if out_json.is_file():
+        try:
+            clip_prompts_size = int(os.path.getsize(str(out_json)))
+        except Exception:
+            clip_prompts_size = 0
+    outputs_bytes_sum = int(manifest_size + clip_prompts_size)
+
     step_meta = {
         "step": "prompt",
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -366,14 +380,22 @@ def main():
         "frames_count": int(len(frame_files)),
         "clips_count": int(nclips),
         "manifest_path": str(out_manifest),
-        "manifest_size": int(len(manifest_bytes)),
+        "manifest_size": int(manifest_size),
         "manifest_sha1": hashlib.sha1(manifest_bytes).hexdigest(),
+        "outputs": {
+            "bytes_sum": int(outputs_bytes_sum),
+            "manifest_bytes_sum": int(manifest_size),
+            "clip_prompts_bytes_sum": int(clip_prompts_size),
+            "manifest_file_count": 1,
+            "clip_prompts_file_count": 1 if out_json.is_file() else 0,
+        },
     }
     write_json_atomic(out_manifest.parent / "step_meta.json", step_meta, indent=2)
 
-    print(f"[OK] wrote: {out_json}")
-    print(f"[OK] wrote: {out_manifest}")
-    print(f"[OK] wrote: {out_manifest.parent / 'step_meta.json'}")
+    log_prog("prompt clips generated: {}/{}".format(int(len(clips)), int(nclips)))
+    log_info("wrote: {}".format(out_json))
+    log_info("wrote: {}".format(out_manifest))
+    log_info("wrote: {}".format(out_manifest.parent / "step_meta.json"))
     if errors:
         log_warn(f"{len(errors)} clips had missing frames; see errors in clip_prompts.json")
 

@@ -5,7 +5,8 @@
 - 子进程完整输出可追溯，统一落盘到 `EXP_DIR/logs/`。
 
 ## 2. 终端摘要格式
-- 运行摘要：`[RUN] mode=... dataset=... seq=... exp_dir=... log_level=...`
+- 运行摘要：启动时输出 `EXPERIMENT SUMMARY` 区块，所有行使用 `[INFO]` 前缀，首尾使用 `======================================================================` 分隔。
+  - 固定键：`Mode`、`Dataset`、`Sequence`、`Tag`、`Resolution`、`FPS`、`Duration`、`GPUs`、`Keep Level`、`Exp Dir`
 - 步骤开始：`[STEP] <name> start`
 - 步骤完成：`[STEP] <name> done sec=... out=...`
 - 步骤失败：`[STEP] <name> FAIL sec=... rc=... log=...`
@@ -35,8 +36,10 @@
   - 判定条件：行内包含 `[BAR]`（含前导空格场景）。
   - 路由：只输出到终端，不写入日志文件。
   - 呈现：使用 `\r` 回车原地刷新。
+  - `scripts/prompt_gen.py` 统一使用 `tqdm(..., bar_format="[BAR] ...")` 输出推理进度，不再使用循环内手工 `[PROG] clip x/y done` 打点。
 - `[STEP]` `[INFO]` `[WARN]` `[ERR]` `[PROG]`：
   - 路由：写入日志文件，并按 log level 规则透传到终端。
+  - 子脚本应优先通过 `scripts/_common.py` 的日志门面输出：`log_info/log_warn/log_prog/log_err`。
 - 其他未匹配行：
   - 路由：写入日志文件。
   - 终端：`info/quiet` 隐藏，`debug` 显示。
