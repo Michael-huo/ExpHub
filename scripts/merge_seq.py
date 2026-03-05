@@ -24,10 +24,9 @@ import hashlib
 import json
 import shutil
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
-from _common import ensure_cmd, ensure_dir, ensure_file, list_frames_sorted, write_json_atomic
+from _common import ensure_cmd, ensure_dir, ensure_file, list_frames_sorted, log_err, log_info, log_prog, log_warn, write_json_atomic
 
 
 def _safe_int(x, default=0) -> int:
@@ -63,7 +62,24 @@ def _try_ffmpeg_make_video(frames_dir: Path, fps: int, out_mp4: Path) -> bool:
         str(out_mp4),
     ]
     try:
-        subprocess.check_call(cmd)
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            universal_newlines=True,
+        )
+        if proc.returncode != 0:
+            details = ""
+            if proc.stdout:
+                lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+                if lines:
+                    details = " | ".join(lines[-3:])
+            if details:
+                log_warn("ffmpeg preview failed rc={} details={}".format(proc.returncode, details))
+            else:
+                log_warn("ffmpeg preview failed rc={}".format(proc.returncode))
+            return False
         return out_mp4.exists() and out_mp4.stat().st_size > 0
     except Exception:
         return False
@@ -100,18 +116,19 @@ def _guard_safe_out_dir(out_dir: Path, exp_dir: Path, runs_root: Path) -> None:
     try:
         out_dir_r.relative_to(merge_root)
     except ValueError:
-        print(
-            f"[ERR] unsafe out_dir: {out_dir_r} is outside expected scope {merge_root}. "
-            f"Refusing to delete.",
-            file=sys.stderr,
+        log_err(
+            "unsafe out_dir: {} is outside expected scope {}. Refusing to delete.".format(
+                out_dir_r, merge_root
+            )
         )
         raise SystemExit(2)
 
     try:
         out_dir_r.relative_to(runs_root_r)
-        print(
-            f"[ERR] unsafe out_dir: {out_dir_r} overlaps runs_root {runs_root_r}; refusing to delete.",
-            file=sys.stderr,
+        log_err(
+            "unsafe out_dir: {} overlaps runs_root {}; refusing to delete.".format(
+                out_dir_r, runs_root_r
+            )
         )
         raise SystemExit(2)
     except ValueError:
@@ -146,22 +163,22 @@ def main():
     try:
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
     except Exception as e:
-        print(f"[ERR] failed to read runs plan: {plan_path} ({e})", file=sys.stderr)
+        log_err("failed to read runs plan: {} ({})".format(plan_path, e))
         raise SystemExit(2)
 
     segs = plan.get("segments") or []
     if not isinstance(segs, list) or len(segs) == 0:
-        print(f"[ERR] invalid runs plan (no segments): {plan_path}", file=sys.stderr)
+        log_err("invalid runs plan (no segments): {}".format(plan_path))
         raise SystemExit(2)
 
     # segments are the source of truth (start/end indices define overlap)
     for s in segs:
         rn = (s or {}).get("run_name", "")
         if not rn:
-            print(f"[ERR] invalid segment entry (missing run_name): {s}", file=sys.stderr)
+            log_err("invalid segment entry (missing run_name): {}".format(s))
             raise SystemExit(2)
         if "start_idx" not in s or "end_idx" not in s:
-            print(f"[ERR] invalid segment entry (missing start_idx/end_idx): {s}", file=sys.stderr)
+            log_err("invalid segment entry (missing start_idx/end_idx): {}".format(s))
             raise SystemExit(2)
 
     # output fps
@@ -208,7 +225,7 @@ def main():
         ensure_dir(frames_dir, "frames_dir")
         frames = list_frames_sorted(frames_dir)
         if not frames:
-            print(f"[ERR] no frames in {frames_dir} (run={run_dir})", file=sys.stderr)
+            log_err("no frames in {} (run={})".format(frames_dir, run_dir))
             raise SystemExit(2)
 
         skip = 0
@@ -218,9 +235,10 @@ def main():
                 skip = overlap
 
         if skip >= len(frames):
-            print(
-                f"[ERR] overlap too large: skip={skip} >= frames={len(frames)} for run={rn} (prev_end={prev_end}, cur_start={cur_start})",
-                file=sys.stderr,
+            log_err(
+                "overlap too large: skip={} >= frames={} for run={} (prev_end={}, cur_start={})".format(
+                    skip, len(frames), rn, prev_end, cur_start
+                )
             )
             raise SystemExit(2)
 
@@ -244,19 +262,21 @@ def main():
 
     lines = [x for x in src_ts.read_text(encoding="utf-8", errors="ignore").splitlines() if x.strip()]
     if merged_end_idx is None:
-        print(f"[ERR] cannot infer merged_end_idx from plan: {plan_path}", file=sys.stderr)
+        log_err("cannot infer merged_end_idx from plan: {}".format(plan_path))
         raise SystemExit(2)
     expected_count = merged_end_idx - merged_start_idx + 1
     if expected_count != merged_count:
-        print(
-            f"[ERR] merged_count mismatch: merged_count={merged_count} but plan implies {expected_count} (start={merged_start_idx}, end={merged_end_idx}).",
-            file=sys.stderr,
+        log_err(
+            "merged_count mismatch: merged_count={} but plan implies {} (start={}, end={}).".format(
+                merged_count, expected_count, merged_start_idx, merged_end_idx
+            )
         )
         raise SystemExit(2)
     if len(lines) < merged_start_idx + merged_count:
-        print(
-            f"[ERR] dataset timestamps too short: have={len(lines)} need>={merged_start_idx + merged_count} (start={merged_start_idx}, count={merged_count})",
-            file=sys.stderr,
+        log_err(
+            "dataset timestamps too short: have={} need>={} (start={}, count={})".format(
+                len(lines), merged_start_idx + merged_count, merged_start_idx, merged_count
+            )
         )
         raise SystemExit(2)
 
@@ -304,13 +324,13 @@ def main():
     }
     write_json_atomic(out_dir / "step_meta.json", step_meta, indent=2)
 
-    print("[OK] merge done.")
-    print(f"     out_dir     : {out_dir}")
-    print(f"     frames      : {out_frames} (count={merged_count})")
-    print(f"     root_files  : {out_dir}/*.txt/*.json")
-    print(f"     step_meta   : {out_dir / 'step_meta.json'}")
+    log_prog("merge done")
+    log_info("out_dir: {}".format(out_dir))
+    log_info("frames: {} (count={})".format(out_frames, merged_count))
+    log_info("root_files: {}/*.txt/*.json".format(out_dir))
+    log_info("step_meta: {}".format(out_dir / "step_meta.json"))
     if preview_ok:
-        print(f"     preview_mp4 : {preview_mp4}")
+        log_info("preview_mp4: {}".format(preview_mp4))
 
 
 if __name__ == "__main__":

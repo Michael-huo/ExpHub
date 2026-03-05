@@ -37,7 +37,7 @@ import sys
 from datetime import datetime
 
 import numpy as np
-from _common import list_frames_sorted, log_info, log_warn, log_err, write_json_atomic
+from _common import list_frames_sorted, log_err, log_info, log_prog, log_warn, write_json_atomic
 
 try:
     import cv2
@@ -50,6 +50,8 @@ try:
     from tqdm import tqdm
 except Exception:
     tqdm = None
+
+_BAR_FORMAT = "[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
 
 
 def ensure_dir(p):
@@ -269,7 +271,7 @@ def decode_ros_image_to_bgr(msg):
 def maybe_progress(iterable, quiet):
     if quiet or tqdm is None:
         return iterable
-    return tqdm(iterable, desc="Extract")
+    return tqdm(iterable, desc="Extract", bar_format=_BAR_FORMAT)
 
 
 def main():
@@ -337,12 +339,12 @@ def main():
     root_dir = out_dir
 
     if args.dry_run:
-        print("[DRY] out_dir: {}".format(out_dir))
-        print("[DRY] topic: {}".format(args.topic))
+        log_prog("dry run: out_dir={}".format(out_dir))
+        log_info("dry run: topic={}".format(args.topic))
         # 关键：把终点帧包含进采样网格。
         # 例如 dur=4s,fps=24Hz => 0..4s 共 97 帧（0..96），才能形成 4 个完整 1s 区间锚点。
         out_cnt = int(math.floor(float(args.duration) * float(args.fps) + 1e-9)) + 1
-        print("[DRY] duration={} fps={} -> frames={}".format(args.duration, args.fps, out_cnt))
+        log_info("dry run: duration={} fps={} -> frames={}".format(args.duration, args.fps, out_cnt))
         return
 
     ensure_dir(frames_dir)
@@ -355,7 +357,7 @@ def main():
         from genpy import Time
     except Exception as e:
         log_err("import rosbag/genpy failed. Run in ROS1 env (source /opt/ros/<distro>/setup.bash).")
-        print("      error: {}".format(e), file=sys.stderr)
+        log_err("error: {}".format(e))
         sys.exit(2)
 
     if not os.path.exists(args.bag):
@@ -381,9 +383,9 @@ def main():
         w0 = getattr(first_msg, "width", None)
         h0 = getattr(first_msg, "height", None)
         if w0 is not None and h0 is not None:
-            print("[INFO] first_msg: type={} encoding/format={} size={}x{}".format(mt, enc, w0, h0))
+            log_info("first_msg: type={} encoding/format={} size={}x{}".format(mt, enc, w0, h0))
         else:
-            print("[INFO] first_msg: type={} encoding/format={}".format(mt, enc))
+            log_info("first_msg: type={} encoding/format={}".format(mt, enc))
 
 
     # start time
@@ -418,9 +420,9 @@ def main():
     end_time_abs = start_time_abs + (out_count - 1) * dt
 
     if not args.quiet:
-        print("[INFO] out_dir: {}".format(out_dir))
-        print("[INFO] start_time_abs: {:.6f}  end_time_abs: {:.6f}".format(start_time_abs, end_time_abs))
-        print("[INFO] out_count: {}  fps: {:.3f}".format(out_count, fps))
+        log_info("out_dir: {}".format(out_dir))
+        log_info("start_time_abs: {:.6f}  end_time_abs: {:.6f}".format(start_time_abs, end_time_abs))
+        log_info("out_count: {}  fps: {:.3f}".format(out_count, fps))
 
     margin = 2.0
     st = Time.from_sec(start_time_abs - margin)
@@ -656,10 +658,10 @@ def main():
     write_json_atomic(os.path.join(root_dir, "step_meta.json"), step_meta, indent=2)
 
 
-    print("[OK] wrote dataset: {}".format(out_dir))
-    print("     frames: {}".format(frames_dir))
-    print("     root : {}".format(root_dir))
-    print("     count : {}".format(out_count))
+    log_prog("wrote dataset: {}".format(out_dir))
+    log_info("frames: {}".format(frames_dir))
+    log_info("root: {}".format(root_dir))
+    log_info("count: {}".format(out_count))
 
 
 if __name__ == "__main__":

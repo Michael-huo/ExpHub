@@ -47,11 +47,14 @@ import cv2
 import numpy as np
 import torch
 import lietorch
+from _common import log_err, log_info, log_prog, log_warn
 
 try:
     from tqdm import tqdm
 except Exception:
     tqdm = None
+
+_BAR_FORMAT = "[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
 
 
 _DIGITS_RE = re.compile(r"(\d+)")
@@ -121,12 +124,10 @@ def _resolve_timestamp(seq_i: int, file_frame_idx: int, timestamps: Optional[Lis
 
     return float(seq_i)
 
-
-def _maybe_tqdm(it: Iterable, disable: bool, desc: str):
+def _maybe_tqdm(it: Iterable, disable: bool, desc: str, total: Optional[int] = None):
     if disable or tqdm is None:
         return it
-    return tqdm(it, desc=desc)
-
+    return tqdm(it, desc=desc, total=total, bar_format=_BAR_FORMAT)
 
 def mat2quat_xyzw(R: np.ndarray) -> np.ndarray:
     R = np.asarray(R, dtype=np.float64)
@@ -436,11 +437,18 @@ def main():
 
     droid = None
     timestamps_used: List[float] = []
+    log_info(
+        "slam tracking start: frames={} (C++ backend running, please wait...)".format(
+            len(files)
+        )
+    )
+
 
     for t_int, image, intrinsics, ts in _maybe_tqdm(
         droid_stream(files, cfg),
-        disable=args.no_tqdm,
+        disable=True,
         desc="DROID track",
+        total=len(files),
     ):
         if not args.disable_vis:
             show_image(image[0])
@@ -474,9 +482,9 @@ def main():
     })
     _json_dump(slam_dir / "run_meta.json", run_meta)
 
-    print(f"[OK] traj saved: {tum_path}")
-    print(f"[OK] npz  saved: {npz_path}")
-    print(f"[OK] meta saved: {slam_dir / 'run_meta.json'}")
+    log_prog("traj saved: {}".format(tum_path))
+    log_info("npz saved: {}".format(npz_path))
+    log_info("meta saved: {}".format(slam_dir / "run_meta.json"))
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .cleanup import apply_keep_level, normalize_keep_level
 from .config import ConfigError, load_datasets_cfg, resolve_dataset
@@ -204,6 +204,83 @@ def _print_experiment_summary(
     _info(sep)
 
 
+def _strip_info_prefix(line: str) -> str:
+    s = line.strip()
+    if s.startswith("[INFO] "):
+        return s[len("[INFO] "):].strip()
+    return s
+
+
+def _extract_log_lines(log_path: Path, keywords: List[str]) -> List[str]:
+    out = []
+    if not log_path.is_file():
+        return out
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return out
+
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            continue
+        matched = False
+        for kw in keywords:
+            if kw in line:
+                matched = True
+                break
+        if not matched:
+            continue
+        out.append(_strip_info_prefix(line))
+    return out
+
+
+def _print_performance_profiling(exp_dir: Path, step_times: Dict[str, float]) -> None:
+    if not step_times:
+        return
+
+    total_time = sum(float(x) for x in step_times.values())
+    sep = "=" * 70
+    div = "-" * 70
+
+    _info(sep)
+    _info("EXPERIMENT PERFORMANCE PROFILING")
+    _info(sep)
+    for step_name, dt in step_times.items():
+        sec = float(dt)
+        pct = (sec / total_time * 100.0) if total_time > 0 else 0.0
+        _info("{:<10} : {:8.2f}s ({:5.1f}%)".format(step_name, sec, pct))
+
+    _info(div)
+    _info("CRITICAL PATH BREAKDOWN (Parsed from logs)")
+
+    logs_dir = exp_dir / "logs"
+    prompt_lines = _extract_log_lines(
+        logs_dir / "prompt.log",
+        ["Initialization completed in"],
+    )
+    infer_lines = _extract_log_lines(
+        logs_dir / "infer.log",
+        ["Initialization completed in", "avg_infer"],
+    )
+
+    if prompt_lines:
+        for line in prompt_lines:
+            _info("[Prompt] {}".format(line))
+    else:
+        _info("[Prompt] initialization marker not found")
+
+    if infer_lines:
+        for line in infer_lines:
+            _info("[Infer]  {}".format(line))
+    else:
+        _info("[Infer]  initialization/avg_infer markers not found")
+
+    _info(sep)
+    _info("TOTAL PIPELINE TIME: {:.2f}s".format(total_time))
+    _info(sep)
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m exphub", add_help=True)
 
@@ -358,6 +435,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         pass_prefixes=child_pass_prefixes,
         fail_tail_lines=fail_tail_lines,
     )
+    step_times = {}  # type: Dict[str, float]
 
     def _read_log_tail(log_path: Path, n: int) -> List[str]:
         try:
@@ -389,6 +467,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                     print(f"[TAIL] {line}")
             raise SystemExit(f"[ERR] step failed: {step_name}")
         sec = time.time() - t0
+        step_times[step_name] = float(sec)
         if out_hint:
             _step(f"{step_name} done sec={sec:.2f} out={out_hint}")
         else:
@@ -943,6 +1022,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             _run_step("stats", step_stats, str(ctx.stats_report_path))
 
         apply_keep_level(exp_dir, args.keep_level)
+        _print_performance_profiling(exp_dir, step_times)
 
     except (ConfigError, RunError) as e:
         _die(str(e))
