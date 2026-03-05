@@ -17,6 +17,12 @@ from .meta import sanitize_token, write_exp_meta
 from .runner import RunnerConfig, StepRunner, conda_exec, detect_conda_base, RunError
 
 
+_ANSI_RESET = "\033[0m"
+_ANSI_BOLD = "\033[1m"
+_ANSI_STEP = "\033[1;36m"
+_STEP_SEPARATOR = "=" * 70
+
+
 def _info(msg: str) -> None:
     print(f"[INFO] {msg}")
 
@@ -26,7 +32,22 @@ def _run(msg: str) -> None:
 
 
 def _step(msg: str) -> None:
-    print(f"[STEP] {msg}")
+    line = "{}[STEP] {}{}".format(_ANSI_STEP, msg, _ANSI_RESET)
+    sep = "{}{}{}".format(_ANSI_BOLD, _STEP_SEPARATOR, _ANSI_RESET)
+    lower_msg = msg.strip().lower()
+    is_start = (" start " in lower_msg) or lower_msg.endswith(" start")
+    is_done = (" done " in lower_msg) or lower_msg.endswith(" done")
+    is_fail = (" fail " in lower_msg) or lower_msg.endswith(" fail")
+
+    if is_start:
+        print(sep)
+        print(line)
+        print(sep)
+        return
+
+    print(line)
+    if is_done or is_fail:
+        print(sep)
 
 
 def _warn(msg: str) -> None:

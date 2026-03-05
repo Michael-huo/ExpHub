@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 
+_ANSI_RESET = "\033[0m"
+_ANSI_STEP = "\033[1;36m"
+_ANSI_ERR = "\033[31m"
+_ANSI_WARN = "\033[33m"
+
+
 class RunError(RuntimeError):
     def __init__(
         self,
@@ -140,6 +146,17 @@ def run_cmd(
     tail_cap = int(fail_tail_lines) if fail_tail_lines and int(fail_tail_lines) > 0 else 30
     tail = deque(maxlen=tail_cap)
     rc = -1
+    bar_line_active = False
+
+    def _colorize_terminal_line(line: str) -> str:
+        stripped = line.lstrip()
+        if stripped.startswith("[STEP]"):
+            return "{}{}{}".format(_ANSI_STEP, line, _ANSI_RESET)
+        if stripped.startswith("[ERR]"):
+            return "{}{}{}".format(_ANSI_ERR, line, _ANSI_RESET)
+        if stripped.startswith("[WARN]"):
+            return "{}{}{}".format(_ANSI_WARN, line, _ANSI_RESET)
+        return line
 
     lf = None
     try:
@@ -161,24 +178,35 @@ def run_cmd(
         assert proc.stdout is not None
 
         for raw_line in proc.stdout:
-            if lf is not None:
-                lf.write(raw_line)
-            line = raw_line.rstrip("\n")
+            line = raw_line.rstrip("\r\n")
             tail.append(line)
+            stripped = line.lstrip()
+            is_bar = ("[BAR]" in raw_line) or stripped.startswith("[BAR]")
+
+            if lf is not None and not is_bar:
+                lf.write(raw_line)
 
             if lvl == "quiet":
                 continue
+            if is_bar:
+                print("\r{}".format(line), end="", flush=True)
+                bar_line_active = True
+                continue
+            if bar_line_active:
+                print("")
+                bar_line_active = False
             if lvl == "debug":
-                print(line)
+                print(_colorize_terminal_line(line))
                 continue
 
             # info: only pass through key prefixed lines
-            stripped = line.lstrip()
             for p in prefixes:
                 if stripped.startswith(p):
-                    print(line)
+                    print(_colorize_terminal_line(line))
                     break
 
+        if bar_line_active and lvl != "quiet":
+            print("")
         rc = proc.wait()
         if lf is not None:
             lf.flush()
