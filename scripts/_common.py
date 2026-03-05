@@ -14,19 +14,19 @@ _IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
 def log_info(msg):
-    print("[INFO] {}".format(msg))
+    print("[INFO] {}".format(msg), flush=True)
 
 
 def log_warn(msg):
-    print("[WARN] {}".format(msg))
+    print("[WARN] {}".format(msg), flush=True)
 
 
 def log_prog(msg):
-    print("[PROG] {}".format(msg))
+    print("[PROG] {}".format(msg), flush=True)
 
 
 def log_err(msg):
-    print("[ERR] {}".format(msg), file=sys.stderr)
+    print("[ERR] {}".format(msg), file=sys.stderr, flush=True)
 
 
 def ensure_dir(path, name="directory"):

@@ -217,18 +217,28 @@ def main():
         )
 
     # Load model once
+    log_info("Initializing Qwen2-VL pipeline (IO bound process, please wait...)")
     t0 = time.time()
+
+    log_info("Loading processor...")
     processor = AutoProcessor.from_pretrained(
         str(model_dir),
         min_pixels=int(args.min_pixels),
         max_pixels=int(args.max_pixels),
         use_fast=bool(args.use_fast),
     )
+    t_proc = time.time() - t0
+    log_info(f"Processor loaded in {t_proc:.2f}s")
+
+    t1 = time.time()
+    log_info("Loading model weights...")
     model = Qwen2VLForConditionalGeneration.from_pretrained(
         str(model_dir),
         torch_dtype="auto",
         device_map="auto",
     ).eval()
+    t_mod = time.time() - t1
+    log_info(f"Model weights loaded in {t_mod:.2f}s")
 
     # ---- sanitize generation_config (avoid ignored-flags warning & avoid deprecation) ----
     gen_cfg = copy.deepcopy(model.generation_config)
@@ -240,9 +250,10 @@ def main():
     # Put max_new_tokens into generation_config so we DON'T pass both (fix deprecation warning)
     setattr(gen_cfg, "max_new_tokens", int(args.max_new_tokens))
 
+    t_total = time.time() - t0
     log_info(
-        "loaded model+processor in {:.2f}s | frames_avail={} | clips={} | kf_gap={}".format(
-            time.time() - t0, frames_avail, nclips, kf_gap
+        "Initialization completed in {:.2f}s | frames_avail={} | clips={} | kf_gap={}".format(
+            t_total, frames_avail, nclips, kf_gap
         )
     )
 

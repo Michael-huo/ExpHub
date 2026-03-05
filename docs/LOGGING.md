@@ -37,9 +37,18 @@
   - 路由：只输出到终端，不写入日志文件。
   - 呈现：使用 `\r` 回车原地刷新。
   - `scripts/prompt_gen.py` 统一使用 `tqdm(..., bar_format="[BAR] ...")` 输出推理进度，不再使用循环内手工 `[PROG] clip x/y done` 打点。
+  - `scripts/_infer_i2v_impl.py` 对 diffusers 管线调用 `pipeline.set_progress_bar_config(bar_format="[BAR] ...")`，统一以 `[BAR]` 前缀输出进度条。
 - `[STEP]` `[INFO]` `[WARN]` `[ERR]` `[PROG]`：
   - 路由：写入日志文件，并按 log level 规则透传到终端。
-  - 子脚本应优先通过 `scripts/_common.py` 的日志门面输出：`log_info/log_warn/log_prog/log_err`。
+  - 子脚本应优先通过 `scripts/_common.py` 的日志门面输出：`log_info/log_warn/log_prog/log_err`（统一 `flush=True`，降低子进程管道缓冲导致的日志滞后）。
+  - `infer_i2v` 链路的前缀集合固定为：`[PROG] [INFO] [WARN] [ERR] [BAR] [PROMPT]`。
+  - `scripts/infer_i2v.py::_run_filtered` 会对匹配前缀行执行 `strip()+换行` 并立即 `flush()`，避免进度条 `\r` 经过管道时缓冲滞留。
+  - `scripts/_infer_i2v_impl.py` 将 `prompt_hash8` 内联到 `[PROG]` 进度行（batch/single），`[PROMPT]` 行仅输出 base/delta/neg 文本。
+  - 推理初始化阶段输出 `[INFO]` 心跳：开始初始化、float8 量化开始、transformer 1/2 与 2/2 的分段耗时、以及初始化总耗时拆分（Loading/Quantization）。
+  - `scripts/prompt_gen.py` 初始化阶段输出 `[INFO]` 心跳：初始化开始、processor 加载耗时、model 权重加载耗时、初始化总耗时与 `frames_avail/clips/kf_gap` 摘要。
+- `[PROMPT]`：
+  - 路由：由 `infer_i2v` 转发并写入 `logs/infer.log`。
+  - 终端：`info/quiet` 默认不透传，`debug` 显示。
 - 其他未匹配行：
   - 路由：写入日志文件。
   - 终端：`info/quiet` 隐藏，`debug` 显示。
@@ -48,6 +57,7 @@
 - `info`（默认）：
   - 终端透传前缀匹配行：`[INFO] [WARN] [ERR] [PROG] [STEP]`
   - 终端显示 `[BAR]` 原地刷新行
+  - `[PROMPT]` 仅写入日志，不在终端透传
   - 其余输出只写入 `logs/*.log`
 - `debug`：
   - 终端透传全部子进程输出
