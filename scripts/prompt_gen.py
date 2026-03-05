@@ -358,6 +358,15 @@ def main():
 
     # Compact step metadata (additional, non-breaking).
     manifest_bytes = out_manifest.read_bytes()
+    manifest_size = int(len(manifest_bytes))
+    clip_prompts_size = 0
+    if out_json.is_file():
+        try:
+            clip_prompts_size = int(os.path.getsize(str(out_json)))
+        except Exception:
+            clip_prompts_size = 0
+    outputs_bytes_sum = int(manifest_size + clip_prompts_size)
+
     step_meta = {
         "step": "prompt",
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -366,8 +375,15 @@ def main():
         "frames_count": int(len(frame_files)),
         "clips_count": int(nclips),
         "manifest_path": str(out_manifest),
-        "manifest_size": int(len(manifest_bytes)),
+        "manifest_size": int(manifest_size),
         "manifest_sha1": hashlib.sha1(manifest_bytes).hexdigest(),
+        "outputs": {
+            "bytes_sum": int(outputs_bytes_sum),
+            "manifest_bytes_sum": int(manifest_size),
+            "clip_prompts_bytes_sum": int(clip_prompts_size),
+            "manifest_file_count": 1,
+            "clip_prompts_file_count": 1 if out_json.is_file() else 0,
+        },
     }
     write_json_atomic(out_manifest.parent / "step_meta.json", step_meta, indent=2)
 

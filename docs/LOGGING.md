@@ -5,7 +5,8 @@
 - 子进程完整输出可追溯，统一落盘到 `EXP_DIR/logs/`。
 
 ## 2. 终端摘要格式
-- 运行摘要：`[RUN] mode=... dataset=... seq=... exp_dir=... log_level=...`
+- 运行摘要：启动时输出 `EXPERIMENT SUMMARY` 区块，所有行使用 `[INFO]` 前缀，首尾使用 `======================================================================` 分隔。
+  - 固定键：`Mode`、`Dataset`、`Sequence`、`Tag`、`Resolution`、`FPS`、`Duration`、`GPUs`、`Keep Level`、`Exp Dir`
 - 步骤开始：`[STEP] <name> start`
 - 步骤完成：`[STEP] <name> done sec=... out=...`
 - 步骤失败：`[STEP] <name> FAIL sec=... rc=... log=...`

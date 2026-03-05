@@ -56,6 +56,25 @@ def ensure_dir(p):
     os.makedirs(p, exist_ok=True)
 
 
+def _dir_file_stats(dir_path):
+    """Return (file_count, bytes_sum) for direct files under a directory."""
+    if not os.path.isdir(dir_path):
+        return 0, 0
+
+    file_count = 0
+    bytes_sum = 0
+    for name in sorted(os.listdir(dir_path)):
+        fp = os.path.join(dir_path, name)
+        if not os.path.isfile(fp):
+            continue
+        file_count += 1
+        try:
+            bytes_sum += int(os.path.getsize(fp))
+        except Exception:
+            pass
+    return int(file_count), int(bytes_sum)
+
+
 
 
 def load_calib(calib_in, fx, fy, cx, cy, dist):
@@ -595,6 +614,10 @@ def main():
 
     # Step-level compact metadata (additional, non-breaking).
     actual_frame_count = len(list_frames_sorted(frames_dir))
+    _, frames_bytes_sum = _dir_file_stats(frames_dir)
+    keyframes_dir = os.path.join(root_dir, "keyframes")
+    keyframes_file_count, keyframes_bytes_sum = _dir_file_stats(keyframes_dir)
+    keyframes_frame_count = len(list_frames_sorted(keyframes_dir)) if os.path.isdir(keyframes_dir) else 0
     step_meta = {
         "step": "segment",
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -613,7 +636,21 @@ def main():
         },
         "outputs": {
             "frame_count": int(actual_frame_count),
+            "bytes_sum": int(frames_bytes_sum),
             "timestamps_count": int(len(ts_lines)),
+            "keyframes_frame_count": int(keyframes_frame_count),
+            "keyframes_bytes_sum": int(keyframes_bytes_sum),
+            "keyframes_file_count": int(keyframes_file_count),
+            "keyframe_count": int(keyframes_frame_count),
+            "keyframe_bytes_sum": int(keyframes_bytes_sum),
+            "ori": {
+                "frame_count": int(actual_frame_count),
+                "bytes_sum": int(frames_bytes_sum),
+            },
+            "keyframes": {
+                "frame_count": int(keyframes_frame_count),
+                "bytes_sum": int(keyframes_bytes_sum),
+            },
         },
     }
     write_json_atomic(os.path.join(root_dir, "step_meta.json"), step_meta, indent=2)
