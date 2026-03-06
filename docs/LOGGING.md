@@ -1,93 +1,38 @@
-# ExpHub 日志规范（PR-A）
+# ExpHub 日志与可观测性规范 (LOGGING.md)
 
-## 1. 目标
-- 编排层终端输出聚焦关键信息，避免子进程原始输出刷屏。
-- 子进程完整输出可追溯，统一落盘到 `EXP_DIR/logs/`。
+> **文档定位**：本文档定义了 ExpHub 的终端 UI 呈现规范、子进程日志收集机制，以及用于性能诊断的“心跳打点”契约。AI 在编写业务逻辑时，严禁使用原生 `print()`，必须严格遵循此处的日志门面规范。
 
-## 2. 终端摘要格式
-- 运行摘要：启动时输出 `EXPERIMENT SUMMARY` 区块，所有行使用 `[INFO]` 前缀，首尾使用 `======================================================================` 分隔。
-  - 固定键：`Mode`、`Dataset`、`Sequence`、`Tag`、`Resolution`、`FPS`、`Duration`、`GPUs`、`Keep Level`、`Exp Dir`
-- 步骤开始：`[STEP] <name> start`
-- 步骤完成：`[STEP] <name> done sec=... out=...`
-- 步骤失败：`[STEP] <name> FAIL sec=... rc=... log=...`
-- 失败时会额外打印 log 最后 N 行：`[TAIL] ...`
-- `cli.py::_step` 会在步骤开始时打印上下分隔线，并在步骤完成/失败后打印收尾分隔线。
-- 非 doctor 模式在最终 `DONE. EXP_DIR=...` 前会输出 `EXPERIMENT PERFORMANCE PROFILING` 区块。
-  - Macro：逐 step 打印耗时与占比（数据来源：编排层 `_run_step` 计时）。
-  - Micro（Critical Path）：从 `logs/prompt.log` 解析 `Initialization completed in`，从 `logs/infer.log` 解析 `Initialization completed in` 与 `avg_infer` 并回显。
-  - 该区块是只读汇总，不改变任何 step 语义或产物。
+## 1. 核心设计哲学
+ExpHub 的日志系统采用**“终端极简，落盘全量”**的路由策略：
+- **终端 (UI)**：只呈现进度、核心警告和性能摘要，绝不允许外部算法库（如 C++ 编译的 SLAM、ffmpeg）的杂乱输出刷屏。
+- **落盘 (Log Files)**：所有底层子进程的完整标准输出/错误，都被拦截并完整写入 `EXP_DIR/logs/*.log` 文件，供排障使用。
 
-## 3. 日志目录与文件命名
-- 目录：`EXP_DIR/logs/`
-- 文件（按 step）：
-  - `segment.log`
-  - `prompt.log`
-  - `infer.log`
-  - `merge.log`
-  - `slam_ori.log`
-  - `slam_gen.log`
-  - `eval.log`
-  - `stats.log`
+## 2. 标准日志前缀契约 (Logging Facade)
+代码中所有的输出必须携带以下标准前缀之一，调度器会根据前缀决定如何路由：
 
-说明：同一步骤内若包含多次子命令（如 `eval`），会追加写入同一个 step 日志文件。  
-实现说明：`exphub/runner.py::StepRunner` 统一维护每个 `log_name` 的打开状态（首次 `w`，后续 `a`），并负责将 step 子命令路由到对应日志文件。  
-补充：子进程执行统一使用 `stderr=subprocess.STDOUT`，`stderr` 与 `stdout` 会合流写入同一 `logs/<step>.log`。  
-补充：`eval` 步骤中 `evo_traj/evo_ape` 输出会同时写入 `eval/*.txt` 与 `logs/eval.log`。  
-补充：`[BAR]` 行不会写入任何 `logs/*.log`，仅用于终端原地刷新。
+| 前缀 | 适用场景 | 路由行为 |
+|---|---|---|
+| `[STEP]` | 由顶层外壳 (`cli.py`) 使用，标识 7 大执行阶段的开始与结束。 | 终端高亮显示，并带有分割线。 |
+| `[INFO]` | 核心状态变更、模型加载完毕、高精度耗时心跳打点。 | 终端透传显示，落盘记录。 |
+| `[PROG]` | 批处理任务的进度宣告（如 `infer` 阶段的段数播报）。 | 终端透传显示，落盘记录。 |
+| `[WARN]` | 非致命错误（如找不到可选的外部配置，回退默认值）。 | 终端黄色高亮，落盘记录。 |
+| `[ERR]` | 致命错误，紧接着抛出异常或 `exit()`。 | 终端红色高亮，落盘记录，并在外壳层触发 `[TAIL]` 追溯。 |
+| `[PROMPT]`| 仅用于记录生成的 Base/Delta 文本或 Hash 值。 | 终端静默（除非开启 Debug），落盘记录供追溯。 |
 
-## 4. 子进程输出路由矩阵（run_cmd）
-- `[BAR]`（新增高频进度条前缀）：
-  - 判定条件：行内包含 `[BAR]`（含前导空格场景）。
-  - 路由：只输出到终端，不写入日志文件。
-  - 呈现：使用 `\r` 回车原地刷新。
-  - `scripts/segment_make.py` 的 `tqdm` 统一使用 `bar_format="[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"`。
-  - `scripts/slam_droid.py` 在跟踪循环中强制 `disable=True`，默认不输出进度条（降低 DROID C++ 后端输出与终端 UI 耦合）。
-  - `scripts/prompt_gen.py` 统一使用 `tqdm(..., bar_format="[BAR] ...")` 输出推理进度，不再使用循环内手工 `[PROG] clip x/y done` 打点。
-  - `scripts/_infer_i2v_impl.py` 对 diffusers 管线调用 `pipeline.set_progress_bar_config(bar_format="[BAR] ...")`，统一以 `[BAR]` 前缀输出进度条。
-- `[STEP]` `[INFO]` `[WARN]` `[ERR]` `[PROG]`：
-  - 路由：写入日志文件，并按 log level 规则透传到终端。
-  - 子脚本应优先通过 `scripts/_common.py` 的日志门面输出：`log_info/log_warn/log_prog/log_err`（统一 `flush=True`，降低子进程管道缓冲导致的日志滞后）。
-  - `scripts/segment_make.py`、`scripts/merge_seq.py`、`scripts/slam_droid.py`、`scripts/stats_collect.py` 已移除 raw `print(...)`，统一经日志门面输出。
-  - `scripts/merge_seq.py` 调用 `ffmpeg` 时会捕获 stdout/stderr，仅在失败时输出 `[WARN]` 摘要，避免外部二进制直接刷屏终端。
-  - `infer_i2v` 链路的前缀集合固定为：`[PROG] [INFO] [WARN] [ERR] [BAR] [PROMPT]`。
-  - `scripts/infer_i2v.py::_run_filtered` 会对匹配前缀行执行 `strip()+换行` 并立即 `flush()`，避免进度条 `\r` 经过管道时缓冲滞留。
-  - `scripts/_infer_i2v_impl.py` 将 `prompt_hash8` 内联到 `[PROG]` 进度行（batch/single），`[PROMPT]` 行仅输出 base/delta/neg 文本。
-  - 推理初始化阶段输出 `[INFO]` 心跳：开始初始化、float8 量化开始、transformer 1/2 与 2/2 的分段耗时、以及初始化总耗时拆分（Loading/Quantization）。
-  - `scripts/prompt_gen.py` 初始化阶段输出 `[INFO]` 心跳：初始化开始、processor 加载耗时、model 权重加载耗时、初始化总耗时与 `frames_avail/clips/kf_gap` 摘要。
-- `[PROMPT]`：
-  - 路由：由 `infer_i2v` 转发并写入 `logs/infer.log`。
-  - 终端：`info/quiet` 默认不透传，`debug` 显示。
-- 其他未匹配行：
-  - 路由：写入日志文件。
-  - 终端：`info/quiet` 隐藏，`debug` 显示。
+## 3. 进度条与原地刷新机制 (`[BAR]`)
+在长耗时任务（如推理、视频生成）中，严禁让进度条产生“刷屏”效应（即每秒打印新的一行）。
+- **契约要求**：凡是使用 `tqdm` 等进度条工具，必须配置格式化字符串使其以 `[BAR]` 开头。
+  - 例如：`bar_format="[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"`
+- **底层路由魔法**：外壳调度器 (`runner.py`) 一旦检测到输出行包含 `[BAR]`，会在终端强制使用 `\r` (Carriage Return) 进行**原地刷新**，且**绝对不会**将该行写入 `logs/*.log` 文件，从而保证日志文件的纯净。
 
-## 5. `--log_level` 行为
-- `info`（默认）：
-  - 终端透传前缀匹配行：`[INFO] [WARN] [ERR] [PROG] [STEP]`
-  - 终端显示 `[BAR]` 原地刷新行
-  - `[PROMPT]` 仅写入日志，不在终端透传
-  - 其余输出只写入 `logs/*.log`
-- `debug`：
-  - 终端透传全部子进程输出
-  - `[BAR]` 仍使用 `\r` 原地刷新
-  - 同时完整写入 `logs/*.log`（`[BAR]` 例外）
-- `quiet`：
-  - 终端仅显示编排层摘要
-  - 子进程输出仅写入 `logs/*.log`（`[BAR]` 也不显示）
-  - 失败时仍打印最后 N 行
+## 4. 性能诊断与心跳打点 (Performance Profiling)
+ExpHub 会在全流程结束时打印 `EXPERIMENT PERFORMANCE PROFILING` 面板。该面板的数据不仅仅来源于外壳的计时，更依赖底层脚本输出的**“高精度心跳日志”**。
 
-## 6. ANSI 终端样式
-- ANSI 颜色仅用于终端展示，不写入日志文件。
-- 子进程透传颜色：
-  - `[STEP]`：加粗青色
-  - `[ERR]`：红色
-  - `[WARN]`：黄色
-- 编排层 `cli.py::_step` 同步使用加粗/颜色，保持父子进程视觉一致。
+AI 在重构模型加载或推理逻辑时，必须在关键节点输出包含具体耗时的 `[INFO]` 日志。
+- **加载与量化心跳**：例如 `[INFO] Initialization completed in 45.20s (Loading: 10.00s, Quantization: 35.20s)`。
+- **单帧/单段推理心跳**：例如 `[INFO] done: segments=4 frames=97 init=45.20s infer_sum=120.50s avg_infer=30.12s avg_frame=1.24s total=165.70s`。
+- **统计解析 (Stats Collect)**：`stats_collect.py` 会通过正则匹配上述标准的 `[INFO]` 行，提取耗时数据进行大盘渲染。如果心跳格式被破坏，性能面板将失效。
 
-## 7. 换行与进度条边界
-- 当上一条终端可见输出为 `[BAR]` 且随后出现普通换行输出时，路由器会先补一个换行，再打印普通行，避免文本粘连。
-- 子进程结束时若最后一条终端可见输出为 `[BAR]`，路由器会补一个收尾换行，避免后续提示符或 `[STEP]` 贴在同一行。
-
-## 8. 设计边界
-- 本规范只改变“输出展示方式”，不改变任何 step 的算法/语义/产物契约。
-- `doctor` 为只读模式，不创建 `EXP_DIR`，因此不落地 `logs/`。
+## 5. 外部库防污染规则 (Pollution Control)
+- **C++ 与第三方二进制**：当调用如 `evo`、`ffmpeg` 或 DROID-SLAM 核心库时，它们常常无视 Python 的 logging 规则直接向 `stdout/stderr` 吐数据。
+- **处理要求**：必须将这类调用包裹在 `subprocess.PIPE` 中（如 `_run_filtered`），并在 Python 层进行前缀过滤。只有符合标准前缀的行才允许透传到终端，其余行一律静默落盘。

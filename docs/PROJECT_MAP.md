@@ -1,62 +1,53 @@
-# ExpHub 工程地图（PR2c）
+# ExpHub 目录结构与工程地图 (PROJECT_MAP.md)
 
-## 1. 核心模块（`exphub/`）
+> **文档定位**：本文档展示了 ExpHub 项目的物理文件树、各模块的具体职责，以及从顶层外壳到底层脚本的调用映射关系。AI 在进行跨文件重构或寻找特定功能逻辑时，请首选参考此地图。
 
-| 路径 | 职责 | 关键输入 | 关键输出 |
-|---|---|---|---|
-| `exphub/__main__.py` | 模块入口转发 | CLI 参数 | 调用 `cli.main()` |
-| `exphub/cli.py` | 流水线编排与 mode 分发 | 用户参数、数据配置、脚本路径 | 统一目录契约下的实验产物 |
-| `exphub/context.py` | 实验上下文与路径中心 | sanitize 后参数、`exphub_root`、可选 `exp_root` | `EXP_NAME`、阶段目录路径、关键产物路径、`kf_gap` 与 segment 计数 |
-| `exphub/config.py` | `datasets.json` 解析 | `config/datasets.json` | `DatasetResolved`（bag/topic/intrinsics） |
-| `exphub/meta.py` | 元信息与 token 辅助 | 运行参数 | `exp_meta.json` 读写、token/数值规范化工具 |
-| `exphub/runner.py` | 执行器封装 | cmd/env/cwd、`platform.yaml` | `run_env_python`、`ros_exec`、`conda_exec` |
-| `exphub/cleanup.py` | `keep_level` 清理策略 | `exp_dir`、`keep_level` | 删除非必要调试文件 |
+## 1. 核心调度层 (`exphub/`)
+该目录下的文件构成了 ExpHub 的“平台引擎”，负责全局调度、参数解析与环境穿透，**不包含具体的算法业务逻辑**。
 
-## 2. 编排脚本（`scripts/`）
+| 文件路径 | 核心职责 | 关键数据/产物 |
+|---|---|---|
+| `exphub/__main__.py` | 框架统一入口，拦截 `python -m exphub` | 转发至 `cli.main()` |
+| `exphub/cli.py` | 命令行参数解析、流水线模式 (mode) 分发、依赖校验 (doctor) | 统筹整个实验生命周期 |
+| `exphub/context.py` | 实验上下文中心，负责计算所有相对/绝对路径及命名契约 | 输出 `EXP_NAME` 及各阶段落盘路径 |
+| `exphub/runner.py` | **跨环境执行器**。封装 `subprocess`，调用目标环境的绝对路径解释器拉起子进程 | 提供 `run_env_python`, `ros_exec`, `conda_exec` |
+| `exphub/config.py` | `datasets.json` 解析与校验 | `DatasetResolved` (含 bag/topic/intrinsics) |
+| `exphub/meta.py` | 元信息辅助，实验参数序列化 | 读写 `step_meta.json` |
+| `exphub/cleanup.py` | 中间文件清理策略 | 根据 `keep_level` 删除缓存 |
 
-| 路径 | 被哪个 mode 调用 | 主要职责 | 在新目录中的落盘 |
-|---|---|---|---|
-| `scripts/segment_make.py` | `segment` | 生成标准化片段数据 | `segment/*` |
-| `scripts/prompt_gen.py` | `prompt` | 生成 prompt manifest | `prompt/manifest.json`（及 `segment/clip_prompts.json`） |
-| `scripts/infer_i2v.py` | `infer` | i2v 批量推理入口（内部调用 `_infer_i2v_impl.py`） | `infer/runs/*`、`infer/runs_plan.json`、`infer/step_meta.json` |
-| `scripts/merge_seq.py` | `merge` | 合并推理片段 | `merge/frames/*`、`merge/{calib.txt,timestamps.txt,merge_meta.json,step_meta.json}` |
-| `scripts/slam_droid.py` | `slam` | 运行 DROID-SLAM | `slam/<track>/{traj_est.tum,traj_est.npz,run_meta.json}`（至少 `ori/gen`） |
-| `scripts/stats_collect.py` | `stats` | 统计收集与汇总 | `stats/report.json`、`stats/compression.json` |
+## 2. 算法实现层 (`scripts/`)
+该目录下的脚本是具体的“干活者”，它们由 `exphub/` 跨环境拉起，负责具体的算法执行。
 
-## 3. mode 调用链
+| 文件路径 | 对应 Pipeline 阶段 | 核心职责 |
+|---|---|---|
+| `scripts/_common.py` | **全局基建** (All) | **极其重要**：负责解析 `config/platform.yaml`；提供标准日志门面 (`log_info`, `[BAR]`) |
+| `scripts/segment_make.py` | `segment` | 解析原始数据集，提取标准关键帧序列 |
+| `scripts/prompt_gen.py` | `prompt` | 调用 VLM 生成 `manifest.json` |
+| `scripts/infer_i2v.py` | `infer` (外壳) | i2v 任务规划、多进程分发与合并调度 |
+| `scripts/_infer_i2v_impl.py`| `infer` (内核) | Wan2.2 实际的 float8 量化与张量推理逻辑 |
+| `scripts/merge_seq.py` | `merge` | 时间轴对齐、冗余去重、合并长视频/图像序列 |
+| `scripts/slam_droid.py` | `slam` | 调用 DROID-SLAM 提取生成轨道或原始轨道的位姿 |
+| `scripts/stats_collect.py` | `stats` | 扫描各阶段 `step_meta.json`，汇总全链路性能数据 |
 
-| mode | 调用链 |
+## 3. 配置文件 (`config/`)
+平台配置中枢，实现代码与环境的彻底解耦。
+
+| 文件路径 | 核心职责 | 备注 |
+|---|---|---|
+| `config/platform.yaml` | **外部依赖注册表** | 配置各跨域 Python 解释器、模型路径、算法源码路径 |
+| `config/datasets.json` | **数据源注册表** | 定义实验可用的数据集 (如 ROS bag 路径、内参矩阵) |
+| `config/prompt_manifest.json`| **提示词模板库** | 提供基础 prompt 与负向 prompt 的预设配置 |
+
+## 4. 动态调用映射网格 (Invocation Map)
+展示 `python -m exphub --mode <X>` 是如何一步步穿透到最底层的算法内核的：
+
+| 模式 (Mode) | 调度链条 (Call Chain) |
 |---|---|
-| `segment` | `cli.main -> step_segment -> ros_exec(segment_make.py)` |
-| `prompt` | `cli.main -> step_prompt -> run_env_python(prompt_gen.py)` |
-| `infer` | `cli.main -> step_infer -> run_env_python(infer_i2v.py -> _infer_i2v_impl.py)` |
-| `merge` | `cli.main -> step_merge -> run_env_python(merge_seq.py)` |
-| `slam` | `cli.main -> step_slam -> run_env_python(slam_droid.py)` |
-| `eval` | `cli.main -> step_eval -> run_env_python(evo_traj/evo_ape)` |
-| `stats` | `cli.main -> step_stats -> run_env_python(stats_collect.py)` |
-| `doctor` | `cli.main -> step_doctor`（只读） |
-| `all` | `segment -> prompt -> infer -> merge -> slam -> eval -> stats` |
-
-## 4. 目录与依赖关系
-- 实验根目录：`experiments/<dataset>/<sequence>/<EXP_NAME>/`
-- 关键依赖链：
-  - `prompt` 依赖 `segment/frames`
-  - `infer` 依赖 `prompt/manifest.json` 与 `segment/*`
-  - `merge` 依赖 `infer/runs` + `infer/runs_plan.json`
-- 运行解释器与外部仓库/模型路径默认值来自 `config/platform.yaml`。
-- `slam(gen)` 依赖 `merge/frames`
-- `eval` 依赖 `slam/ori/traj_est.tum` 与 `slam/gen/traj_est.tum`
-- `slam` 步骤直接写最终目录 `slam/<track>/`，不再通过临时 `slam` 目录重命名。
-- `EXP_NAME` 与实验子目录路径由 `ExperimentContext` 统一派生，减少 `cli.py` 内重复拼接。
-- 清理时机：非 `doctor` 模式在步骤完成后执行 `apply_keep_level`。
-
-## 5. `doctor` 检查要点
-- 输出新 mode 列表与目录契约摘要。
-- 脚本存在性清单按“当前真实调用脚本”检查（即当前 `scripts/*.py` 文件名）。
-- conda 工具检查统一捕获异常，失败只记 `WARN`，继续后续检查。
-- 保证无副作用：不创建实验目录与产物。
-
-## 6. 日志机制
-- 编排层启动时输出 `[INFO] EXPERIMENT SUMMARY` 区块，步骤阶段输出 `[STEP]` 摘要。
-- 子进程完整输出写入 `EXP_DIR/logs/<step>.log`。
-- 终端展示受 `--log_level` 控制（`info|debug|quiet`），失败时会打印日志尾部若干行。
+| `segment` | `cli.py` -> `runner.ros_exec` -> `segment_make.py` |
+| `prompt` | `cli.py` -> `runner.run_env_python` -> `prompt_gen.py` |
+| `infer` | `cli.py` -> `runner.run_env_python` -> `infer_i2v.py` -> `sys.executable` -> `_infer_i2v_impl.py` |
+| `merge` | `cli.py` -> `runner.run_env_python` -> `merge_seq.py` |
+| `slam` | `cli.py` -> `runner.run_env_python` -> `slam_droid.py` |
+| `eval` | `cli.py` -> `runner.run_env_python` -> `evo_traj` / `evo_ape` (外部二进制工具) |
+| `stats` | `cli.py` -> `runner.run_env_python` -> `stats_collect.py` |
+| `all` | 依次自动串行执行上述 1~7 步 |
