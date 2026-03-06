@@ -31,7 +31,7 @@ import subprocess
 from collections import deque
 from pathlib import Path
 from datetime import datetime
-from _common import ensure_dir, ensure_file, list_frames_sorted, write_json_atomic
+from _common import ensure_dir, ensure_file, get_platform_config, list_frames_sorted, write_json_atomic
 
 
 ALLOW_PREFIX = ("[PROG]", "[INFO]", "[WARN]", "[ERR]", "[BAR]", "[PROMPT]")
@@ -55,15 +55,6 @@ def _resolve_frames_dir(segment_dir: Path) -> Path:
     if frames.is_dir():
         return frames
     return segment_dir
-
-
-def _torchrun_cmd(gpus: int) -> list:
-    if gpus <= 1:
-        return []
-    import shutil
-
-    tr = shutil.which("torchrun") or "torchrun"
-    return [tr, "--nproc_per_node", str(gpus)]
 
 
 def _run_filtered(cmd: list, cwd: Path, env: dict) -> int:
@@ -97,10 +88,13 @@ def _run_filtered(cmd: list, cwd: Path, env: dict) -> int:
 
 
 def main():
+    cfg = get_platform_config()
+    default_videox_repo = cfg.get("repos", {}).get("videox_fun", "")
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--segment_dir", required=True, help="ExpHub segment dir (contains frames/) or frames dir")
     ap.add_argument("--exp_dir", required=True, help="ExpHub experiment dir (will create infer/ subdir inside)")
-    ap.add_argument("--videox_root", default="/data/hx/VideoX-Fun", help="VideoX-Fun repo root")
+    ap.add_argument("--videox_root", default=default_videox_repo, help="VideoX-Fun repo root")
     ap.add_argument("--python", default="python3", help="Python executable (run inside videox env)")
 
     ap.add_argument("--gpus", type=int, default=1)
@@ -191,6 +185,10 @@ def main():
     runs_root = infer_dir / "runs"
     runs_root.mkdir(parents=True, exist_ok=True)
 
+    if not str(args.videox_root).strip():
+        raise SystemExit(
+            "[ERR] --videox_root is empty. Set repos.videox_fun in config/platform.yaml or pass --videox_root."
+        )
     videox_root = Path(args.videox_root).resolve()
     ensure_dir(videox_root, "videox_root")
     this_dir = Path(__file__).resolve().parent
@@ -222,12 +220,18 @@ def main():
     old_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(videox_root) + (os.pathsep + old_pp if old_pp else "")
 
-    # Build cmd
-    base = _torchrun_cmd(args.gpus)
-    if base:
-        cmd = base + [str(predict_script)]
+    # Build cmd using current interpreter to avoid PATH-dependent executable lookup.
+    py_exec = sys.executable if getattr(sys, "executable", "") else str(args.python)
+    if int(args.gpus) > 1:
+        cmd = [
+            py_exec,
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node={}".format(int(args.gpus)),
+            str(predict_script),
+        ]
     else:
-        cmd = [args.python, str(predict_script)]
+        cmd = [py_exec, str(predict_script)]
 
     cmd += [
         "--gpus",

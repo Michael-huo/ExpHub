@@ -15,7 +15,7 @@ import torch
 from tqdm import tqdm
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
-from _common import ensure_dir, list_frames_sorted, log_info, log_prog, log_warn, write_json_atomic
+from _common import ensure_dir, get_platform_config, list_frames_sorted, log_info, log_prog, log_warn, write_json_atomic
 
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 IDX_RE = re.compile(r"(\d+)")
@@ -130,6 +130,12 @@ def _clean_prompt(s: str) -> str:
 
 
 def main():
+    try:
+        cfg = get_platform_config()
+        default_model_dir = cfg.get("models", {}).get("qwen2_vl", {}).get("path", "")
+    except Exception:
+        default_model_dir = ""
+
     ap = argparse.ArgumentParser()
 
     ap.add_argument("--segment_dir", default="", help="segment dir (contains frames/) OR frames dir")
@@ -141,7 +147,7 @@ def main():
     ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--num_segments", type=int, default=0)
 
-    ap.add_argument("--model_dir", default="/data/hx/Qwen2-VL-Prompt/models/Qwen2-VL-7B-Instruct")
+    ap.add_argument("--model_dir", default=default_model_dir)
     ap.add_argument("--use_fast", action="store_true", help="use fast processor (default False)")
     ap.add_argument("--min_pixels", type=int, default=256 * 28 * 28)
     ap.add_argument("--max_pixels", type=int, default=1024 * 28 * 28)
@@ -164,6 +170,11 @@ def main():
         raise SystemExit("[ERR] must provide --frames_dir or --segment_dir")
 
     frames_dir = ensure_dir(frames_dir, "frames_dir")
+
+    if not str(args.model_dir).strip():
+        raise SystemExit(
+            "[ERR] --model_dir is empty. Set models.qwen2_vl.path in config/platform.yaml or pass --model_dir."
+        )
 
     model_dir = Path(args.model_dir).resolve()
     try:

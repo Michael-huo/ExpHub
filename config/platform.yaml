@@ -1,0 +1,24 @@
+# ==============================================================================
+# ExpHub 平台外部依赖汇总配置 (config/platform.yaml)
+# 作用：统一管理外部 Conda 环境、算法仓库 (Repos) 和模型资产 (Models)
+# ==============================================================================
+
+environments:
+  prompt_python: "/home/hx/anaconda3/envs/vlm_prompt/bin/python"
+  infer_python:  "/home/hx/anaconda3/envs/videox/bin/python"
+  slam_python:   "/home/hx/anaconda3/envs/droid/bin/python"
+
+repos:
+  videox_fun: "/data/hx/VideoX-Fun"
+  droid_slam: "/data/hx/DROID-SLAM"
+
+models:
+  qwen2_vl:
+    path: "/data/hx/Qwen2-VL/models/Qwen2-VL-7B-Instruct" 
+    
+  wan2_2:
+    path: "/data/hx/VideoX-Fun/models/Diffusion_Transformer/Wan2.2-Fun-A14B-InP"
+    config: "/data/hx/VideoX-Fun/config/wan2.2/wan_civitai_i2v.yaml"
+    
+  droid:
+    path: "/data/hx/DROID-SLAM/droid.pth"

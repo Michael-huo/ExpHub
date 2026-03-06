@@ -43,6 +43,8 @@
 ### 2.2 `scripts/prompt_gen.py`
 - 职责：读取 `segment/frames`，调用 Qwen2-VL 生成 clip prompt 与 manifest。
 - 关键参数：`--frames_dir|--segment_dir`、`--exp_dir`、`--fps`、`--kf_gap`、`--base_idx`、`--model_dir`、`--out_manifest`。
+- 默认参数来源：优先读取 `config/platform.yaml` 的 `models.qwen2_vl.path`；读取失败时回退为空字符串（需显式传参或保证配置可读）。
+- 空值策略：`--model_dir` 为空时立即报错退出，避免将空字符串解析为当前目录。
 - 输入依赖：Qwen 模型目录、可读帧目录、`transformers/torch`。
 - 输出产物：
   - 必需：`prompt/manifest.json`
@@ -60,6 +62,9 @@
 ### 2.3 `scripts/infer_i2v.py`
 - 职责：根据 `segment/frames` 生成分段计划并触发 i2v 批量推理。
 - 关键参数：`--segment_dir`、`--exp_dir`、`--videox_root`、`--fps`、`--kf_gap`、`--base_idx`、`--num_segments`、`--gpus`。
+- 默认参数来源：`--videox_root` 默认读取 `config/platform.yaml` 的 `repos.videox_fun`。
+- 空值策略：`--videox_root` 为空时立即报错退出，避免将空字符串解析为当前目录。
+- 子进程执行：统一使用当前解释器 `sys.executable`；多卡走 `-m torch.distributed.run`，避免对 `torchrun` 可执行文件 PATH 的依赖。
 - 编排层默认传参：`--gpus=2`（可由 CLI 显式覆盖）。
 - 输入依赖：VideoX-Fun 仓库与环境、推理脚本、可用 GPU。
 - 输出产物：
@@ -94,6 +99,8 @@
 ### 2.5 `scripts/slam_droid.py`
 - 职责：在输入序列上执行 DROID-SLAM，输出 `traj_est.tum/npz` 与 `run_meta.json`。
 - 关键参数：`--segment_dir`、`--out_dir`、`--slam_out_dir`、`--droid_repo`、`--weights`、`--fps`、`--undistort_mode`。
+- 默认参数来源：优先读取 `config/platform.yaml` 的 `repos.droid_slam` 与 `models.droid.path`；读取失败时分别回退为 `""` 和 `droid.pth`。
+- 空值策略：`--droid_repo` 或 `--weights` 为空时立即报错退出，避免将空字符串解析为当前目录。
 - 输入依赖：DROID 仓库、权重、`frames+calib(+timestamps)`。
 - 输出产物：
   - 必需：`slam/<track>/traj_est.tum`
@@ -112,6 +119,7 @@
 ### 2.6 `scripts/_infer_i2v_impl.py`
 - 职责：i2v 核心引擎（Wan2.2 backend），按分段计划生成各 run 并写计划元数据。
 - 关键参数：`--batch`、`--frames_dir`、`--kf_gap`、`--dataset_fps`、`--fps`、`--runs_parent`、`--exp_name`。
+- 默认参数来源：`config_path/model_name` 在未显式传参时读取 `config/platform.yaml` 的 `models.wan2_2.{config,path}`。
 - 输入依赖：VideoX 模型、配置、GPU 环境。
 - 输出产物（由 infer 编排承接到 `infer/`）：run 目录、计划文件、参数元数据。
 - 被调用：`infer_i2v.py` 间接调用。

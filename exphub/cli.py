@@ -4,6 +4,7 @@ import argparse
 import datetime
 import json
 import os
+import shlex
 import shutil
 import sys
 import time
@@ -14,7 +15,7 @@ from .cleanup import apply_keep_level, normalize_keep_level
 from .config import ConfigError, load_datasets_cfg, resolve_dataset
 from .context import ExperimentContext
 from .meta import sanitize_token, write_exp_meta
-from .runner import RunnerConfig, StepRunner, conda_exec, detect_conda_base, RunError
+from .runner import RunnerConfig, StepRunner, _get_platform_python, conda_exec, detect_conda_base, RunError
 
 
 _ANSI_RESET = "\033[0m"
@@ -284,6 +285,26 @@ def _print_performance_profiling(exp_dir: Path, step_times: Dict[str, float]) ->
 def main(argv: Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m exphub", add_help=True)
 
+    try:
+        try:
+            from scripts._common import get_platform_config
+        except Exception:
+            local_scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+            if str(local_scripts_dir) not in sys.path:
+                sys.path.insert(0, str(local_scripts_dir))
+            from _common import get_platform_config
+
+        _cfg = get_platform_config()
+        _def_qwen = _cfg.get("models", {}).get("qwen2_vl", {}).get("path", "")
+        _def_videox = _cfg.get("repos", {}).get("videox_fun", "")
+        _def_droid_repo = _cfg.get("repos", {}).get("droid_slam", "")
+        _def_droid_w = _cfg.get("models", {}).get("droid", {}).get("path", "")
+    except Exception:
+        _def_qwen = ""
+        _def_videox = ""
+        _def_droid_repo = ""
+        _def_droid_w = ""
+
     ap.add_argument(
         "--mode",
         default="all",
@@ -333,15 +354,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--conda_env_videox", default=os.environ.get("CONDA_ENV_VIDEOX", "videox"))
     ap.add_argument("--conda_env_droid", default=os.environ.get("CONDA_ENV_DROID", "droid"))
 
-    ap.add_argument("--videox_root", default=os.environ.get("VIDEOX_ROOT", "/data/hx/VideoX-Fun"))
-    ap.add_argument("--droid_repo", default=os.environ.get("DROID_REPO", "/data/hx/DROID-SLAM"))
-    ap.add_argument("--droid_weights", default=os.environ.get("DROID_WEIGHTS", "droid.pth"))
+    ap.add_argument("--videox_root", default=_def_videox)
+    ap.add_argument("--droid_repo", default=_def_droid_repo)
+    ap.add_argument("--droid_weights", default=_def_droid_w)
 
     # Prompt generator is now managed under ExpHub/scripts.
-    # Qwen2-VL model weights remain under /data/hx/Qwen2-VL-Prompt/models by default.
+    # Qwen2-VL model path default is sourced from config/platform.yaml.
     ap.add_argument(
         "--qwen_model_dir",
-        default=os.environ.get("QWEN_MODEL_DIR", "/data/hx/Qwen2-VL-Prompt/models/Qwen2-VL-7B-Instruct"),
+        default=_def_qwen,
         help="Qwen2-VL model dir used by prompt generator",
     )
 
@@ -532,12 +553,20 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         _info("STEP doctor: check external paths")
         optional_dirs = [
-            ("videox_root", Path(args.videox_root)),
-            ("droid_repo", Path(args.droid_repo)),
-            ("qwen_model_dir", Path(args.qwen_model_dir)),
+            ("videox_root", str(args.videox_root)),
+            ("droid_repo", str(args.droid_repo)),
+            ("qwen_model_dir", str(args.qwen_model_dir)),
         ]
         for name, raw_path in optional_dirs:
-            p = raw_path.expanduser().resolve()
+            raw_text = str(raw_path).strip()
+            if not raw_text:
+                ok = False
+                _info(f"DOCTOR optional_dir={name} path=<empty> is_dir={ok}")
+                has_optional_missing = True
+                _warn(f"DOCTOR optional path missing: {name} (<empty>)")
+                continue
+
+            p = Path(raw_text).expanduser().resolve()
             ok = p.is_dir()
             _info(f"DOCTOR optional_dir={name} path={p} is_dir={ok}")
             if not ok:
@@ -778,7 +807,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(ctx.prompt_manifest_path),
         ]
 
-        step_runner.run_conda(cmd, env_name=args.conda_env_vlm, log_name="prompt.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd, env_key="prompt_python", log_name="prompt.log", cwd=exphub_root)
         _ensure(ctx.prompt_manifest_path, "file")
 
     def step_stats() -> None:
@@ -788,7 +817,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "--exp_dir",
             str(exp_dir),
         ]
-        step_runner.run_conda(cmd, env_name=args.conda_env_vlm, log_name="stats.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd, env_key="prompt_python", log_name="stats.log", cwd=exphub_root)
         _ensure(ctx.stats_report_path, "file")
 
     def step_infer() -> None:
@@ -826,7 +855,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         if args.infer_extra:
             import shlex as _sh
             cmd_infer.extend(_sh.split(args.infer_extra))
-        step_runner.run_conda(cmd_infer, env_name=args.conda_env_videox, log_name="infer.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd_infer, env_key="infer_python", log_name="infer.log", cwd=exphub_root)
         _ensure(ctx.infer_runs_dir, "dir")
         _ensure(ctx.infer_runs_plan_path, "file")
 
@@ -851,7 +880,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "--out_dir",
             str(merge_dir),
         ]
-        step_runner.run_conda(cmd_merge, env_name=args.conda_env_videox, log_name="merge.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd_merge, env_key="infer_python", log_name="merge.log", cwd=exphub_root)
 
         _ensure(ctx.merge_frames_dir, "dir")
         _ensure(ctx.merge_calib_path, "file")
@@ -893,7 +922,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             if not viz_enable:
                 cmd.append("--disable_vis")
 
-            step_runner.run_conda(cmd, env_name=args.conda_env_droid, log_name=f"slam_{tag_name}.log", cwd=exphub_root)
+            step_runner.run_env_python(cmd, env_key="slam_python", log_name=f"slam_{tag_name}.log", cwd=exphub_root)
             _ensure(ctx.slam_traj_path(tag_name), "file")
             _ensure(ctx.slam_run_meta_path(tag_name), "file")
 
@@ -924,28 +953,39 @@ def main(argv: Optional[List[str]] = None) -> None:
             _run("gen", merge_dir)
 
     def step_eval() -> None:
-        # Run evo evaluation inside the DROID conda environment.
-        # We must not use shutil.which() from the orchestrator process,
-        # because the orchestrator may be running in a different Python/conda env.
+        # Run evo evaluation using the configured slam Python environment.
+        # Do not use shutil.which() from the orchestrator process, because PATH
+        # may differ from the slam interpreter's bin directory.
 
-        _info(f"STEP eval: env={args.conda_env_droid} viz={viz_enable}")
+        _info(f"STEP eval: env_key=slam_python viz={viz_enable}")
 
         _rm_tree(eval_dir)
         eval_dir.mkdir(parents=True, exist_ok=True)
 
-        def _has_tool(tool: str) -> bool:
-            # Check tool availability inside the droid env
-            rc = step_runner.run_conda(
-                ["bash", "-lc", f"command -v {tool} >/dev/null 2>&1"],
-                env_name=args.conda_env_droid,
-                check=False,
+        slam_python = _get_platform_python("slam_python")
+        if not slam_python:
+            _die("missing environments.slam_python in config/platform.yaml")
+        slam_bin_dir = Path(slam_python).resolve().parent
+
+        def _tool_path(tool: str) -> Path:
+            return (slam_bin_dir / tool).resolve()
+
+        def _run_shell_in_slam_env(shell_cmd: str, check: bool = False) -> int:
+            py_cmd = "import subprocess,sys;sys.exit(subprocess.call({!r}, shell=True))".format(shell_cmd)
+            return step_runner.run_env_python(
+                ["python", "-c", py_cmd],
+                env_key="slam_python",
+                check=check,
                 log_name="eval.log",
                 cwd=exphub_root,
             )
-            return rc == 0
+
+        def _has_tool(tool: str) -> bool:
+            p = _tool_path(tool)
+            return p.is_file() and os.access(str(p), os.X_OK)
 
         if not _has_tool("evo_traj"):
-            _warn("evo_traj not found in droid env; skip eval")
+            _warn(f"evo_traj not found: {_tool_path('evo_traj')}; skip eval")
             return
 
         tum_ori = ctx.slam_traj_path("ori")
@@ -954,19 +994,23 @@ def main(argv: Optional[List[str]] = None) -> None:
         def _run_traj(name: str, tum: Path) -> None:
             _info(f"STEP eval: evo_traj {name} ({tum})")
             out_txt = ctx.eval_artifact_path("evo_traj_" + name + ".txt")
+            evo_traj = _tool_path("evo_traj")
             if viz_enable:
                 out_png = ctx.eval_artifact_path("traj_" + name + ".png")
-                cmd = f"MPLBACKEND=Agg evo_traj tum {tum} -p --save_plot {out_png} 2>&1 | tee {out_txt}"
+                cmd = "MPLBACKEND=Agg {} tum {} -p --save_plot {} 2>&1 | tee {}".format(
+                    shlex.quote(str(evo_traj)),
+                    shlex.quote(str(tum)),
+                    shlex.quote(str(out_png)),
+                    shlex.quote(str(out_txt)),
+                )
             else:
-                cmd = f"evo_traj tum {tum} 2>&1 | tee {out_txt}"
+                cmd = "{} tum {} 2>&1 | tee {}".format(
+                    shlex.quote(str(evo_traj)),
+                    shlex.quote(str(tum)),
+                    shlex.quote(str(out_txt)),
+                )
 
-            step_runner.run_conda(
-                ["bash", "-lc", cmd],
-                env_name=args.conda_env_droid,
-                check=False,
-                log_name="eval.log",
-                cwd=exphub_root,
-            )
+            _run_shell_in_slam_env(cmd, check=False)
 
         if tum_ori.exists():
             _run_traj("ori", tum_ori)
@@ -981,19 +1025,25 @@ def main(argv: Optional[List[str]] = None) -> None:
         if tum_ori.exists() and tum_gen.exists() and _has_tool("evo_ape"):
             _info(f"STEP eval: evo_ape gen_vs_ori ({tum_gen} vs {tum_ori})")
             out_txt = ctx.eval_artifact_path("evo_ape_gen_vs_ori.txt")
+            evo_ape = _tool_path("evo_ape")
             if viz_enable:
                 out_png = ctx.eval_artifact_path("ape_gen_vs_ori.png")
-                cmd = f"MPLBACKEND=Agg evo_ape tum {tum_ori} {tum_gen} -a -p --save_plot {out_png} 2>&1 | tee {out_txt}"
+                cmd = "MPLBACKEND=Agg {} tum {} {} -a -p --save_plot {} 2>&1 | tee {}".format(
+                    shlex.quote(str(evo_ape)),
+                    shlex.quote(str(tum_ori)),
+                    shlex.quote(str(tum_gen)),
+                    shlex.quote(str(out_png)),
+                    shlex.quote(str(out_txt)),
+                )
             else:
-                cmd = f"evo_ape tum {tum_ori} {tum_gen} -a 2>&1 | tee {out_txt}"
+                cmd = "{} tum {} {} -a 2>&1 | tee {}".format(
+                    shlex.quote(str(evo_ape)),
+                    shlex.quote(str(tum_ori)),
+                    shlex.quote(str(tum_gen)),
+                    shlex.quote(str(out_txt)),
+                )
 
-            step_runner.run_conda(
-                ["bash", "-lc", cmd],
-                env_name=args.conda_env_droid,
-                check=False,
-                log_name="eval.log",
-                cwd=exphub_root,
-            )
+            _run_shell_in_slam_env(cmd, check=False)
 
 
     # Execute mode

@@ -36,6 +36,7 @@ from datetime import datetime
 from pathlib import Path
 import ctypes
 import ctypes.util
+from _common import get_platform_config
 
 
 # NOTE: ExpHub version relies on PYTHONPATH pointing to VideoX-Fun repo root for importing `videox_fun`.
@@ -224,13 +225,13 @@ riflex_k            = 6
 # # model path
 # model_name          = "models/Diffusion_Transformer/Wan2.2-Fun-A14B-InP"
 
-# Config and model path (resolved from VideoX-Fun repo root).
-config_path = os.path.join(VIDEOX_ROOT, 'config', 'wan2.2', 'wan_civitai_i2v.yaml')
-model_name  = os.path.join(VIDEOX_ROOT, 'models', 'Diffusion_Transformer', 'Wan2.2-Fun-A14B-InP')
-if args.config_path.strip():
-    config_path = args.config_path.strip()
-if args.model_name.strip():
-    model_name = args.model_name.strip()
+# Config and model path from platform config (allow CLI override).
+cfg = get_platform_config()
+default_config = cfg.get("models", {}).get("wan2_2", {}).get("config", "")
+default_model = cfg.get("models", {}).get("wan2_2", {}).get("path", "")
+
+config_path = args.config_path.strip() or default_config
+model_name = args.model_name.strip() or default_model
 
 
 # Choose the sampler in "Flow", "Flow_Unipc", "Flow_DPM++"

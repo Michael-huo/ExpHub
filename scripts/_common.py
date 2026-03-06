@@ -7,10 +7,13 @@ import re
 import shutil
 import sys
 from pathlib import Path
+import yaml
 
 
 _FRAME_RE = re.compile(r"(?:^|_)(\d+)$")
 _IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+EXPHUB_ROOT = Path(__file__).resolve().parent.parent
+_PLATFORM_CONFIG = None
 
 
 def log_info(msg):
@@ -97,3 +100,24 @@ def read_step_meta(meta_path: Path) -> dict:
     if isinstance(obj, dict):
         return obj
     return {}
+
+
+def get_platform_config() -> dict:
+    """Load and return the platform.yaml configuration."""
+    global _PLATFORM_CONFIG
+    if _PLATFORM_CONFIG is not None:
+        return _PLATFORM_CONFIG
+
+    config_path = EXPHUB_ROOT / "config" / "platform.yaml"
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            "Platform configuration not found: {}\n"
+            "Please copy config/platform.yaml.example to config/platform.yaml and configure your paths.".format(
+                config_path
+            )
+        )
+
+    with open(str(config_path), "r", encoding="utf-8") as f:
+        _PLATFORM_CONFIG = yaml.safe_load(f)
+
+    return _PLATFORM_CONFIG

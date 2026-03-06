@@ -7,12 +7,25 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
+import yaml
 
 
 _ANSI_RESET = "\033[0m"
 _ANSI_STEP = "\033[1;36m"
 _ANSI_ERR = "\033[31m"
 _ANSI_WARN = "\033[33m"
+
+
+def _get_platform_python(env_key: str) -> Optional[str]:
+    config_path = Path(__file__).resolve().parent.parent / "config" / "platform.yaml"
+    if not config_path.is_file():
+        return None
+    try:
+        with open(str(config_path), "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        return cfg.get("environments", {}).get(env_key)
+    except Exception:
+        return None
 
 
 class RunError(RuntimeError):
@@ -87,6 +100,36 @@ class StepRunner:
             env_name=env_name,
             cfg=self.runner_cfg,
             cwd=cwd,
+            check=check,
+            **self._cmd_log_kwargs(log_name),
+        )
+
+    def run_env_python(
+        self,
+        cmd: Sequence[str],
+        env_key: str,
+        log_name: str,
+        cwd: Optional[Path] = None,
+        check: bool = True,
+        extra_env: Optional[Dict[str, str]] = None,
+    ) -> int:
+        """Execute a command directly using the absolute Python path from platform.yaml."""
+        python_bin = _get_platform_python(env_key)
+        if not python_bin:
+            raise RuntimeError(
+                "Missing '{}' in config/platform.yaml 'environments' section.".format(env_key)
+            )
+
+        new_cmd = list(cmd)
+        if new_cmd and new_cmd[0] in ("python", "python3"):
+            new_cmd[0] = python_bin
+        elif new_cmd:
+            new_cmd.insert(0, python_bin)
+
+        return run_cmd(
+            new_cmd,
+            cwd=cwd,
+            env=extra_env,
             check=check,
             **self._cmd_log_kwargs(log_name),
         )

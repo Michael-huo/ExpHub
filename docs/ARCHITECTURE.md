@@ -7,6 +7,8 @@
 - 旧 mode `droid` 已移除，不保留 alias。
 - 默认保留策略：`keep_level=max`
 - conda 自动切换默认开启；可用 `--no_auto_conda` 关闭。
+- 运行阶段 Python 解释器由 `config/platform.yaml` 的 `environments.*` 提供（`prompt_python`、`infer_python`、`slam_python`）。
+- `videox_root`、`droid_repo`、`droid_weights`、`qwen_model_dir` 的 CLI 默认值由 `config/platform.yaml` 提供；缺失时回退为空字符串（需显式传参或修正配置）。
 - `--gpus` 默认值为 `2`（用于 infer 阶段传参）。
 
 ## 2. 命名契约（固定不变）
@@ -28,15 +30,16 @@
 - `cli.main()` 创建 `StepRunner(logs_dir, log_level, runner_cfg, ...)`。
 - `step_*` 内子进程调用统一通过：
   - `StepRunner.run_ros(...)`（ROS 相关命令）
-  - `StepRunner.run_conda(...)`（conda 环境命令）
+  - `StepRunner.run_env_python(...)`（按 `platform.yaml` 选择解释器）
 - `StepRunner` 统一封装日志参数与路由（`log_path/log_level/pass_prefixes/fail_tail_lines`），并维护日志写入状态（同名日志首次 `w`，后续 `a`）。
 - `StepRunner` 显式以 `stderr=subprocess.STDOUT` 执行子进程，保证 stdout/stderr 汇总到同一 step 日志文件。
-- 底层执行仍由 `conda_exec/ros_exec` 实现，不改变实验语义与产物契约。
+- 底层执行仍由 `run_cmd/ros_exec/conda_exec` 实现，不改变实验语义与产物契约。
 
 ## 4. 新 mode 职责
 - `segment`：只跑数据切段（`scripts/segment_make.py`）
 - `prompt`：只跑提示词生成（`scripts/prompt_gen.py`）
 - `infer`：只跑 i2v 推理（`scripts/infer_i2v.py`，内部调用 `scripts/_infer_i2v_impl.py`，模型后端为 Wan2.2）
+  - 执行方式：单卡使用当前解释器 `sys.executable <impl.py>`；多卡使用 `sys.executable -m torch.distributed.run --nproc_per_node=... <impl.py>`，不依赖 `torchrun` PATH 查找。
 - `merge`：只跑序列合并（`scripts/merge_seq.py`）
 - `slam`：只跑 DROID（`scripts/slam_droid.py`），最终落盘为 `slam/<track>/`
 - `eval`：只跑 `evo_traj/evo_ape`
@@ -62,7 +65,7 @@
 - `infer` 不会自动生成 prompt，必须已有 `prompt/manifest.json`。
 - `stats` 仅从 `segment/prompt/infer/merge/step_meta.json` 读取统计来源；不再扫描 `frames/*.png` 与 `prompt/manifest.json` 文件大小。
 - `doctor` 只检查不落盘：不会创建 `EXP_DIR` 或任何实验产物。
-- `eval` 在 `droid` conda env 内检测与执行 `evo_traj/evo_ape`；缺失时 `WARN`，不崩溃。
+- `eval` 在 `platform.yaml` 的 `slam_python` 解释器环境内检测与执行 `evo_traj/evo_ape`；缺失时 `WARN`，不崩溃。
 - 日志收口：子进程完整输出写入 `EXP_DIR/logs/*.log`，终端按 `--log_level` 透传（详见 `docs/LOGGING.md`）。
 
 ## 7. `doctor` 检查矩阵
@@ -73,6 +76,7 @@
   - 关键脚本存在（按当前真实调用脚本清单）
 - Optional（缺失仅 WARN）：
   - 外部路径：`videox_root`、`droid_repo`、`qwen_model_dir`
+  - 外部路径若为空字符串，按缺失处理（`WARN`），不再将空值解析为当前目录。
   - 自动 conda 开启时（默认；可用 `--no_auto_conda` 关闭）env 工具检查（`python/evo_traj/evo_ape`）
 - Informational：
   - 打印新 mode 列表与目录契约摘要

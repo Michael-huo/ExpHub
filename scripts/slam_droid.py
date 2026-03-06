@@ -20,11 +20,11 @@ slam_droid.py
 
 用法：
 python run_droid_exphub_v2.py \
-  --segment_dir /data/hx/ExpHub/experiments/scand/your_seq/your_exp/segment \
-  --droid_repo  /data/hx/DROID-SLAM \
+  --segment_dir /path/to/ExpHub/experiments/scand/your_seq/your_exp/segment \
+  --droid_repo  /path/to/DROID-SLAM \
   --weights     droid.pth \
-  --out_dir     /data/hx/ExpHub/experiments/scand/gt_baseline_scand_seq01_dur16s_w768_h480_fps25_v1 \
-  --slam_out_dir /data/hx/ExpHub/experiments/scand/gt_baseline_scand_seq01_dur16s_w768_h480_fps25_v1/slam/ori \
+  --out_dir     /path/to/ExpHub/experiments/scand/gt_baseline_scand_seq01_dur16s_w768_h480_fps25_v1 \
+  --slam_out_dir /path/to/ExpHub/experiments/scand/gt_baseline_scand_seq01_dur16s_w768_h480_fps25_v1/slam/ori \
   --disable_vis
 
 若你明确想关去畸变：
@@ -47,7 +47,7 @@ import cv2
 import numpy as np
 import torch
 import lietorch
-from _common import log_err, log_info, log_prog, log_warn
+from _common import get_platform_config, log_err, log_info, log_prog, log_warn
 
 try:
     from tqdm import tqdm
@@ -324,6 +324,14 @@ def _setup_droid_import(droid_repo: Path) -> None:
 
 
 def main():
+    try:
+        cfg = get_platform_config()
+        default_repo = cfg.get("repos", {}).get("droid_slam", "")
+        default_weights = cfg.get("models", {}).get("droid", {}).get("path", "")
+    except Exception:
+        default_repo = ""
+        default_weights = "droid.pth"
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--segment_dir", type=str, required=True)
@@ -335,8 +343,8 @@ def main():
         help="Final SLAM output directory. If empty, fallback to <out_dir>/slam for compatibility.",
     )
 
-    parser.add_argument("--droid_repo", type=str, default=os.getenv("DROID_SLAM_ROOT", "/data/hx/DROID-SLAM"))
-    parser.add_argument("--weights", type=str, default="droid.pth")
+    parser.add_argument("--droid_repo", type=str, default=default_repo)
+    parser.add_argument("--weights", type=str, default=default_weights)
 
     parser.add_argument("--t0", default=0, type=int)
     parser.add_argument("--stride", default=1, type=int)
@@ -370,6 +378,15 @@ def main():
 
     args = parser.parse_args()
     args.stereo = False
+
+    if not str(args.droid_repo).strip():
+        raise SystemExit(
+            "[ERR] --droid_repo is empty. Set repos.droid_slam in config/platform.yaml or pass --droid_repo."
+        )
+    if not str(args.weights).strip():
+        raise SystemExit(
+            "[ERR] --weights is empty. Set models.droid.path in config/platform.yaml or pass --weights."
+        )
 
     segment_dir = Path(args.segment_dir).resolve()
     out_dir = Path(args.out_dir).resolve()
