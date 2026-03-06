@@ -7,7 +7,11 @@
   - `--dataset scand`
   - `--sequence A_Jackal_AHG_Library_Thu_Oct_28_2`
   - `--tag baseline --w 480 --h 320 --fps 24 --dur 4 --start_sec 30 --kf_gap 24`
-- conda 自动切换默认开启；若需禁用请追加 `--no_auto_conda`。
+- 运行前需确认 `config/platform.yaml`：
+  - `environments.prompt_python / infer_python / slam_python` 指向可执行 Python。
+  - `repos.videox_fun / droid_slam` 与 `models.*` 路径可访问。
+- `python -m exphub` 中 `videox_root/droid_repo/droid_weights/qwen_model_dir` 默认值来自 `platform.yaml`；若配置缺失会回退为空字符串并在运行时显式失败。
+- `--no_auto_conda` 仅影响 `doctor` 的 conda 工具探测，不影响主流程解释器选择。
 
 ## 1) segment（调用 `segment_make.py`）
 
@@ -33,7 +37,7 @@ python -m exphub --mode prompt --dataset scand --sequence A_Jackal_AHG_Library_T
 
 ### 最小输入准备
 - 已有 `segment/frames`。
-- `QWEN_MODEL_DIR` 指向可用模型目录。
+- `config/platform.yaml` 的 `models.qwen2_vl.path` 可用（或通过 `--qwen_model_dir` 覆盖）。
 
 ### 成功判据
 - `prompt/manifest.json` 存在。
@@ -41,7 +45,7 @@ python -m exphub --mode prompt --dataset scand --sequence A_Jackal_AHG_Library_T
 
 ### 常见失败
 - `segment/frames` 不存在：先跑 `--mode segment`。
-- `qwen_model_dir` 不存在或不可读：修正模型目录。
+- `qwen_model_dir` 不存在或不可读：检查 `models.qwen2_vl.path` 或显式传 `--qwen_model_dir`。
 
 ## 3) infer（调用 `infer_i2v.py`，内部调用 `_infer_i2v_impl.py`）
 
@@ -52,7 +56,7 @@ python -m exphub --mode infer --dataset scand --sequence A_Jackal_AHG_Library_Th
 
 ### 最小输入准备
 - 已有 `prompt/manifest.json`。
-- `VIDEOX_ROOT` 可用。
+- `config/platform.yaml` 的 `repos.videox_fun` 可用（或通过 `--videox_root` 覆盖）。
 
 ### 成功判据
 - `infer/runs/` 存在。
@@ -61,7 +65,7 @@ python -m exphub --mode infer --dataset scand --sequence A_Jackal_AHG_Library_Th
 
 ### 常见失败
 - 缺失 `prompt/manifest.json`：先跑 `--mode prompt`。
-- VideoX 环境/仓库路径错误：检查 `videox` conda env 与 `VIDEOX_ROOT`。
+- VideoX 环境/仓库路径错误：检查 `environments.infer_python` 与 `repos.videox_fun`。
 
 ## 4) merge（调用 `merge_seq.py`）
 
@@ -101,7 +105,7 @@ python -m exphub --mode slam --dataset scand --sequence A_Jackal_AHG_Library_Thu
 - `run_meta.json` 中 `tum_path/npz_path` 必须指向对应 `slam/<track>/traj_est.*` 最终路径。
 
 ### 常见失败
-- `droid_repo` 或权重不可用：检查 `DROID_REPO`、`DROID_WEIGHTS`。
+- `droid_repo` 或权重不可用：检查 `repos.droid_slam`、`models.droid.path`（或显式传参覆盖）。
 - 无图形环境：使用 `--no_viz`。
 
 ## 6) eval（调用 `evo_traj/evo_ape`）

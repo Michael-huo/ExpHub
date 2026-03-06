@@ -9,7 +9,7 @@
 | `exphub/context.py` | 实验上下文与路径中心 | sanitize 后参数、`exphub_root`、可选 `exp_root` | `EXP_NAME`、阶段目录路径、关键产物路径、`kf_gap` 与 segment 计数 |
 | `exphub/config.py` | `datasets.json` 解析 | `config/datasets.json` | `DatasetResolved`（bag/topic/intrinsics） |
 | `exphub/meta.py` | 元信息与 token 辅助 | 运行参数 | `exp_meta.json` 读写、token/数值规范化工具 |
-| `exphub/runner.py` | 执行器封装 | cmd/env/cwd | `ros_exec`、`conda_exec` |
+| `exphub/runner.py` | 执行器封装 | cmd/env/cwd、`platform.yaml` | `run_env_python`、`ros_exec`、`conda_exec` |
 | `exphub/cleanup.py` | `keep_level` 清理策略 | `exp_dir`、`keep_level` | 删除非必要调试文件 |
 
 ## 2. 编排脚本（`scripts/`）
@@ -28,12 +28,12 @@
 | mode | 调用链 |
 |---|---|
 | `segment` | `cli.main -> step_segment -> ros_exec(segment_make.py)` |
-| `prompt` | `cli.main -> step_prompt -> conda_exec(prompt_gen.py)` |
-| `infer` | `cli.main -> step_infer -> conda_exec(infer_i2v.py -> _infer_i2v_impl.py)` |
-| `merge` | `cli.main -> step_merge -> conda_exec(merge_seq.py)` |
-| `slam` | `cli.main -> step_slam -> conda_exec(slam_droid.py)` |
-| `eval` | `cli.main -> step_eval -> conda_exec(evo_traj/evo_ape)` |
-| `stats` | `cli.main -> step_stats -> conda_exec(stats_collect.py)` |
+| `prompt` | `cli.main -> step_prompt -> run_env_python(prompt_gen.py)` |
+| `infer` | `cli.main -> step_infer -> run_env_python(infer_i2v.py -> _infer_i2v_impl.py)` |
+| `merge` | `cli.main -> step_merge -> run_env_python(merge_seq.py)` |
+| `slam` | `cli.main -> step_slam -> run_env_python(slam_droid.py)` |
+| `eval` | `cli.main -> step_eval -> run_env_python(evo_traj/evo_ape)` |
+| `stats` | `cli.main -> step_stats -> run_env_python(stats_collect.py)` |
 | `doctor` | `cli.main -> step_doctor`（只读） |
 | `all` | `segment -> prompt -> infer -> merge -> slam -> eval -> stats` |
 
@@ -43,6 +43,7 @@
   - `prompt` 依赖 `segment/frames`
   - `infer` 依赖 `prompt/manifest.json` 与 `segment/*`
   - `merge` 依赖 `infer/runs` + `infer/runs_plan.json`
+- 运行解释器与外部仓库/模型路径默认值来自 `config/platform.yaml`。
 - `slam(gen)` 依赖 `merge/frames`
 - `eval` 依赖 `slam/ori/traj_est.tum` 与 `slam/gen/traj_est.tum`
 - `slam` 步骤直接写最终目录 `slam/<track>/`，不再通过临时 `slam` 目录重命名。
