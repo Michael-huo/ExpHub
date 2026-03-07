@@ -44,5 +44,6 @@ ExpHub 将所有的执行与调度收口于 `cli.py`。
 - 🔌 **底层脚本的输入输出契约** → 参考 `docs/SCRIPTS_AUDIT.md`
 - 🖥️ **终端 UI 路由与心跳日志规范** → 参考 `docs/LOGGING.md`
 - ✅ **最小核心功能验证判据** → 参考 `docs/SCRIPTS_TESTPLAN.md`
+- 🧭 **研究目标、方法主线与开发协作语境** → 参考 `docs/RESEARCH_DEV_GUIDE.md`
 
 修改任何系统级代码后，开发者或 AI 必须同步检查并更新上述相关的说明文件，以保证“系统大脑”的绝对同步。
