@@ -21,7 +21,8 @@
 | 文件路径 | 对应 Pipeline 阶段 | 核心职责 |
 |---|---|---|
 | `scripts/_common.py` | **全局基建** (All) | **极其重要**：负责解析 `config/platform.yaml`；提供标准日志门面 (`log_info`, `[BAR]`) |
-| `scripts/segment_make.py` | `segment` | 解析原始数据集，提取标准关键帧序列 |
+| `scripts/segment_make.py` | `segment` | `segment` 稳定入口，负责转发到 `scripts/_segment/api.py` |
+| `scripts/_segment/` | `segment` (内部实现) | `extract/materialize/policies` 内聚 `segment` 的采样、落盘与策略逻辑 |
 | `scripts/prompt_gen.py` | `prompt` | 调用 VLM 生成 `manifest.json` |
 | `scripts/infer_i2v.py` | `infer` (外壳) | i2v 任务规划、多进程分发与合并调度 |
 | `scripts/_infer_i2v_impl.py`| `infer` (内核) | Wan2.2 实际的 float8 量化与张量推理逻辑 |
@@ -43,7 +44,7 @@
 
 | 模式 (Mode) | 调度链条 (Call Chain) |
 |---|---|
-| `segment` | `cli.py` -> `runner.ros_exec` -> `segment_make.py` |
+| `segment` | `cli.py` -> `runner.ros_exec` -> `segment_make.py` -> `_segment/api.py` -> `extract.py` / `policies/uniform.py` / `materialize.py` |
 | `prompt` | `cli.py` -> `runner.run_env_python` -> `prompt_gen.py` |
 | `infer` | `cli.py` -> `runner.run_env_python` -> `infer_i2v.py` -> `sys.executable` -> `_infer_i2v_impl.py` |
 | `merge` | `cli.py` -> `runner.run_env_python` -> `merge_seq.py` |

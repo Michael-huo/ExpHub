@@ -19,11 +19,15 @@
 ## 2. 脚本 I/O 契约详情
 
 ### 2.1 `scripts/segment_make.py` (切片锚定)
-- **职责**：解析原始数据集（如 ROS Bag 或图片文件夹），根据时间戳抽取关键帧，构建时间网格。
+- **职责**：`segment` 的稳定命令行入口。参数解析与流程编排在 `scripts/_segment/api.py`，原始帧抽取逻辑在 `scripts/_segment/extract.py`，uniform 关键帧策略在 `scripts/_segment/policies/uniform.py`，旧目录结构回写在 `scripts/_segment/materialize.py`。
 - **配置依赖**：`config/datasets.json`。
 - **Inputs (读取)**：外部原始数据集。
 - **Outputs (写入)**：
   - `segment/frames/`：按规范命名（如 `000000.png`）的抽帧图像。
+  - `segment/keyframes/`：按 `kf_gap` 采样得到的锚帧目录，以及 `keyframes_meta.json`。
+  - `segment/timestamps.txt`：从 `0.0` 开始的相对时间网格。
+  - `segment/calib.txt`：与 `frames/` 尺寸严格对齐的内参。
+  - `segment/preprocess_meta.json`：裁剪、缩放与内参变换元数据。
   - `segment/step_meta.json`：包含基础元信息（如分辨率、fps、帧数）。
 
 ### 2.2 `scripts/prompt_gen.py` (提示词生成)
