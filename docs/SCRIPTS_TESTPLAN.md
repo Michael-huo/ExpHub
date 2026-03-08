@@ -12,3 +12,29 @@
 **执行命令：**
 ```bash
 python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag test --w 480 --h 320 --fps 24 --dur 4 --kf_gap 24
+```
+
+## 3. `segment` 研究旁路冒烟测试
+`segment_analyze.py` 不接入 `--mode all`，应在已有 `segment/` 产物基础上单独运行。
+
+**按 `exp_dir` 直接分析：**
+```bash
+python scripts/segment_analyze.py --exp_dir <EXP_DIR>
+```
+
+**按实验参数解析 `EXP_DIR`：**
+```bash
+python scripts/segment_analyze.py \
+  --dataset ncd \
+  --sequence rooster_2020-03-10-10-36-30_0 \
+  --tag debug \
+  --w 480 --h 320 \
+  --start_sec 60 --fps 12 --kf_gap 24 --dur 4
+```
+
+**最小验收：**
+- `segment/analysis/frame_scores.csv` 已生成，且数据行数与 `segment/frames/*.png` 数量一致。
+- `segment/analysis/frame_scores.json` 已生成。
+- `segment/analysis/score_curve.png` 与 `score_curve_with_keyframes.png` 已生成。
+- `segment/analysis/analysis_meta.json` 已生成，且 `semantic_enabled=false`。
+- `frame_scores.csv` 中 `is_uniform_keyframe=True` 的数量应与 `segment/keyframes/keyframes_meta.json` 对齐。

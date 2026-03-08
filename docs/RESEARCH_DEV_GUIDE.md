@@ -138,6 +138,7 @@ segment → prompt → infer → merge → slam → eval → stats
 - `prompt` 已接入基于 Qwen 的图像到文本流程；
 - `infer` 已接入基于 Wan2.2 的图像与文本到视频流程；
 - 下游 `slam / eval / stats` 已可用于验证几何一致性、统计压缩率与汇总实验信息；
+- 已新增 `segment_analyze.py` 研究旁路，可对既有 `segment/` 产物计算非语义逐帧信号、综合分数与峰值预览，用于后续关键帧策略研究；
 - 各阶段与全流程耗时统计已纳入实验平台。
 
 ### 4.2 尚未完成或尚未正式接入部分
@@ -145,6 +146,7 @@ segment → prompt → infer → merge → slam → eval → stats
 以下关键模块仍待补强：
 
 - `segment` 当前仍为等距采样，尚未正式接入 IROS 中的语义关键帧方法；
+- `segment` 研究旁路当前仅提供非语义信号，`semantic_delta` 仍为占位字段，尚未接入真实语义模型；
 - `prompt` 当前使用的语义表示仍相对基础，后续仍有较大优化空间；
 - 语义一致性评测尚未纳入标准工作流；
 - 当前生成结果是否真正“SLAM-friendly”仍需更系统的定量分析。
