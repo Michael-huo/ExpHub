@@ -24,6 +24,8 @@ def _build_reasons(row, thresholds):
         reasons.append("high_brightness_jump")
     if float(row.get("feature_motion", 0.0)) >= thresholds["feature_motion"]:
         reasons.append("high_feature_motion")
+    if float(row.get("semantic_smooth", 0.0)) >= thresholds["semantic_smooth"]:
+        reasons.append("high_semantic_smooth")
     if float(row.get("local_prominence", 0.0)) >= thresholds["local_prominence"]:
         reasons.append("strong_local_prominence")
     if bool(row.get("is_uniform_keyframe", False)):
@@ -38,16 +40,33 @@ def _role_hint(reasons):
         return "boundary_candidate"
     if "high_feature_motion" in reasons:
         return "support_keyframe_candidate"
+    if "high_semantic_smooth" in reasons:
+        return "semantic_candidate"
     return "candidate_point"
 
 
-def _candidate_record(row, reasons, selected=True):
+def _semantic_relation(row, thresholds):
+    semantic_high = float(row.get("semantic_smooth", 0.0)) >= float(thresholds["semantic_smooth"])
+    nonsemantic_high = float(row.get("score_smooth", 0.0)) >= float(thresholds["score_smooth"])
+    if semantic_high and nonsemantic_high:
+        return "semantic_and_nonsemantic_high"
+    if semantic_high and not nonsemantic_high:
+        return "semantic_high_only"
+    if (not semantic_high) and nonsemantic_high:
+        return "nonsemantic_high_only"
+    return "semantic_and_nonsemantic_low"
+
+
+def _candidate_record(row, reasons, relation_thresholds, selected=True):
     return {
         "frame_idx": int(row.get("frame_idx", 0)),
         "ts_sec": float(row.get("ts_sec", 0.0)),
         "file_name": row.get("file_name", ""),
         "score_raw": float(row.get("score_raw", 0.0)),
         "score_smooth": float(row.get("score_smooth", 0.0)),
+        "semantic_delta": float(row.get("semantic_delta", 0.0)),
+        "semantic_smooth": float(row.get("semantic_smooth", 0.0)),
+        "semantic_relation": _semantic_relation(row, relation_thresholds),
         "peak_rank": int(row.get("peak_rank", 0)),
         "local_prominence": float(row.get("local_prominence", 0.0)),
         "is_uniform_keyframe": bool(row.get("is_uniform_keyframe", False)),
@@ -63,9 +82,20 @@ def build_candidate_points(rows, peak_meta):
         "appearance_delta": _percentile([row.get("appearance_delta", 0.0) for row in rows], 0.75),
         "brightness_jump": _percentile([row.get("brightness_jump", 0.0) for row in rows], 0.75),
         "feature_motion": _percentile([row.get("feature_motion", 0.0) for row in rows], 0.75),
+        "semantic_smooth": _percentile([row.get("semantic_smooth", 0.0) for row in rows], 0.75),
         "local_prominence": max(
             float(peak_meta.get("min_peak_prominence", 0.0)),
             _percentile([row.get("local_prominence", 0.0) for row in rows], 0.75),
+        ),
+    }
+    relation_thresholds = {
+        "semantic_smooth": max(
+            1e-6,
+            _percentile([row.get("semantic_smooth", 0.0) for row in rows], 0.75),
+        ),
+        "score_smooth": max(
+            1e-6,
+            _percentile([row.get("score_smooth", 0.0) for row in rows], 0.75),
         ),
     }
     row_map = {int(row["frame_idx"]): row for row in rows}
@@ -76,7 +106,7 @@ def build_candidate_points(rows, peak_meta):
         if row is None:
             continue
         reasons = _build_reasons(row, thresholds)
-        selected.append(_candidate_record(row, reasons, selected=True))
+        selected.append(_candidate_record(row, reasons, relation_thresholds, selected=True))
 
     suppressed = []
     for item in peak_meta.get("suppressed_candidates", []):
@@ -86,7 +116,7 @@ def build_candidate_points(rows, peak_meta):
         reasons = _build_reasons(row, thresholds)
         if row.get("peak_suppressed_reason"):
             reasons.append("suppressed:{}".format(row.get("peak_suppressed_reason")))
-        suppressed.append(_candidate_record(row, reasons, selected=False))
+        suppressed.append(_candidate_record(row, reasons, relation_thresholds, selected=False))
 
     selected.sort(key=lambda item: (item["peak_rank"] if item["peak_rank"] > 0 else 10 ** 9, item["frame_idx"]))
     suppressed.sort(key=lambda item: item["frame_idx"])
@@ -95,4 +125,5 @@ def build_candidate_points(rows, peak_meta):
         "selected_candidates": selected,
         "suppressed_candidates": suppressed,
         "reason_thresholds": thresholds,
+        "relation_thresholds": relation_thresholds,
     }

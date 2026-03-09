@@ -3,6 +3,7 @@
 
 from .candidates import build_candidate_points
 from .peaks import DEFAULT_PEAK_CONFIG, annotate_peaks
+from .semantic_openclip import compute_semantic_rows
 from .scorer import DEFAULT_OBSERVED_SIGNALS, DEFAULT_SCORE_WEIGHTS, DEFAULT_SCORED_SIGNALS, apply_scores
 from .signals import compute_frame_signal_rows
 from .visualize import (
@@ -10,6 +11,8 @@ from .visualize import (
     save_peaks_preview,
     save_score_curve,
     save_score_curve_with_keyframes,
+    save_semantic_curve,
+    save_semantic_vs_nonsemantic,
 )
 
 __all__ = [
@@ -21,8 +24,11 @@ __all__ = [
     "apply_scores",
     "build_candidate_points",
     "compute_frame_signal_rows",
+    "compute_semantic_rows",
     "save_candidate_points_overview",
     "save_peaks_preview",
     "save_score_curve",
     "save_score_curve_with_keyframes",
+    "save_semantic_curve",
+    "save_semantic_vs_nonsemantic",
 ]

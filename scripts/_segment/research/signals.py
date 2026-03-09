@@ -4,7 +4,6 @@
 import math
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from scripts._common import log_err, log_warn
@@ -89,12 +88,21 @@ def _feature_motion(prev_gray, cur_gray):
         return 0.0
 
 
-def compute_frame_signal_rows(frame_paths, timestamps, semantic_enabled=False):
+def _semantic_row_map(semantic_rows):
+    if not semantic_rows:
+        return {}
+    return {int(row.get("frame_idx", 0)): row for row in semantic_rows}
+
+
+def compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=None):
     rows = []
     prev_gray = None
+    semantic_map = _semantic_row_map(semantic_rows)
+    semantic_enabled = bool(semantic_rows)
 
     for idx, frame_path in enumerate(frame_paths):
         gray = _read_gray_image(frame_path)
+        semantic_row = semantic_map.get(int(idx), {})
         row = {
             "frame_idx": int(idx),
             "ts_sec": float(timestamps[idx]),
@@ -103,7 +111,8 @@ def compute_frame_signal_rows(frame_paths, timestamps, semantic_enabled=False):
             "brightness_jump": float(_brightness_jump(prev_gray, gray)),
             "blur_score": float(_blur_score(gray)),
             "feature_motion": float(_feature_motion(prev_gray, gray)),
-            "semantic_delta": float(0.0) if not semantic_enabled else None,
+            "semantic_delta": float(semantic_row.get("semantic_delta", 0.0) or 0.0),
+            "semantic_smooth": float(semantic_row.get("semantic_smooth", 0.0) or 0.0),
         }
         rows.append(row)
         prev_gray = gray
@@ -115,11 +124,14 @@ def compute_frame_signal_rows(frame_paths, timestamps, semantic_enabled=False):
             "blur_score",
             "feature_motion",
             "semantic_delta",
+            "semantic_smooth",
         ],
         "semantic_enabled": bool(semantic_enabled),
         "feature_motion_method": "goodFeaturesToTrack + calcOpticalFlowPyrLK median displacement / image diagonal",
         "appearance_delta_method": "mean absolute grayscale difference / 255",
         "brightness_jump_method": "absolute mean grayscale brightness change / 255",
         "blur_score_method": "variance of grayscale Laplacian",
+        "semantic_delta_method": "1 - cosine_similarity(e_t, e_{t-1}) using OpenCLIP image embeddings",
+        "semantic_smooth_method": "moving_average over semantic_delta",
     }
     return rows, meta
