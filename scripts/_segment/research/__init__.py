@@ -8,6 +8,7 @@ from .scorer import DEFAULT_OBSERVED_SIGNALS, DEFAULT_SCORE_WEIGHTS, DEFAULT_SCO
 from .signals import compute_frame_signal_rows
 from .visualize import (
     save_candidate_points_overview,
+    save_candidate_roles_overview,
     save_peaks_preview,
     save_score_curve,
     save_score_curve_with_keyframes,
@@ -26,6 +27,7 @@ __all__ = [
     "compute_frame_signal_rows",
     "compute_semantic_rows",
     "save_candidate_points_overview",
+    "save_candidate_roles_overview",
     "save_peaks_preview",
     "save_score_curve",
     "save_score_curve_with_keyframes",

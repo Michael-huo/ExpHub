@@ -31,7 +31,7 @@
   - `segment/step_meta.json`：包含基础元信息（如分辨率、fps、帧数）。
 
 ### 2.2 `scripts/segment_analyze.py` (研究分析旁路)
-- **职责**：不进入主链路，只读取已存在的 `segment/` 结果，为关键帧研究提供逐帧非语义信号、OpenCLIP 图像语义变化信号、综合分数、峰值标记与可视化。
+- **职责**：不进入主链路，只读取已存在的 `segment/` 结果，为关键帧研究提供逐帧非语义信号、OpenCLIP 图像语义变化信号、candidate role 判别、候选点 rerank 与可视化。
 - **配置依赖**：优先复用 `exphub/context.py` 的实验路径规则；不读取 `platform.yaml`。
 - **Inputs (读取)**：
   - `segment/frames/`
@@ -46,7 +46,9 @@
   - `segment/analysis/score_curve_with_keyframes.png`
   - `segment/analysis/analysis_meta.json`
   - `segment/analysis/candidate_points.json`
+  - `segment/analysis/candidate_roles_summary.json`
   - `segment/analysis/candidate_points_overview.png`
+  - `segment/analysis/candidate_roles_overview.png`
   - `segment/analysis/semantic_embeddings.npz`：OpenCLIP image embedding cache，仅供 `segment_analyze.py` 研究旁路复用。
   - `segment/analysis/semantic_curve.png`
   - `segment/analysis/semantic_vs_nonsemantic.png`
