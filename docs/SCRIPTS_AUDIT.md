@@ -45,6 +45,8 @@
   - `segment/analysis/score_curve.png`
   - `segment/analysis/score_curve_with_keyframes.png`
   - `segment/analysis/analysis_meta.json`
+  - `segment/analysis/candidate_points.json`
+  - `segment/analysis/candidate_points_overview.png`
   - 可选：`segment/analysis/peaks_preview.png`
 
 ### 2.3 `scripts/prompt_gen.py` (提示词生成)

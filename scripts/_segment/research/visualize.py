@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from pathlib import Path
-
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+
 
 
 def _series(rows, key):
@@ -61,6 +60,7 @@ def _build_plot(rows, title, keyframe_indices=None, peak_indices=None):
     return fig
 
 
+
 def save_score_curve(rows, output_path):
     fig = _build_plot(rows, "Segment Analysis Score Curve")
     fig.savefig(str(output_path))
@@ -78,5 +78,41 @@ def save_score_curve_with_keyframes(rows, output_path, keyframe_indices):
 def save_peaks_preview(rows, output_path):
     peak_indices = [int(row["frame_idx"]) for row in rows if bool(row.get("is_peak", False))]
     fig = _build_plot(rows, "Segment Analysis Peaks Preview", peak_indices=peak_indices)
+    fig.savefig(str(output_path))
+    plt.close(fig)
+
+
+
+def save_candidate_points_overview(rows, output_path, keyframe_indices, candidate_points):
+    x = [int(row["frame_idx"]) for row in rows]
+    score = _series(rows, "score_smooth")
+
+    fig, ax = plt.subplots(figsize=(12, 5), dpi=150)
+    ax.plot(x, score, color="#1f3c88", linewidth=2.0, label="score_smooth")
+
+    for idx in keyframe_indices:
+        ax.axvline(int(idx), color="#b0b0b0", linewidth=0.8, alpha=0.45)
+
+    if candidate_points:
+        cand_x = [int(item["frame_idx"]) for item in candidate_points]
+        cand_y = [float(item["score_smooth"]) for item in candidate_points]
+        ax.scatter(cand_x, cand_y, color="#d62728", s=38, zorder=4, label="candidate peaks")
+        for item in candidate_points:
+            ax.annotate(
+                "#{}".format(int(item.get("peak_rank", 0))),
+                (int(item["frame_idx"]), float(item["score_smooth"])),
+                textcoords="offset points",
+                xytext=(0, 8),
+                ha="center",
+                fontsize=8,
+                color="#222222",
+            )
+
+    ax.set_title("Candidate Points Overview")
+    ax.set_xlabel("frame_idx")
+    ax.set_ylabel("score_smooth")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="upper right")
+    fig.tight_layout()
     fig.savefig(str(output_path))
     plt.close(fig)
