@@ -164,3 +164,71 @@ def save_semantic_vs_nonsemantic(rows, output_path, keyframe_indices, candidate_
     fig.tight_layout()
     fig.savefig(str(output_path))
     plt.close(fig)
+
+
+def save_candidate_roles_overview(rows, output_path, keyframe_indices, candidate_roles_summary):
+    x = [int(row["frame_idx"]) for row in rows]
+    score_smooth = _normalize(_series(rows, "score_smooth"))
+    semantic_smooth = _normalize(_series(rows, "semantic_smooth"))
+    score_map = {int(row["frame_idx"]): score_smooth[pos] for pos, row in enumerate(rows)}
+    semantic_map = {int(row["frame_idx"]): semantic_smooth[pos] for pos, row in enumerate(rows)}
+
+    fig, ax = plt.subplots(figsize=(12, 5), dpi=160)
+    ax.plot(x, score_smooth, color="#1f3c88", linewidth=2.1, label="score_smooth")
+    ax.plot(x, semantic_smooth, color="#c44e52", linewidth=1.8, alpha=0.9, label="semantic_smooth")
+
+    for idx in keyframe_indices:
+        ax.axvline(int(idx), color="#b0b0b0", linewidth=0.8, alpha=0.4)
+
+    role_styles = {
+        "boundary_candidates": {
+            "color": "#d62728",
+            "marker": "o",
+            "label": "boundary",
+            "series": score_map,
+        },
+        "support_candidates": {
+            "color": "#2ca02c",
+            "marker": "s",
+            "label": "support",
+            "series": score_map,
+        },
+        "semantic_only_candidates": {
+            "color": "#ff7f0e",
+            "marker": "^",
+            "label": "semantic_only",
+            "series": semantic_map,
+        },
+        "suppressed_candidates": {
+            "color": "#7f7f7f",
+            "marker": "x",
+            "label": "suppressed",
+            "series": score_map,
+        },
+    }
+
+    for key, style in role_styles.items():
+        items = candidate_roles_summary.get(key, [])
+        if not items:
+            continue
+        xs = [int(item["frame_idx"]) for item in items]
+        ys = [float(style["series"].get(int(item["frame_idx"]), 0.0)) for item in items]
+        ax.scatter(
+            xs,
+            ys,
+            s=42,
+            color=style["color"],
+            marker=style["marker"],
+            linewidths=1.0,
+            zorder=4,
+            label=style["label"],
+        )
+
+    ax.set_title("Candidate Roles Overview")
+    ax.set_xlabel("frame_idx")
+    ax.set_ylabel("normalized magnitude")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="upper right", ncol=2, fontsize=9)
+    fig.tight_layout()
+    fig.savefig(str(output_path))
+    plt.close(fig)

@@ -27,6 +27,7 @@ from scripts._segment.research import (
     compute_frame_signal_rows,
     compute_semantic_rows,
     save_candidate_points_overview,
+    save_candidate_roles_overview,
     save_peaks_preview,
     save_score_curve,
     save_score_curve_with_keyframes,
@@ -261,7 +262,9 @@ def run_segment_analyze(argv=None):
     curve_kf_path = analysis_dir / "score_curve_with_keyframes.png"
     peaks_path = analysis_dir / "peaks_preview.png"
     candidate_points_path = analysis_dir / "candidate_points.json"
+    candidate_roles_summary_path = analysis_dir / "candidate_roles_summary.json"
     candidate_overview_path = analysis_dir / "candidate_points_overview.png"
+    candidate_roles_overview_path = analysis_dir / "candidate_roles_overview.png"
     semantic_curve_path = analysis_dir / "semantic_curve.png"
     semantic_vs_nonsemantic_path = analysis_dir / "semantic_vs_nonsemantic.png"
     meta_path = analysis_dir / "analysis_meta.json"
@@ -269,6 +272,7 @@ def run_segment_analyze(argv=None):
     _write_csv(csv_path, rows)
     write_json_atomic(str(json_path), rows, indent=2)
     write_json_atomic(str(candidate_points_path), candidate_points, indent=2)
+    write_json_atomic(str(candidate_roles_summary_path), candidate_points.get("candidate_roles_summary", {}), indent=2)
     save_score_curve(rows, curve_path)
     save_score_curve_with_keyframes(rows, curve_kf_path, sorted(keyframe_set))
     save_peaks_preview(rows, peaks_path)
@@ -277,6 +281,12 @@ def run_segment_analyze(argv=None):
         candidate_overview_path,
         sorted(keyframe_set),
         candidate_points.get("selected_candidates", []),
+    )
+    save_candidate_roles_overview(
+        rows,
+        candidate_roles_overview_path,
+        sorted(keyframe_set),
+        candidate_points.get("candidate_roles_summary", {}),
     )
     save_semantic_curve(rows, semantic_curve_path)
     save_semantic_vs_nonsemantic(
@@ -308,6 +318,10 @@ def run_segment_analyze(argv=None):
         "use_semantic_in_score": bool(score_meta["use_semantic_in_score"]),
         "smoothing": score_meta["smoothing"],
         "peak_detection": _peak_meta_public(peak_meta),
+        "candidate_role_enabled": True,
+        "role_rules": candidate_points.get("role_rules", {}),
+        "rerank_weights": candidate_points.get("rerank_weights", {}),
+        "role_thresholds": candidate_points.get("role_thresholds", {}),
         "semantic_enabled": bool(semantic_meta["enabled"]),
         "semantic_backend": semantic_meta["backend"],
         "semantic_model_name": semantic_meta["model_name"],
@@ -325,7 +339,13 @@ def run_segment_analyze(argv=None):
             "suppressed_count": int(len(candidate_points.get("suppressed_candidates", []))),
             "reason_thresholds": candidate_points.get("reason_thresholds", {}),
             "relation_thresholds": candidate_points.get("relation_thresholds", {}),
+            "role_thresholds": candidate_points.get("role_thresholds", {}),
+            "counts": candidate_points.get("counts", {}),
         },
+        "boundary_candidate_count": int(candidate_points.get("counts", {}).get("boundary_candidate_count", 0)),
+        "support_candidate_count": int(candidate_points.get("counts", {}).get("support_candidate_count", 0)),
+        "semantic_only_candidate_count": int(candidate_points.get("counts", {}).get("semantic_only_candidate_count", 0)),
+        "suppressed_candidate_count": int(candidate_points.get("counts", {}).get("suppressed_candidate_count", 0)),
         "source_files": {
             "timestamps": str(segment_dir / "timestamps.txt"),
             "keyframes_meta": str(segment_dir / "keyframes" / "keyframes_meta.json"),
@@ -339,7 +359,9 @@ def run_segment_analyze(argv=None):
             "score_curve_with_keyframes_png": str(curve_kf_path),
             "peaks_preview_png": str(peaks_path),
             "candidate_points_json": str(candidate_points_path),
+            "candidate_roles_summary_json": str(candidate_roles_summary_path),
             "candidate_points_overview_png": str(candidate_overview_path),
+            "candidate_roles_overview_png": str(candidate_roles_overview_path),
             "semantic_embeddings_npz": semantic_meta["cache_path"],
             "semantic_curve_png": str(semantic_curve_path),
             "semantic_vs_nonsemantic_png": str(semantic_vs_nonsemantic_path),
@@ -351,6 +373,14 @@ def run_segment_analyze(argv=None):
     log_info("frame_scores.csv rows: {}".format(len(rows)))
     log_info("uniform keyframes: {}".format(len(keyframe_set)))
     log_info("candidate peaks: {}".format(len(candidate_points.get("selected_candidates", []))))
+    log_info(
+        "candidate roles: boundary={} support={} semantic_only={} suppressed={}".format(
+            int(candidate_points.get("counts", {}).get("boundary_candidate_count", 0)),
+            int(candidate_points.get("counts", {}).get("support_candidate_count", 0)),
+            int(candidate_points.get("counts", {}).get("semantic_only_candidate_count", 0)),
+            int(candidate_points.get("counts", {}).get("suppressed_candidate_count", 0)),
+        )
+    )
     log_info("semantic cache hit: {}".format(bool(semantic_meta["cache_hit"])))
     log_prog("segment analyze done: {}".format(analysis_dir))
 
