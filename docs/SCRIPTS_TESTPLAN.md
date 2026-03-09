@@ -37,5 +37,7 @@ python scripts/segment_analyze.py \
 - `segment/analysis/frame_scores.json` 已生成。
 - `segment/analysis/score_curve.png` 与 `score_curve_with_keyframes.png` 已生成。
 - `segment/analysis/candidate_points.json` 与 `candidate_points_overview.png` 已生成。
-- `segment/analysis/analysis_meta.json` 已生成，且 `semantic_enabled=false`，并包含 `observed_signals` / `scored_signals`。
+- `segment/analysis/semantic_embeddings.npz` 已生成，第二次运行时应可复用。
+- `segment/analysis/semantic_curve.png` 与 `semantic_vs_nonsemantic.png` 已生成。
+- `segment/analysis/analysis_meta.json` 已生成，且 `semantic_enabled=true`、`semantic_backend="openclip"`、`use_semantic_in_score=false`，并包含 `observed_signals` / `scored_signals`。
 - `frame_scores.csv` 中 `is_uniform_keyframe=True` 的数量应与 `segment/keyframes/keyframes_meta.json` 对齐。

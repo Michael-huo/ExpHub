@@ -16,13 +16,13 @@ DEFAULT_OBSERVED_SIGNALS = [
     "blur_score",
     "feature_motion",
     "semantic_delta",
+    "semantic_smooth",
 ]
 
 DEFAULT_SCORED_SIGNALS = [
     "appearance_delta",
     "brightness_jump",
     "feature_motion",
-    "semantic_delta",
 ]
 
 
@@ -44,12 +44,14 @@ def _moving_average(values, window_size):
     return out, window_size
 
 
-def apply_scores(rows, weights=None, smooth_window=5, use_blur_in_score=False):
+def apply_scores(rows, weights=None, smooth_window=5, use_blur_in_score=False, use_semantic_in_score=False):
     score_weights = dict(DEFAULT_SCORE_WEIGHTS)
     if weights:
         score_weights.update(weights)
 
     scored_signals = list(DEFAULT_SCORED_SIGNALS)
+    if bool(use_semantic_in_score) and "semantic_delta" not in scored_signals:
+        scored_signals.append("semantic_delta")
     if bool(use_blur_in_score) and "blur_score" not in scored_signals:
         scored_signals.append("blur_score")
 
@@ -63,8 +65,9 @@ def apply_scores(rows, weights=None, smooth_window=5, use_blur_in_score=False):
             "appearance_delta": float(score_weights["appearance_delta"]) * float(row.get("appearance_delta", 0.0)),
             "brightness_jump": float(score_weights["brightness_jump"]) * float(row.get("brightness_jump", 0.0)),
             "feature_motion": float(score_weights["feature_motion"]) * float(row.get("feature_motion", 0.0)),
-            "semantic_delta": float(score_weights["semantic_delta"]) * float(semantic_delta),
         }
+        if bool(use_semantic_in_score):
+            contribs["semantic_delta"] = float(score_weights["semantic_delta"]) * float(semantic_delta)
         if bool(use_blur_in_score):
             contribs["blur_score"] = float(score_weights["blur_score"]) * float(row.get("blur_score", 0.0))
 
@@ -84,6 +87,7 @@ def apply_scores(rows, weights=None, smooth_window=5, use_blur_in_score=False):
             "window_size": int(actual_window),
         },
         "use_blur_in_score": bool(use_blur_in_score),
+        "use_semantic_in_score": bool(use_semantic_in_score),
         "observed_signals": list(DEFAULT_OBSERVED_SIGNALS),
         "scored_signals": list(scored_signals),
     }

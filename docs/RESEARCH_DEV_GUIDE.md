@@ -146,7 +146,7 @@ segment → prompt → infer → merge → slam → eval → stats
 以下关键模块仍待补强：
 
 - `segment` 当前仍为等距采样，尚未正式接入 IROS 中的语义关键帧方法；
-- `segment` 研究旁路当前仅提供非语义信号，`semantic_delta` 仍为占位字段，尚未接入真实语义模型；
+- `segment` 研究旁路现已接入基于 OpenCLIP image encoder 的 observe-only 语义变化分析，可输出 `semantic_delta` / `semantic_smooth`、语义缓存与对照图，但默认仍不参与正式 `score_raw`；
 - `prompt` 当前使用的语义表示仍相对基础，后续仍有较大优化空间；
 - 语义一致性评测尚未纳入标准工作流；
 - 当前生成结果是否真正“SLAM-friendly”仍需更系统的定量分析。

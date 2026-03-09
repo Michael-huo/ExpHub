@@ -116,3 +116,51 @@ def save_candidate_points_overview(rows, output_path, keyframe_indices, candidat
     fig.tight_layout()
     fig.savefig(str(output_path))
     plt.close(fig)
+
+
+def save_semantic_curve(rows, output_path):
+    x = [int(row["frame_idx"]) for row in rows]
+    semantic_delta = _series(rows, "semantic_delta")
+    semantic_smooth = _series(rows, "semantic_smooth")
+
+    fig, ax = plt.subplots(figsize=(12, 5), dpi=150)
+    ax.plot(x, semantic_delta, color="#7f7f7f", linewidth=1.2, label="semantic_delta")
+    ax.plot(x, semantic_smooth, color="#c44e52", linewidth=2.0, label="semantic_smooth")
+    ax.set_title("Semantic Delta Overview")
+    ax.set_xlabel("frame_idx")
+    ax.set_ylabel("semantic magnitude")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.savefig(str(output_path))
+    plt.close(fig)
+
+
+def save_semantic_vs_nonsemantic(rows, output_path, keyframe_indices, candidate_points):
+    x = [int(row["frame_idx"]) for row in rows]
+    score_smooth = _normalize(_series(rows, "score_smooth"))
+    semantic_smooth = _normalize(_series(rows, "semantic_smooth"))
+
+    fig, ax = plt.subplots(figsize=(12, 5), dpi=150)
+    ax.plot(x, score_smooth, color="#1f3c88", linewidth=2.0, label="score_smooth")
+    ax.plot(x, semantic_smooth, color="#c44e52", linewidth=2.0, label="semantic_smooth")
+
+    for idx in keyframe_indices:
+        ax.axvline(int(idx), color="#b0b0b0", linewidth=0.8, alpha=0.45)
+
+    if candidate_points:
+        cand_x = [int(item["frame_idx"]) for item in candidate_points]
+        cand_y = []
+        score_map = {int(row["frame_idx"]): semantic_smooth[pos] for pos, row in enumerate(rows)}
+        for item in candidate_points:
+            cand_y.append(float(score_map.get(int(item["frame_idx"]), 0.0)))
+        ax.scatter(cand_x, cand_y, color="#111111", s=36, zorder=4, label="candidate peaks")
+
+    ax.set_title("Semantic vs Nonsemantic Signals")
+    ax.set_xlabel("frame_idx")
+    ax.set_ylabel("normalized magnitude")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    fig.savefig(str(output_path))
+    plt.close(fig)
