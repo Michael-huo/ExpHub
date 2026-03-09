@@ -5,7 +5,6 @@
 import argparse
 import csv
 import json
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,13 +17,15 @@ else:
     _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 from exphub.context import ExperimentContext
-from scripts._common import ensure_dir, ensure_file, list_frames_sorted, log_err, log_info, log_prog, write_json_atomic
+from scripts._common import ensure_dir, ensure_file, list_frames_sorted, log_info, log_prog, write_json_atomic
 from scripts._segment.research import (
     DEFAULT_PEAK_CONFIG,
     DEFAULT_SCORE_WEIGHTS,
     annotate_peaks,
     apply_scores,
+    build_candidate_points,
     compute_frame_signal_rows,
+    save_candidate_points_overview,
     save_peaks_preview,
     save_score_curve,
     save_score_curve_with_keyframes,
@@ -42,8 +43,10 @@ FIELDNAMES = [
     "semantic_delta",
     "score_raw",
     "score_smooth",
+    "local_prominence",
     "is_peak",
     "peak_rank",
+    "peak_suppressed_reason",
     "is_uniform_keyframe",
 ]
 
@@ -68,9 +71,16 @@ def build_arg_parser():
     ap.add_argument("--score_w_brightness", type=float, default=DEFAULT_SCORE_WEIGHTS["brightness_jump"])
     ap.add_argument("--score_w_motion", type=float, default=DEFAULT_SCORE_WEIGHTS["feature_motion"])
     ap.add_argument("--score_w_semantic", type=float, default=DEFAULT_SCORE_WEIGHTS["semantic_delta"])
+    ap.add_argument("--score_w_blur", type=float, default=DEFAULT_SCORE_WEIGHTS["blur_score"])
+    ap.add_argument("--score_use_blur", action="store_true", help="include blur_score in score_raw (default: disabled)")
     ap.add_argument("--smooth_window", type=int, default=5)
+
     ap.add_argument("--peak_window", type=int, default=DEFAULT_PEAK_CONFIG["window_radius"])
     ap.add_argument("--peak_threshold_std", type=float, default=DEFAULT_PEAK_CONFIG["threshold_std"])
+    ap.add_argument("--min_peak_distance", type=int, default=DEFAULT_PEAK_CONFIG["min_peak_distance"])
+    ap.add_argument("--min_peak_score_raw", type=float, default=DEFAULT_PEAK_CONFIG["min_peak_score_raw"])
+    ap.add_argument("--min_peak_prominence", type=float, default=DEFAULT_PEAK_CONFIG["min_peak_prominence"])
+    ap.add_argument("--edge_margin", type=int, default=DEFAULT_PEAK_CONFIG["edge_margin"])
     return ap
 
 
@@ -178,6 +188,24 @@ def _write_csv(path, rows):
 
 
 
+def _peak_meta_public(peak_meta):
+    keep_keys = [
+        "window_radius",
+        "threshold_std",
+        "threshold",
+        "min_peak_distance",
+        "min_peak_score_raw",
+        "min_peak_prominence",
+        "edge_margin",
+        "local_peak_count",
+        "eligible_peak_count",
+        "peak_count",
+        "suppressed_peak_count",
+    ]
+    return {key: peak_meta.get(key) for key in keep_keys}
+
+
+
 def run_segment_analyze(argv=None):
     parser = build_arg_parser()
     args = parser.parse_args(argv)
@@ -197,22 +225,46 @@ def run_segment_analyze(argv=None):
         "brightness_jump": float(args.score_w_brightness),
         "feature_motion": float(args.score_w_motion),
         "semantic_delta": float(args.score_w_semantic),
+        "blur_score": float(args.score_w_blur),
     }
-    rows, score_meta = apply_scores(rows, weights=score_weights, smooth_window=int(args.smooth_window))
-    rows, peak_meta = annotate_peaks(rows, window_radius=int(args.peak_window), threshold_std=float(args.peak_threshold_std))
+    rows, score_meta = apply_scores(
+        rows,
+        weights=score_weights,
+        smooth_window=int(args.smooth_window),
+        use_blur_in_score=bool(args.score_use_blur),
+    )
+    rows, peak_meta = annotate_peaks(
+        rows,
+        window_radius=int(args.peak_window),
+        threshold_std=float(args.peak_threshold_std),
+        min_peak_distance=int(args.min_peak_distance),
+        min_peak_score_raw=float(args.min_peak_score_raw),
+        min_peak_prominence=float(args.min_peak_prominence),
+        edge_margin=int(args.edge_margin),
+    )
+    candidate_points = build_candidate_points(rows, peak_meta)
 
     csv_path = analysis_dir / "frame_scores.csv"
     json_path = analysis_dir / "frame_scores.json"
     curve_path = analysis_dir / "score_curve.png"
     curve_kf_path = analysis_dir / "score_curve_with_keyframes.png"
     peaks_path = analysis_dir / "peaks_preview.png"
+    candidate_points_path = analysis_dir / "candidate_points.json"
+    candidate_overview_path = analysis_dir / "candidate_points_overview.png"
     meta_path = analysis_dir / "analysis_meta.json"
 
     _write_csv(csv_path, rows)
     write_json_atomic(str(json_path), rows, indent=2)
+    write_json_atomic(str(candidate_points_path), candidate_points, indent=2)
     save_score_curve(rows, curve_path)
     save_score_curve_with_keyframes(rows, curve_kf_path, sorted(keyframe_set))
     save_peaks_preview(rows, peaks_path)
+    save_candidate_points_overview(
+        rows,
+        candidate_overview_path,
+        sorted(keyframe_set),
+        candidate_points.get("selected_candidates", []),
+    )
 
     analysis_meta = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -220,19 +272,27 @@ def run_segment_analyze(argv=None):
         "source_segment_dir": str(segment_dir),
         "num_frames": int(len(rows)),
         "num_keyframes": int(len(keyframe_set)),
+        "observed_signals": list(score_meta["observed_signals"]),
+        "scored_signals": list(score_meta["scored_signals"]),
         "enabled_signals": list(signal_meta["enabled_signals"]),
         "signal_methods": {
             "appearance_delta": signal_meta["appearance_delta_method"],
             "brightness_jump": signal_meta["brightness_jump_method"],
             "blur_score": signal_meta["blur_score_method"],
             "feature_motion": signal_meta["feature_motion_method"],
-            "semantic_delta": "disabled in commit 2A; outputs constant 0.0",
+            "semantic_delta": "disabled in commit 2B; outputs constant 0.0",
         },
         "score_weights": score_meta["score_weights"],
+        "use_blur_in_score": bool(score_meta["use_blur_in_score"]),
         "smoothing": score_meta["smoothing"],
-        "peak_detection": peak_meta,
+        "peak_detection": _peak_meta_public(peak_meta),
         "semantic_enabled": False,
         "uniform_keyframe_indices": sorted(int(x) for x in keyframe_set),
+        "candidate_points": {
+            "selected_count": int(len(candidate_points.get("selected_candidates", []))),
+            "suppressed_count": int(len(candidate_points.get("suppressed_candidates", []))),
+            "reason_thresholds": candidate_points.get("reason_thresholds", {}),
+        },
         "source_files": {
             "timestamps": str(segment_dir / "timestamps.txt"),
             "keyframes_meta": str(segment_dir / "keyframes" / "keyframes_meta.json"),
@@ -245,6 +305,8 @@ def run_segment_analyze(argv=None):
             "score_curve_png": str(curve_path),
             "score_curve_with_keyframes_png": str(curve_kf_path),
             "peaks_preview_png": str(peaks_path),
+            "candidate_points_json": str(candidate_points_path),
+            "candidate_points_overview_png": str(candidate_overview_path),
         },
     }
     write_json_atomic(str(meta_path), analysis_meta, indent=2)
@@ -252,6 +314,7 @@ def run_segment_analyze(argv=None):
     log_info("analysis_dir: {}".format(analysis_dir))
     log_info("frame_scores.csv rows: {}".format(len(rows)))
     log_info("uniform keyframes: {}".format(len(keyframe_set)))
+    log_info("candidate peaks: {}".format(len(candidate_points.get("selected_candidates", []))))
     log_prog("segment analyze done: {}".format(analysis_dir))
 
 
