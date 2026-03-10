@@ -191,6 +191,32 @@ def _mark_uniform_keyframes(rows, uniform_keyframe_indices):
     return keyframe_set
 
 
+def _summarize_final_keyframes(keyframes_meta):
+    items = list(keyframes_meta.get("keyframes") or [])
+    source_type_counts = {}
+    source_role_counts = {}
+    promotion_source_counts = {}
+    promoted_indices = []
+
+    for item in items:
+        source_type = str(item.get("source_type", "") or "unknown")
+        source_role = str(item.get("source_role", "") or "unknown")
+        promotion_source = str(item.get("promotion_source", "") or "")
+        source_type_counts[source_type] = int(source_type_counts.get(source_type, 0)) + 1
+        source_role_counts[source_role] = int(source_role_counts.get(source_role, 0)) + 1
+        if promotion_source:
+            promotion_source_counts[promotion_source] = int(promotion_source_counts.get(promotion_source, 0)) + 1
+        if source_role == "promoted_support_candidate":
+            promoted_indices.append(int(item.get("frame_idx", 0)))
+
+    return {
+        "source_type_counts": source_type_counts,
+        "source_role_counts": source_role_counts,
+        "promotion_source_counts": promotion_source_counts,
+        "promoted_support_indices": sorted(promoted_indices),
+    }
+
+
 
 def _write_csv(path, rows):
     with open(str(path), "w", encoding="utf-8", newline="") as f:
@@ -238,6 +264,7 @@ def run_segment_analyze(argv=None):
     rows, signal_meta = compute_frame_signal_rows(data["frame_paths"], data["timestamps"], semantic_rows=semantic_rows)
     uniform_keyframe_set, final_keyframe_set = _resolve_keyframe_sets(data["keyframes_meta"])
     keyframe_set = _mark_uniform_keyframes(rows, uniform_keyframe_set)
+    final_keyframe_summary = _summarize_final_keyframes(data["keyframes_meta"])
 
     score_weights = {
         "appearance_delta": float(args.score_w_appearance),
@@ -344,6 +371,10 @@ def run_segment_analyze(argv=None):
         "semantic_peak_enabled": bool(semantic_meta.get("semantic_peak_enabled", False)),
         "uniform_keyframe_indices": sorted(int(x) for x in uniform_keyframe_set),
         "final_keyframe_indices": sorted(int(x) for x in final_keyframe_set),
+        "final_keyframe_source_counts": final_keyframe_summary["source_type_counts"],
+        "final_keyframe_source_roles": final_keyframe_summary["source_role_counts"],
+        "final_keyframe_promotion_sources": final_keyframe_summary["promotion_source_counts"],
+        "promoted_support_keyframe_indices": final_keyframe_summary["promoted_support_indices"],
         "candidate_points": {
             "selected_count": int(len(candidate_points.get("selected_candidates", []))),
             "suppressed_count": int(len(candidate_points.get("suppressed_candidates", []))),
@@ -383,6 +414,7 @@ def run_segment_analyze(argv=None):
     log_info("frame_scores.csv rows: {}".format(len(rows)))
     log_info("uniform base keyframes: {}".format(len(uniform_keyframe_set)))
     log_info("final keyframes: {}".format(len(final_keyframe_set)))
+    log_info("final keyframe sources: {}".format(final_keyframe_summary["source_role_counts"]))
     log_info("candidate peaks: {}".format(len(candidate_points.get("selected_candidates", []))))
     log_info(
         "candidate roles: boundary={} support={} semantic_only={} suppressed={}".format(

@@ -16,24 +16,27 @@ python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_T
 
 ## 3. `segment` 正式关键帧策略冒烟测试
 
-### 3.1 `semantic_guarded_v1` 单步验证
+### 3.1 `semantic_guarded_v2` 单步验证
 ```bash
 python -m exphub \
   --dataset ncd \
   --sequence rooster_2020-03-10-10-36-30_0 \
-  --tag debug \
+  --tag debug_v2 \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy semantic_guarded_v1
+  --segment_policy semantic_guarded_v2 \
+  --sys_py <segmentclip_python>
 ```
 
 **最小验收：**
-- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="semantic_guarded_v1"`。
+- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="semantic_guarded_v2"`。
 - `summary.num_uniform_base`、`summary.num_final_keyframes`、`summary.extra_kf_ratio` 已存在。
 - `summary.num_boundary_relocated + summary.num_boundary_inserted == summary.num_boundary_selected` 可不强制严格相等，但应能解释 boundary 的去向。
 - `summary.num_support_inserted == summary.num_support_selected`。
+- `summary.num_promoted_support_inserted` 与 `summary.num_burst_windows_triggered` 已存在。
 - `keyframes[*].source_type` 仅应出现 `uniform / boundary / support`。
+- `keyframes[*].source_role` 应可区分 `boundary_candidate / support_candidate / promoted_support_candidate`。
 - `semantic_only_candidate` 与 `suppressed` 不应作为硬关键帧进入 `keyframe_indices`。
 
 ### 3.2 与 uniform 对比
@@ -45,7 +48,8 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy uniform
+  --segment_policy uniform \
+  --sys_py <segmentclip_python>
 ```
 
 **对比项：**
@@ -55,17 +59,37 @@ python -m exphub \
 - `num_boundary_relocated`
 - `num_boundary_inserted`
 - `num_support_inserted`
+- `num_promoted_support_inserted`
 
-### 3.3 主链路安全验证
+### 3.3 与 `semantic_guarded_v1` 对比
 ```bash
 python -m exphub \
   --dataset ncd \
   --sequence rooster_2020-03-10-10-36-30_0 \
-  --tag debug \
+  --tag debug_v1 \
+  --w 480 --h 320 \
+  --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
+  --mode segment \
+  --segment_policy semantic_guarded_v1 \
+  --sys_py <segmentclip_python>
+```
+
+**重点观察：**
+- v2 是否开始出现 `num_support_inserted > 0`
+- v2 是否开始出现 `num_promoted_support_inserted > 0`
+- 若仍为 0，需检查是否被 `support_trigger_gap / promoted_min_distance / rerank_score / burst_window` 规则挡住
+
+### 3.4 主链路安全验证
+```bash
+python -m exphub \
+  --dataset ncd \
+  --sequence rooster_2020-03-10-10-36-30_0 \
+  --tag debug_v2 \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode all \
-  --segment_policy semantic_guarded_v1
+  --segment_policy semantic_guarded_v2 \
+  --sys_py <segmentclip_python>
 ```
 
 **最小验收：**
@@ -86,7 +110,7 @@ python scripts/segment_analyze.py --exp_dir <EXP_DIR>
 python scripts/segment_analyze.py \
   --dataset ncd \
   --sequence rooster_2020-03-10-10-36-30_0 \
-  --tag debug \
+  --tag debug_v2 \
   --w 480 --h 320 \
   --start_sec 60 --fps 12 --kf_gap 24 --dur 4
 ```
@@ -100,4 +124,5 @@ python scripts/segment_analyze.py \
 - `segment/analysis/semantic_embeddings.npz` 已生成，第二次运行时应可复用。
 - `segment/analysis/semantic_curve.png` 与 `semantic_vs_nonsemantic.png` 已生成。
 - `segment/analysis/analysis_meta.json` 已生成，且 `semantic_enabled=true`、`semantic_backend="openclip"`、`use_semantic_in_score=false`、`candidate_role_enabled=true`，并包含 `observed_signals` / `scored_signals`、`role_rules`、`rerank_weights`、`role_thresholds`。
-- 若 `segment_policy=semantic_guarded_v1`，`frame_scores.csv` 中 `is_uniform_keyframe=True` 的数量应与 `uniform_base_indices` 对齐，而不是与最终 `keyframe_indices` 强制相等。
+- 若 `segment_policy=semantic_guarded_v1` 或 `semantic_guarded_v2`，`frame_scores.csv` 中 `is_uniform_keyframe=True` 的数量应与 `uniform_base_indices` 对齐，而不是与最终 `keyframe_indices` 强制相等。
+- `analysis_meta.json` 中应能看到 `final_keyframe_source_counts / final_keyframe_source_roles / final_keyframe_promotion_sources`，从而区分 boundary / support / promoted_support 的最终来源。

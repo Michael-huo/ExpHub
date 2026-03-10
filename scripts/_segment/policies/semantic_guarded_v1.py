@@ -196,6 +196,7 @@ def build_policy_plan(context):
             source_type="uniform",
             source_role="uniform",
             candidate_role="uniform",
+            promotion_source="uniform",
         )
 
     item_map = dict(base_items)
@@ -237,6 +238,8 @@ def build_policy_plan(context):
                     is_inserted=False,
                     is_relocated=bool(was_relocated),
                     replaced_uniform_index=int(attach_target) if was_relocated else None,
+                    promotion_source="boundary",
+                    promotion_reason="boundary_attach_replace" if was_relocated else "boundary_attach_keep",
                 )
             continue
 
@@ -254,6 +257,8 @@ def build_policy_plan(context):
             is_inserted=True,
             is_relocated=False,
             replaced_uniform_index=None,
+            promotion_source="boundary",
+            promotion_reason="boundary_insert",
         )
         boundary_selected += 1
         boundary_inserted += 1
@@ -288,6 +293,9 @@ def build_policy_plan(context):
             is_inserted=True,
             is_relocated=False,
             replaced_uniform_index=None,
+            promotion_source="support",
+            promotion_reason="support_gap_fill",
+            window_id=int(frame_idx // max(1, rules["support_window"])),
         )
         selected_support_indices.append(int(frame_idx))
         support_selected += 1
@@ -318,6 +326,8 @@ def build_policy_plan(context):
             "num_boundary_relocated": int(boundary_relocated),
             "num_boundary_inserted": int(boundary_inserted),
             "num_support_inserted": int(support_inserted),
+            "num_promoted_support_inserted": 0,
+            "num_burst_windows_triggered": 0,
             "num_final_keyframes": int(len(final_indices)),
             "extra_kf_ratio": float(max(0, len(final_indices) - len(base_indices)) / float(len(base_indices) or 1)),
             "num_semantic_only_observed": int(len(semantic_only_candidates)),

@@ -285,7 +285,7 @@ def main():
 
     ap.add_argument("--bag", required=True, help="rosbag path")
     ap.add_argument("--topic", default="/camera/rgb/image_raw/compressed", help="image topic (sensor_msgs/Image or sensor_msgs/CompressedImage)")
-    ap.add_argument("--out_root", required=True, help="output root, e.g. /data/hx/ExpHub/datasets/scand")
+    ap.add_argument("--out_root", required=True, help="output root, e.g. <exphub>/datasets/<dataset>")
 
     ap.add_argument("--name", default="", help="segment folder name, e.g. scand_seq01_dur16s_w768_h480_fps25_v1")
     ap.add_argument("--dataset", default="scand", help="dataset name (used only when --name not set)")
@@ -324,8 +324,8 @@ def main():
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        choices=["uniform", "semantic_guarded_v1"],
-        help="keyframe policy: uniform legacy anchors, or semantic_guarded_v1 (uniform skeleton + boundary/support adjustments)",
+        choices=["uniform", "semantic_guarded_v1", "semantic_guarded_v2"],
+        help="keyframe policy: uniform legacy anchors, or semantic_guarded_v1/v2 (uniform skeleton + guarded boundary/support adjustments)",
     )
 
     ap.add_argument("--dry_run", action="store_true", help="print plan and exit")
