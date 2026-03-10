@@ -34,6 +34,9 @@ def _build_keyframe_item_factory(frame_paths, timestamps):
         is_relocated=False,
         replaced_uniform_index=None,
         candidate_role="",
+        promotion_source="",
+        promotion_reason="",
+        window_id=None,
     ):
         path = frame_paths[int(frame_idx)]
         return {
@@ -48,6 +51,9 @@ def _build_keyframe_item_factory(frame_paths, timestamps):
             "is_inserted": bool(is_inserted),
             "is_relocated": bool(is_relocated),
             "replaced_uniform_index": int(replaced_uniform_index) if replaced_uniform_index is not None else None,
+            "promotion_source": str(promotion_source or ""),
+            "promotion_reason": str(promotion_reason or ""),
+            "window_id": int(window_id) if window_id is not None else None,
         }
 
     return _make_item
@@ -78,7 +84,13 @@ def _normalize_plan(context, plan):
     for frame_idx in indices:
         item = item_map.get(frame_idx)
         if item is None:
-            item = build_item(frame_idx, source_type="uniform", source_role="uniform", candidate_role="uniform")
+            item = build_item(
+                frame_idx,
+                source_type="uniform",
+                source_role="uniform",
+                candidate_role="uniform",
+                promotion_source="uniform",
+            )
         items.append(item)
 
     summary = dict(plan.get("summary") or {})
@@ -180,7 +192,7 @@ def materialize_keyframe_plan(root_dir, frames_dir, timestamps_path, kf_gap, key
         "keyframes": list(plan["keyframe_items"]),
         "summary": dict(plan["summary"]),
         "policy_meta": dict(plan.get("policy_meta") or {}),
-        "note": "Keyframes remain backward compatible with the legacy uniform layout fields. semantic_guarded_v1 uses a uniform skeleton plus boundary/support adjustments.",
+        "note": "Keyframes remain backward compatible with the legacy uniform layout fields. semantic_guarded policies use a uniform skeleton plus bounded boundary/support refinements.",
     }
 
     write_json_atomic(keyframes_dir / "keyframes_meta.json", keyframes_meta, indent=2)

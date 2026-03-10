@@ -30,6 +30,7 @@ def build_policy_plan(context):
                 source_type="uniform",
                 source_role="uniform",
                 candidate_role="uniform",
+                promotion_source="uniform",
             )
         )
 
@@ -47,6 +48,8 @@ def build_policy_plan(context):
             "num_boundary_relocated": 0,
             "num_boundary_inserted": 0,
             "num_support_inserted": 0,
+            "num_promoted_support_inserted": 0,
+            "num_burst_windows_triggered": 0,
             "num_final_keyframes": int(len(indices)),
             "extra_kf_ratio": 0.0,
         },

@@ -135,7 +135,7 @@ segment → prompt → infer → merge → slam → eval → stats
   ```text
   segment → prompt → infer → merge → slam → eval → stats
   ```
-- `segment` 正式关键帧层已新增可选策略 `semantic_guarded_v1`，开始将研究旁路的 role-aware candidates 以“uniform 骨架 + boundary/support 修正”的方式接回主链路输出；
+- `segment` 正式关键帧层已新增可选策略 `semantic_guarded_v1 / semantic_guarded_v2`，开始将研究旁路的 role-aware candidates 以“uniform 骨架 + boundary/support 修正”的方式接回主链路输出；
 - `prompt` 已接入基于 Qwen 的图像到文本流程；
 - `infer` 已接入基于 Wan2.2 的图像与文本到视频流程；
 - 下游 `slam / eval / stats` 已可用于验证几何一致性、统计压缩率与汇总实验信息；
@@ -146,8 +146,8 @@ segment → prompt → infer → merge → slam → eval → stats
 
 以下关键模块仍待补强：
 
-- `segment` 默认策略仍为 `uniform`，`semantic_guarded_v1` 只是第一版正式回接，还不是最终最优关键帧策略；
-- `segment` 研究旁路现已接入基于 OpenCLIP image encoder 的 observe-only 语义变化分析，并能输出 `boundary / support / semantic_only / suppressed` 候选角色与 rerank 摘要；其中 `semantic_guarded_v1` 仅让 `boundary / support` 进入硬关键帧集合，`semantic_only` 仍保持 observe-only；
+- `segment` 默认策略仍为 `uniform`，`semantic_guarded_v1 / semantic_guarded_v2` 只是正式回接的早期 rule-based 版本，还不是最终最优关键帧策略；
+- `segment` 研究旁路现已接入基于 OpenCLIP image encoder 的 observe-only 语义变化分析，并能输出 `boundary / support / semantic_only / suppressed` 候选角色与 rerank 摘要；其中 `semantic_guarded_v1` 主要完成 boundary 纠偏，`semantic_guarded_v2` 则进一步尝试 support 插点与 `low_prominence` 型 suppressed-high 晋升；
 - `prompt` 当前使用的语义表示仍相对基础，后续仍有较大优化空间；
 - 语义一致性评测尚未纳入标准工作流；
 - 当前生成结果是否真正“SLAM-friendly”仍需更系统的定量分析。
@@ -168,6 +168,19 @@ segment → prompt → infer → merge → slam → eval → stats
 - `suppressed` 中的高价值候选如何二次晋升；
 - `semantic_only` 是否以及何时可以升级为硬关键帧；
 - boundary / support 的预算是否需要按场景自适应。
+
+### 4.2.2 `semantic_guarded_v2` 相比 v1 的增强点
+
+`semantic_guarded_v2` 的定位是把 v1 从“边界纠偏”扩展到“边界 + 局部密度修正”：
+
+- 保留 v1 的 uniform base 与 boundary 优先级；
+- 原生 `support_candidate` 现在按 `rerank_score / nonsemantic_support / local_prominence` 排序尝试正式插点；
+- 新增 `promoted_support_candidate`，仅对 `low_prominence` 型 suppressed-high 候选开放二次晋升；
+- 新增轻量 `burst/window` 规则，允许在高活动且覆盖偏稀疏的窗口内额外晋升 1 个 suppressed-high；
+- `semantic_only_candidate` 仍然只做 soft observation，不进入硬关键帧集合；
+- 总体仍受 `max_support_extra_ratio / max_promoted_extra_ratio / max_extra_kf_ratio` 约束。
+
+v2 当前仍是 rule-based 工程版，重点是把候选密度修正机制明确接入正式 keyframe 输出，而不是一次性解决所有 suppressed 候选的判别问题。
 
 ### 4.3 当前系统定位
 

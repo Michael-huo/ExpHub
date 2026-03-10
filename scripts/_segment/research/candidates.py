@@ -245,6 +245,14 @@ def _base_reasons(row, reason_thresholds):
 def _candidate_record(row, selected, reason_thresholds, relation_thresholds, role_thresholds, rerank_weights, support_values):
     semantic_relation = _semantic_relation(row, relation_thresholds)
     rerank_score = _rerank_score(support_values, rerank_weights)
+    role_if_selected, role_reasons_if_selected = _determine_role(
+        row,
+        selected=True,
+        semantic_relation=semantic_relation,
+        reason_thresholds=reason_thresholds,
+        role_thresholds=role_thresholds,
+        support_values=support_values,
+    )
     candidate_role, role_reasons = _determine_role(
         row,
         selected=selected,
@@ -272,6 +280,8 @@ def _candidate_record(row, selected, reason_thresholds, relation_thresholds, rol
         "semantic_smooth": float(row.get("semantic_smooth", 0.0)),
         "semantic_relation": semantic_relation,
         "candidate_role": candidate_role,
+        "role_if_selected": role_if_selected,
+        "role_reasons_if_selected": list(role_reasons_if_selected),
         "candidate_confidence": float(rerank_score),
         "rerank_score": float(rerank_score),
         "semantic_support": float(semantic_support),

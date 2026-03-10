@@ -7,6 +7,7 @@ import importlib
 _POLICY_MODULES = {
     "uniform": "_segment.policies.uniform",
     "semantic_guarded_v1": "_segment.policies.semantic_guarded_v1",
+    "semantic_guarded_v2": "_segment.policies.semantic_guarded_v2",
 }
 
 
