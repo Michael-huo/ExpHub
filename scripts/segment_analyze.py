@@ -176,9 +176,16 @@ def _load_segment_inputs(segment_dir):
 
 
 
-def _mark_uniform_keyframes(rows, keyframes_meta):
-    indices = keyframes_meta.get("keyframe_indices") or []
-    keyframe_set = set(int(x) for x in indices)
+def _resolve_keyframe_sets(keyframes_meta):
+    uniform_indices = keyframes_meta.get("uniform_base_indices") or keyframes_meta.get("keyframe_indices") or []
+    final_indices = keyframes_meta.get("keyframe_indices") or uniform_indices
+    uniform_set = set(int(x) for x in uniform_indices)
+    final_set = set(int(x) for x in final_indices)
+    return uniform_set, final_set
+
+
+def _mark_uniform_keyframes(rows, uniform_keyframe_indices):
+    keyframe_set = set(int(x) for x in uniform_keyframe_indices)
     for row in rows:
         row["is_uniform_keyframe"] = bool(int(row["frame_idx"]) in keyframe_set)
     return keyframe_set
@@ -229,7 +236,8 @@ def run_segment_analyze(argv=None):
         smooth_window=int(args.smooth_window),
     )
     rows, signal_meta = compute_frame_signal_rows(data["frame_paths"], data["timestamps"], semantic_rows=semantic_rows)
-    keyframe_set = _mark_uniform_keyframes(rows, data["keyframes_meta"])
+    uniform_keyframe_set, final_keyframe_set = _resolve_keyframe_sets(data["keyframes_meta"])
+    keyframe_set = _mark_uniform_keyframes(rows, uniform_keyframe_set)
 
     score_weights = {
         "appearance_delta": float(args.score_w_appearance),
@@ -274,25 +282,25 @@ def run_segment_analyze(argv=None):
     write_json_atomic(str(candidate_points_path), candidate_points, indent=2)
     write_json_atomic(str(candidate_roles_summary_path), candidate_points.get("candidate_roles_summary", {}), indent=2)
     save_score_curve(rows, curve_path)
-    save_score_curve_with_keyframes(rows, curve_kf_path, sorted(keyframe_set))
+    save_score_curve_with_keyframes(rows, curve_kf_path, sorted(final_keyframe_set))
     save_peaks_preview(rows, peaks_path)
     save_candidate_points_overview(
         rows,
         candidate_overview_path,
-        sorted(keyframe_set),
+        sorted(final_keyframe_set),
         candidate_points.get("selected_candidates", []),
     )
     save_candidate_roles_overview(
         rows,
         candidate_roles_overview_path,
-        sorted(keyframe_set),
+        sorted(final_keyframe_set),
         candidate_points.get("candidate_roles_summary", {}),
     )
     save_semantic_curve(rows, semantic_curve_path)
     save_semantic_vs_nonsemantic(
         rows,
         semantic_vs_nonsemantic_path,
-        sorted(keyframe_set),
+        sorted(final_keyframe_set),
         candidate_points.get("selected_candidates", []),
     )
 
@@ -301,7 +309,8 @@ def run_segment_analyze(argv=None):
         "exp_dir": str(exp_dir),
         "source_segment_dir": str(segment_dir),
         "num_frames": int(len(rows)),
-        "num_keyframes": int(len(keyframe_set)),
+        "num_keyframes": int(len(final_keyframe_set)),
+        "policy_name": data["keyframes_meta"].get("policy_name", "uniform"),
         "observed_signals": list(score_meta["observed_signals"]),
         "scored_signals": list(score_meta["scored_signals"]),
         "enabled_signals": list(signal_meta["enabled_signals"]),
@@ -333,7 +342,8 @@ def run_segment_analyze(argv=None):
         "semantic_encode_sec": float(semantic_meta["encode_sec"]),
         "semantic_threshold": float(candidate_points.get("relation_thresholds", {}).get("semantic_smooth", 0.0)),
         "semantic_peak_enabled": bool(semantic_meta.get("semantic_peak_enabled", False)),
-        "uniform_keyframe_indices": sorted(int(x) for x in keyframe_set),
+        "uniform_keyframe_indices": sorted(int(x) for x in uniform_keyframe_set),
+        "final_keyframe_indices": sorted(int(x) for x in final_keyframe_set),
         "candidate_points": {
             "selected_count": int(len(candidate_points.get("selected_candidates", []))),
             "suppressed_count": int(len(candidate_points.get("suppressed_candidates", []))),
@@ -371,7 +381,8 @@ def run_segment_analyze(argv=None):
 
     log_info("analysis_dir: {}".format(analysis_dir))
     log_info("frame_scores.csv rows: {}".format(len(rows)))
-    log_info("uniform keyframes: {}".format(len(keyframe_set)))
+    log_info("uniform base keyframes: {}".format(len(uniform_keyframe_set)))
+    log_info("final keyframes: {}".format(len(final_keyframe_set)))
     log_info("candidate peaks: {}".format(len(candidate_points.get("selected_candidates", []))))
     log_info(
         "candidate roles: boundary={} support={} semantic_only={} suppressed={}".format(

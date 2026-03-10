@@ -14,7 +14,66 @@
 python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag test --w 480 --h 320 --fps 24 --dur 4 --kf_gap 24
 ```
 
-## 3. `segment` 研究旁路冒烟测试
+## 3. `segment` 正式关键帧策略冒烟测试
+
+### 3.1 `semantic_guarded_v1` 单步验证
+```bash
+python -m exphub \
+  --dataset ncd \
+  --sequence rooster_2020-03-10-10-36-30_0 \
+  --tag debug \
+  --w 480 --h 320 \
+  --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
+  --mode segment \
+  --segment_policy semantic_guarded_v1
+```
+
+**最小验收：**
+- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="semantic_guarded_v1"`。
+- `summary.num_uniform_base`、`summary.num_final_keyframes`、`summary.extra_kf_ratio` 已存在。
+- `summary.num_boundary_relocated + summary.num_boundary_inserted == summary.num_boundary_selected` 可不强制严格相等，但应能解释 boundary 的去向。
+- `summary.num_support_inserted == summary.num_support_selected`。
+- `keyframes[*].source_type` 仅应出现 `uniform / boundary / support`。
+- `semantic_only_candidate` 与 `suppressed` 不应作为硬关键帧进入 `keyframe_indices`。
+
+### 3.2 与 uniform 对比
+```bash
+python -m exphub \
+  --dataset ncd \
+  --sequence rooster_2020-03-10-10-36-30_0 \
+  --tag debug_uniform \
+  --w 480 --h 320 \
+  --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
+  --mode segment \
+  --segment_policy uniform
+```
+
+**对比项：**
+- `num_uniform_base`
+- `num_final_keyframes`
+- `extra_kf_ratio`
+- `num_boundary_relocated`
+- `num_boundary_inserted`
+- `num_support_inserted`
+
+### 3.3 主链路安全验证
+```bash
+python -m exphub \
+  --dataset ncd \
+  --sequence rooster_2020-03-10-10-36-30_0 \
+  --tag debug \
+  --w 480 --h 320 \
+  --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
+  --mode all \
+  --segment_policy semantic_guarded_v1
+```
+
+**最小验收：**
+- `segment` step 不因新 policy 崩溃。
+- `segment/frames/`、`segment/keyframes/`、`segment/keyframes/keyframes_meta.json`、`segment/timestamps.txt`、`segment/calib.txt`、`segment/preprocess_meta.json`、`segment/step_meta.json` 全部存在。
+- 若 `all` 全链路耗时过长，至少应人工确认 `segment` 产物格式未破坏，且 `prompt / infer / merge / slam / stats` 未新增对 `keyframes_meta.json` 旧字段的破坏性依赖。
+
+## 4. `segment` 研究旁路冒烟测试
 `segment_analyze.py` 不接入 `--mode all`，应在已有 `segment/` 产物基础上单独运行。
 
 **按 `exp_dir` 直接分析：**
@@ -41,4 +100,4 @@ python scripts/segment_analyze.py \
 - `segment/analysis/semantic_embeddings.npz` 已生成，第二次运行时应可复用。
 - `segment/analysis/semantic_curve.png` 与 `semantic_vs_nonsemantic.png` 已生成。
 - `segment/analysis/analysis_meta.json` 已生成，且 `semantic_enabled=true`、`semantic_backend="openclip"`、`use_semantic_in_score=false`、`candidate_role_enabled=true`，并包含 `observed_signals` / `scored_signals`、`role_rules`、`rerank_weights`、`role_thresholds`。
-- `frame_scores.csv` 中 `is_uniform_keyframe=True` 的数量应与 `segment/keyframes/keyframes_meta.json` 对齐。
+- 若 `segment_policy=semantic_guarded_v1`，`frame_scores.csv` 中 `is_uniform_keyframe=True` 的数量应与 `uniform_base_indices` 对齐，而不是与最终 `keyframe_indices` 强制相等。

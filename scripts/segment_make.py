@@ -37,7 +37,13 @@ import sys
 from datetime import datetime
 
 import numpy as np
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from _common import list_frames_sorted, log_err, log_info, log_prog, log_warn, write_json_atomic
+from _segment.api import materialize_keyframe_plan
 
 try:
     import cv2
@@ -315,6 +321,12 @@ def main():
         choices=["symlink", "hardlink", "copy"],
         help="how to materialize keyframes in keyframes/: symlink (default, no duplication), hardlink, or copy",
     )
+    ap.add_argument(
+        "--segment_policy",
+        default="uniform",
+        choices=["uniform", "semantic_guarded_v1"],
+        help="keyframe policy: uniform legacy anchors, or semantic_guarded_v1 (uniform skeleton + boundary/support adjustments)",
+    )
 
     ap.add_argument("--dry_run", action="store_true", help="print plan and exit")
     ap.add_argument("--quiet", action="store_true", help="less logs")
@@ -545,74 +557,23 @@ def main():
     # -------------------------
     if int(args.kf_gap) > 0:
         kf_gap = int(args.kf_gap)
-        keyframes_dir = os.path.join(root_dir, "keyframes")
-        ensure_dir(keyframes_dir)
-
-        # 对齐后续 infer 的分段：只使用 0..used_last_idx 范围（包含），末尾不足 gap 的帧记为 tail_drop
-        used_last_idx = ((out_count - 1) // kf_gap) * kf_gap
-        used_count = used_last_idx + 1
-        tail_drop = int(out_count - used_count)
-
-        indices = list(range(0, used_count, kf_gap))
-        if len(indices) == 0:
-            indices = [0]
-
-        req_mode = str(args.keyframes_mode)
-        actual_mode = req_mode
-
-        def _make_one(src_path: str, dst_path: str):
-            nonlocal actual_mode
-            try:
-                if os.path.lexists(dst_path):
-                    os.remove(dst_path)
-            except Exception:
-                pass
-
-            if actual_mode == "symlink":
-                try:
-                    rel = os.path.relpath(src_path, start=os.path.dirname(dst_path))
-                    os.symlink(rel, dst_path)
-                    return
-                except Exception:
-                    actual_mode = "hardlink"  # downgrade
-
-            if actual_mode == "hardlink":
-                try:
-                    os.link(src_path, dst_path)
-                    return
-                except Exception:
-                    actual_mode = "copy"  # downgrade
-
-            shutil.copy2(src_path, dst_path)
-
-        bytes_sum = 0
-        for idx in indices:
-            src = os.path.join(frames_dir, "{:06d}.png".format(idx))
-            dst = os.path.join(keyframes_dir, "{:06d}.png".format(idx))
-            if not os.path.exists(src):
-                log_warn("keyframe source missing: {}".format(src))
-                continue
-            _make_one(src, dst)
-            try:
-                bytes_sum += int(os.path.getsize(src))
-            except Exception:
-                pass
-
-        kf_meta = {
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-            "kf_gap": int(kf_gap),
-            "mode_requested": req_mode,
-            "mode_actual": actual_mode,
-            "frame_count_total": int(out_count),
-            "frame_count_used": int(used_count),
-            "tail_drop": int(tail_drop),
-            "keyframe_count": int(len(indices)),
-            "keyframe_indices": indices,
-            "keyframe_bytes_sum": int(bytes_sum),
-            "note": "Keyframes are anchors sampled every kf_gap frames (including 0). If tail_drop>0, the last few frames are not used by infer segmentation.",
-        }
-        with open(os.path.join(keyframes_dir, "keyframes_meta.json"), "w", encoding="utf-8") as f:
-            json.dump(kf_meta, f, ensure_ascii=False, indent=2)
+        log_info("segment policy materialize start: policy={} kf_gap={}".format(args.segment_policy, kf_gap))
+        kf_meta = materialize_keyframe_plan(
+            root_dir=root_dir,
+            frames_dir=frames_dir,
+            timestamps_path=os.path.join(root_dir, "timestamps.txt"),
+            kf_gap=kf_gap,
+            keyframes_mode=args.keyframes_mode,
+            policy_name=args.segment_policy,
+        )
+        summary = dict(kf_meta.get("summary") or {})
+        log_info(
+            "segment policy materialize done: uniform_base={} final={} extra_ratio={:.3f}".format(
+                int(summary.get("num_uniform_base", 0)),
+                int(summary.get("num_final_keyframes", 0)),
+                float(summary.get("extra_kf_ratio", 0.0)),
+            )
+        )
 
     # Step-level compact metadata (additional, non-breaking).
     actual_frame_count = len(list_frames_sorted(frames_dir))
@@ -635,6 +596,7 @@ def main():
             "start_sec": float(args.start_sec),
             "start_idx": int(args.start_idx),
             "kf_gap": int(args.kf_gap),
+            "segment_policy": str(args.segment_policy),
         },
         "outputs": {
             "frame_count": int(actual_frame_count),
@@ -655,6 +617,13 @@ def main():
             },
         },
     }
+    if int(args.kf_gap) > 0 and 'kf_meta' in locals():
+        step_meta["outputs"]["keyframe_policy"] = {
+            "policy_name": str(kf_meta.get("policy_name", args.segment_policy)),
+            "uniform_base_count": int((kf_meta.get("summary") or {}).get("num_uniform_base", 0)),
+            "final_keyframe_count": int((kf_meta.get("summary") or {}).get("num_final_keyframes", 0)),
+            "extra_kf_ratio": float((kf_meta.get("summary") or {}).get("extra_kf_ratio", 0.0)),
+        }
     write_json_atomic(os.path.join(root_dir, "step_meta.json"), step_meta, indent=2)
 
 
