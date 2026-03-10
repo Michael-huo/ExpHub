@@ -135,6 +135,7 @@ segment → prompt → infer → merge → slam → eval → stats
   ```text
   segment → prompt → infer → merge → slam → eval → stats
   ```
+- `segment` 正式关键帧层已新增可选策略 `semantic_guarded_v1`，开始将研究旁路的 role-aware candidates 以“uniform 骨架 + boundary/support 修正”的方式接回主链路输出；
 - `prompt` 已接入基于 Qwen 的图像到文本流程；
 - `infer` 已接入基于 Wan2.2 的图像与文本到视频流程；
 - 下游 `slam / eval / stats` 已可用于验证几何一致性、统计压缩率与汇总实验信息；
@@ -145,11 +146,28 @@ segment → prompt → infer → merge → slam → eval → stats
 
 以下关键模块仍待补强：
 
-- `segment` 当前仍为等距采样，尚未正式接入 IROS 中的语义关键帧方法；
-- `segment` 研究旁路现已接入基于 OpenCLIP image encoder 的 observe-only 语义变化分析，并能输出 `boundary / support / semantic_only / suppressed` 候选角色与 rerank 摘要，但默认仍不参与正式 `score_raw`；
+- `segment` 默认策略仍为 `uniform`，`semantic_guarded_v1` 只是第一版正式回接，还不是最终最优关键帧策略；
+- `segment` 研究旁路现已接入基于 OpenCLIP image encoder 的 observe-only 语义变化分析，并能输出 `boundary / support / semantic_only / suppressed` 候选角色与 rerank 摘要；其中 `semantic_guarded_v1` 仅让 `boundary / support` 进入硬关键帧集合，`semantic_only` 仍保持 observe-only；
 - `prompt` 当前使用的语义表示仍相对基础，后续仍有较大优化空间；
 - 语义一致性评测尚未纳入标准工作流；
 - 当前生成结果是否真正“SLAM-friendly”仍需更系统的定量分析。
+
+### 4.2.1 `semantic_guarded_v1` 的当前设计边界
+
+`semantic_guarded_v1` 的目的不是推翻 uniform，而是在不破坏主链路契约的前提下，为正式关键帧布局引入第一版语义保护层：
+
+- 先保留 uniform 作为基础骨架；
+- `boundary_candidate` 优先参与边界吸附、替换或插入；
+- `support_candidate` 只做段内局部补点；
+- `semantic_only_candidate` 仍只作为 soft observation，不进入硬关键帧集合；
+- `suppressed` 不进入硬关键帧集合；
+- 全局仍受 `min_kf_distance` 与 `max_extra_kf_ratio` 约束。
+
+当前版本的工程目标是“安全接回主链路”，不是最终论文版策略，因此以下问题刻意留待后续迭代：
+
+- `suppressed` 中的高价值候选如何二次晋升；
+- `semantic_only` 是否以及何时可以升级为硬关键帧；
+- boundary / support 的预算是否需要按场景自适应。
 
 ### 4.3 当前系统定位
 

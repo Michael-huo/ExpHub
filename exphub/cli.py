@@ -326,6 +326,12 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     ap.add_argument("--kf_gap", type=int, default=0, help="0 means auto")
     ap.add_argument("--keyframes_mode", default="symlink", choices=["symlink", "hardlink", "copy"], help="how to materialize segment/keyframes")
+    ap.add_argument(
+        "--segment_policy",
+        default="uniform",
+        choices=["uniform", "semantic_guarded_v1"],
+        help="segment keyframe policy",
+    )
     ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
     ap.add_argument("--gpus", type=int, default=2)
@@ -706,6 +712,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 "start_sec": args.start_sec,
                 "start_idx": args.start_idx,
                 "kf_gap": kf_gap,
+                "segment_policy": args.segment_policy,
                 "base_idx": args.base_idx,
                 "seed_base": args.seed_base,
                 "gpus": args.gpus,
@@ -748,6 +755,8 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(kf_gap),
             "--keyframes_mode",
             str(args.keyframes_mode),
+            "--segment_policy",
+            str(args.segment_policy),
             "--start_idx",
             str(args.start_idx),
             "--start_sec",
