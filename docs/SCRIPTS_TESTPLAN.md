@@ -21,6 +21,13 @@ python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_T
 
 ## 3. `segment` 正式关键帧策略冒烟测试
 
+当前正式测试与 analyze 收敛对象为：
+- `uniform`
+- `sks_v1`
+- `motion_energy_v1`
+
+`semantic_guarded_v1 / semantic_guarded_v2` 仍保留在代码库中，但不再作为本轮正式 analyze 叙事与冒烟验收主对象。
+
 ### 3.1 `sks_v1` 单步验证
 ```bash
 python -m exphub \
@@ -42,31 +49,29 @@ python -m exphub \
 - `keyframes[*].source_type` 只应出现 `uniform / semantic`，其中 `semantic` 项必须同时满足 `is_relocated=true` 与 `replaced_uniform_index != null`。
 - 默认会继续自动触发 post analyze；若环境已安装 `torch + open_clip`，日志中应出现 `post analyze start` 与 `post analyze done`。
 
-### 3.2 `semantic_guarded_v2` 单步验证
+### 3.2 `motion_energy_v1` 单步验证
 ```bash
 python -m exphub \
   --dataset ncd \
   --sequence rooster_2020-03-10-10-36-30_0 \
-  --tag debug_v2 \
+  --tag debug_motion \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy semantic_guarded_v2
+  --segment_policy motion_energy_v1
 ```
 
 **最小验收：**
-- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="semantic_guarded_v2"`。
+- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="motion_energy_v1"`。
 - 默认会继续自动触发 post analyze，日志中应出现 `post analyze start` 与 `post analyze done`。
 - `segment/analysis/` 最终只保留 `analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png`。
 - `segment/analysis/` 中不应再出现 `analysis_meta.json / candidate_points.json / candidate_roles_summary.json / frame_scores.json / peaks_preview.png / score_curve.png / score_curve_with_keyframes.png / candidate_points_overview.png / candidate_roles_overview.png / semantic_curve.png / semantic_vs_nonsemantic.png`。
 - `semantic_embeddings.npz` 不应写入 `segment/analysis/`，而应位于 `segment/.segment_cache/segment_analyze/`。
-- `summary.num_uniform_base`、`summary.num_final_keyframes`、`summary.extra_kf_ratio` 已存在。
-- `summary.num_boundary_relocated + summary.num_boundary_inserted == summary.num_boundary_selected` 可不强制严格相等，但应能解释 boundary 的去向。
-- `summary.num_support_inserted == summary.num_support_selected`。
-- `summary.num_promoted_support_inserted` 与 `summary.num_burst_windows_triggered` 已存在。
-- `keyframes[*].source_type` 仅应出现 `uniform / boundary / support`。
-- `keyframes[*].source_role` 应可区分 `boundary_candidate / support_candidate / promoted_support_candidate`。
-- `semantic_only_candidate` 与 `suppressed` 不应作为硬关键帧进入 `keyframe_indices`。
+- `summary.uniform_count == summary.final_keyframe_count == summary.num_uniform_base == summary.num_final_keyframes`。
+- `summary.fixed_budget=true`。
+- `summary.relocated_count > 0` 时，`keyframes[*].is_relocated=true` 的项必须满足 `replaced_uniform_index != null`。
+- `summary.motion_displacement_mean / motion_velocity_mean / motion_acceleration_mean / motion_density_mean / motion_action_total` 已存在。
+- `keyframes[*].source_type` 只应出现 `uniform / motion`，其中 `motion` 项必须表示预算内重定位而非加帧。
 
 ### 3.3 与 uniform 对比
 ```bash
@@ -89,34 +94,34 @@ python -m exphub \
 - `num_support_inserted`
 - `num_promoted_support_inserted`
 
-### 3.4 与 `semantic_guarded_v1` / `semantic_guarded_v2` 对比
+### 3.4 `uniform / sks_v1 / motion_energy_v1` 对比
 ```bash
 python -m exphub \
   --dataset ncd \
   --sequence rooster_2020-03-10-10-36-30_0 \
-  --tag debug_v1 \
+  --tag debug_motion \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy semantic_guarded_v1
+  --segment_policy motion_energy_v1
 ```
 
 **重点观察：**
+- `uniform / sks_v1 / motion_energy_v1` 三者的 `final_keyframe_count` 是否一致。
 - `sks_v1` 是否在不改变预算的前提下，把部分中间关键帧向语义高变化区重定位。
-- v2 是否开始出现 `num_support_inserted > 0`
-- v2 是否开始出现 `num_promoted_support_inserted > 0`
-- 若仍为 0，需检查是否被 `support_trigger_gap / promoted_min_distance / rerank_score / burst_window` 规则挡住
+- `motion_energy_v1` 是否在不改变预算的前提下，把部分中间关键帧向运动高变化区重定位。
+- `analysis_summary.json` 是否分别输出 `semantic_*` 与 `motion_*` 平行字段。
 
 ### 3.5 主链路安全验证
 ```bash
 python -m exphub \
   --dataset ncd \
   --sequence rooster_2020-03-10-10-36-30_0 \
-  --tag debug_v2 \
+  --tag debug_motion_all \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode all \
-  --segment_policy semantic_guarded_v2
+  --segment_policy motion_energy_v1
 ```
 
 **最小验收：**
@@ -137,7 +142,7 @@ python scripts/segment_analyze.py --exp_dir <EXP_DIR>
 python scripts/segment_analyze.py \
   --dataset ncd \
   --sequence rooster_2020-03-10-10-36-30_0 \
-  --tag debug_v2 \
+  --tag debug_motion \
   --w 480 --h 320 \
   --start_sec 60 --fps 12 --kf_gap 24 --dur 4
 ```
@@ -145,8 +150,7 @@ python scripts/segment_analyze.py \
 **最小验收：**
 - `segment/analysis/` 只保留 5 个核心产物：`analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png`。
 - `segment/analysis/frame_scores.csv` 已生成，且数据行数与 `segment/frames/*.png` 数量一致。
-- `segment/analysis/analysis_summary.json` 已生成，并至少包含：基础实验信息、`policy_name / frame_count_total / uniform_base_count / final_keyframe_count / extra_kf_ratio / keyframe_bytes_sum`、`final_keyframe_source_counts / final_keyframe_source_roles`、`num_boundary_relocated / num_support_inserted / num_promoted_support_inserted / num_burst_windows_triggered`、`candidate_role_counts / selected_candidate_count / suppressed_candidate_count`、`uniform_base_indices / final_keyframe_indices`、`semantic_backend / semantic_model_name / use_semantic_in_score / semantic_cache_hit` 与 `top_candidates` 摘要。
-- 若 `segment_policy=sks_v1`，`analysis_summary.json` 还应包含 `fixed_budget / relocated_count / avg_abs_shift / max_abs_shift / semantic_velocity_mean / semantic_velocity_max / semantic_acceleration_mean / semantic_acceleration_max`。
+- `segment/analysis/analysis_summary.json` 已生成；对 `uniform` 至少包含 `policy_name / uniform_base_count / final_keyframe_count / keyframe_bytes_sum / extra_kf_ratio`；对 `sks_v1 / motion_energy_v1` 还应包含 `fixed_budget / relocated_count / avg_abs_shift / max_abs_shift` 与成套 `semantic_*` 或 `motion_*` kinematics 统计。
 - `segment/analysis/` 中不应再出现旧产物：`analysis_meta.json / candidate_points.json / candidate_roles_summary.json / frame_scores.json / peaks_preview.png / score_curve.png / score_curve_with_keyframes.png / candidate_points_overview.png / candidate_roles_overview.png / semantic_curve.png / semantic_vs_nonsemantic.png / semantic_embeddings.npz`。
-- `segment/.segment_cache/segment_analyze/semantic_embeddings.npz` 已生成，第二次运行时应可复用。
-- 若 `segment_policy=sks_v1 / semantic_guarded_v1 / semantic_guarded_v2`，`analysis_summary.json` 中的 `uniform_base_indices` 应与 uniform skeleton 对齐，而 `final_keyframe_indices` 反映正式输出的硬关键帧集合。
+- 若 `segment_policy=sks_v1`，`segment/.segment_cache/sks_v1/semantic_embeddings.npz` 应生成并在 analyze 阶段复用；`uniform / motion_energy_v1` 不应额外依赖 OpenCLIP cache。
+- 若 `segment_policy=sks_v1 / motion_energy_v1`，`analysis_summary.json` 中的 `final_keyframe_count` 应与 uniform 一致，且 `frame_scores.csv` 中 `is_relocated_keyframe=True` 的帧应与 `keyframes_meta.json` 对齐。
