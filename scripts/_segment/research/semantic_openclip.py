@@ -188,15 +188,15 @@ def _compute_semantic_delta(embeddings):
 
 def compute_semantic_rows(
     frame_paths,
-    analysis_dir,
+    cache_dir,
     smooth_window=5,
     model_name=DEFAULT_SEMANTIC_MODEL_NAME,
     pretrained=DEFAULT_SEMANTIC_PRETRAINED,
     batch_size=DEFAULT_SEMANTIC_BATCH_SIZE,
 ):
     frame_paths = [Path(p).resolve() for p in frame_paths]
-    analysis_dir = Path(analysis_dir).resolve()
-    cache_path = analysis_dir / DEFAULT_SEMANTIC_CACHE_NAME
+    cache_dir = Path(cache_dir).resolve()
+    cache_path = cache_dir / DEFAULT_SEMANTIC_CACHE_NAME
     device = _select_device()
 
     cache_hit = False

@@ -73,7 +73,7 @@ def _cleanup_min(exp_dir: Path) -> None:
             _rm_if_exists(exp_dir, child)
 
     # Keep lightweight, reproducibility-critical metadata.
-    _prune_dir_keep_names(exp_dir, exp_dir / "segment", {"step_meta.json", "calib.txt", "timestamps.txt"})
+    _prune_dir_keep_names(exp_dir, exp_dir / "segment", {"step_meta.json", "calib.txt", "timestamps.txt", "analysis"})
     _prune_dir_keep_names(exp_dir, exp_dir / "prompt", {"manifest.json", "step_meta.json"})
     _prune_dir_keep_names(exp_dir, exp_dir / "infer", {"step_meta.json"})
     _prune_dir_keep_names(exp_dir, exp_dir / "merge", {"step_meta.json", "calib.txt", "timestamps.txt"})

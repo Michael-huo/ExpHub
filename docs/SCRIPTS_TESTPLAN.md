@@ -31,6 +31,10 @@ python -m exphub \
 
 **最小验收：**
 - `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="semantic_guarded_v2"`。
+- 默认会继续自动触发 post analyze，日志中应出现 `post analyze start` 与 `post analyze done`。
+- `segment/analysis/` 最终只保留 `analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png`。
+- `segment/analysis/` 中不应再出现 `analysis_meta.json / candidate_points.json / candidate_roles_summary.json / frame_scores.json / peaks_preview.png / score_curve.png / score_curve_with_keyframes.png / candidate_points_overview.png / candidate_roles_overview.png / semantic_curve.png / semantic_vs_nonsemantic.png`。
+- `semantic_embeddings.npz` 不应写入 `segment/analysis/`，而应位于 `segment/.segment_cache/segment_analyze/`。
 - `summary.num_uniform_base`、`summary.num_final_keyframes`、`summary.extra_kf_ratio` 已存在。
 - `summary.num_boundary_relocated + summary.num_boundary_inserted == summary.num_boundary_selected` 可不强制严格相等，但应能解释 boundary 的去向。
 - `summary.num_support_inserted == summary.num_support_selected`。
@@ -98,7 +102,7 @@ python -m exphub \
 - 若 `all` 全链路耗时过长，至少应人工确认 `segment` 产物格式未破坏，且 `prompt / infer / merge / slam / stats` 未新增对 `keyframes_meta.json` 旧字段的破坏性依赖。
 
 ## 4. `segment` 研究旁路冒烟测试
-`segment_analyze.py` 不接入 `--mode all`，应在已有 `segment/` 产物基础上单独运行。
+`segment_analyze.py` 不接入 `--mode all`，但会在 `--mode segment` 成功后默认自动触发；也可在已有 `segment/` 产物基础上单独运行。
 
 **按 `exp_dir` 直接分析：**
 ```bash
@@ -116,13 +120,9 @@ python scripts/segment_analyze.py \
 ```
 
 **最小验收：**
+- `segment/analysis/` 只保留 5 个核心产物：`analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png`。
 - `segment/analysis/frame_scores.csv` 已生成，且数据行数与 `segment/frames/*.png` 数量一致。
-- `segment/analysis/frame_scores.json` 已生成。
-- `segment/analysis/score_curve.png` 与 `score_curve_with_keyframes.png` 已生成。
-- `segment/analysis/candidate_points.json` 与 `candidate_points_overview.png` 已生成。
-- `segment/analysis/candidate_roles_summary.json` 与 `candidate_roles_overview.png` 已生成。
-- `segment/analysis/semantic_embeddings.npz` 已生成，第二次运行时应可复用。
-- `segment/analysis/semantic_curve.png` 与 `semantic_vs_nonsemantic.png` 已生成。
-- `segment/analysis/analysis_meta.json` 已生成，且 `semantic_enabled=true`、`semantic_backend="openclip"`、`use_semantic_in_score=false`、`candidate_role_enabled=true`，并包含 `observed_signals` / `scored_signals`、`role_rules`、`rerank_weights`、`role_thresholds`。
-- 若 `segment_policy=semantic_guarded_v1` 或 `semantic_guarded_v2`，`frame_scores.csv` 中 `is_uniform_keyframe=True` 的数量应与 `uniform_base_indices` 对齐，而不是与最终 `keyframe_indices` 强制相等。
-- `analysis_meta.json` 中应能看到 `final_keyframe_source_counts / final_keyframe_source_roles / final_keyframe_promotion_sources`，从而区分 boundary / support / promoted_support 的最终来源。
+- `segment/analysis/analysis_summary.json` 已生成，并至少包含：基础实验信息、`frame_count_total / uniform_base_count / final_keyframe_count / extra_kf_ratio / keyframe_bytes_sum`、`final_keyframe_source_counts / final_keyframe_source_roles`、`num_boundary_relocated / num_support_inserted / num_promoted_support_inserted / num_burst_windows_triggered`、`candidate_role_counts / selected_candidate_count / suppressed_candidate_count`、`uniform_base_indices / final_keyframe_indices`、`semantic_backend / semantic_model_name / use_semantic_in_score / semantic_cache_hit` 与 `top_candidates` 摘要。
+- `segment/analysis/` 中不应再出现旧产物：`analysis_meta.json / candidate_points.json / candidate_roles_summary.json / frame_scores.json / peaks_preview.png / score_curve.png / score_curve_with_keyframes.png / candidate_points_overview.png / candidate_roles_overview.png / semantic_curve.png / semantic_vs_nonsemantic.png / semantic_embeddings.npz`。
+- `segment/.segment_cache/segment_analyze/semantic_embeddings.npz` 已生成，第二次运行时应可复用。
+- 若 `segment_policy=semantic_guarded_v1` 或 `semantic_guarded_v2`，`analysis_summary.json` 中的 `uniform_base_indices` 应与 uniform skeleton 对齐，而 `final_keyframe_indices` 反映正式输出的硬关键帧集合。

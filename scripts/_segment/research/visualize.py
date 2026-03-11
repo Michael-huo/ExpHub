@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-
 def _series(rows, key):
     return [float(row.get(key, 0.0) or 0.0) for row in rows]
 
@@ -25,210 +24,128 @@ def _normalize(values):
     return [float(x) for x in arr.tolist()]
 
 
-def _build_plot(rows, title, keyframe_indices=None, peak_indices=None):
+def _keyframe_lines(ax, keyframe_indices):
+    if not keyframe_indices:
+        return
+    for idx in keyframe_indices:
+        ax.axvline(int(idx), color="#b0b0b0", linewidth=0.8, alpha=0.4)
+
+
+def _scatter_candidates(ax, items, y_map, color, marker, label, size=42, alpha=1.0):
+    if not items:
+        return
+    xs = [int(item["frame_idx"]) for item in items]
+    ys = [float(y_map.get(int(item["frame_idx"]), 0.0)) for item in items]
+    ax.scatter(
+        xs,
+        ys,
+        s=size,
+        color=color,
+        marker=marker,
+        linewidths=1.0,
+        alpha=alpha,
+        zorder=4,
+        label=label,
+    )
+
+
+def save_score_overview(rows, output_path, keyframe_indices, selected_candidates):
     x = [int(row["frame_idx"]) for row in rows]
-    appearance = _normalize(_series(rows, "appearance_delta"))
-    brightness = _normalize(_series(rows, "brightness_jump"))
-    blur = _normalize(_series(rows, "blur_score"))
-    motion = _normalize(_series(rows, "feature_motion"))
-    score = _normalize(_series(rows, "score_smooth"))
+    score = _series(rows, "score_smooth")
+    semantic = _normalize(_series(rows, "semantic_smooth"))
+    score_map = {int(row["frame_idx"]): float(row.get("score_smooth", 0.0)) for row in rows}
 
     fig, ax = plt.subplots(figsize=(12, 6), dpi=140)
-    ax.plot(x, appearance, label="appearance_delta", linewidth=1.4)
-    ax.plot(x, brightness, label="brightness_jump", linewidth=1.2)
-    ax.plot(x, blur, label="blur_score", linewidth=1.2)
-    ax.plot(x, motion, label="feature_motion", linewidth=1.2)
-    ax.plot(x, score, label="score_smooth", linewidth=2.2, color="#d62728")
+    ax.plot(x, score, label="score_smooth", linewidth=2.3, color="#1f3c88")
+    ax.fill_between(x, semantic, color="#e4edf8", alpha=0.35, label="semantic_smooth (norm)")
+    _scatter_candidates(
+        ax,
+        selected_candidates,
+        score_map,
+        color="#d62728",
+        marker="o",
+        label="selected candidates",
+        size=46,
+    )
+    _keyframe_lines(ax, keyframe_indices)
 
-    if keyframe_indices:
-        for idx in keyframe_indices:
-            ax.axvline(int(idx), color="#7f7f7f", linewidth=0.8, alpha=0.45)
+    ax.set_title("Score Overview")
+    ax.set_xlabel("frame_idx")
+    ax.set_ylabel("score_smooth")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="upper right", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(str(output_path))
+    plt.close(fig)
 
-    if peak_indices:
-        yvals = []
-        score_map = {int(row["frame_idx"]): score[pos] for pos, row in enumerate(rows)}
-        for idx in peak_indices:
-            yvals.append(float(score_map.get(int(idx), 0.0)))
-        ax.scatter(list(peak_indices), yvals, s=28, color="#111111", label="peaks", zorder=4)
 
-    ax.set_title(title)
+def save_roles_overview(rows, output_path, keyframe_indices, candidate_roles_summary):
+    x = [int(row["frame_idx"]) for row in rows]
+    score = _normalize(_series(rows, "score_smooth"))
+    semantic = _normalize(_series(rows, "semantic_smooth"))
+    score_map = {int(row["frame_idx"]): score[pos] for pos, row in enumerate(rows)}
+    semantic_map = {int(row["frame_idx"]): semantic[pos] for pos, row in enumerate(rows)}
+
+    fig, ax = plt.subplots(figsize=(12, 5), dpi=150)
+    ax.plot(x, score, color="#1f3c88", linewidth=2.0, label="score_smooth")
+    ax.plot(x, semantic, color="#c44e52", linewidth=1.8, alpha=0.9, label="semantic_smooth")
+    _keyframe_lines(ax, keyframe_indices)
+    _scatter_candidates(ax, candidate_roles_summary.get("boundary_candidates", []), score_map, "#d62728", "o", "boundary")
+    _scatter_candidates(ax, candidate_roles_summary.get("support_candidates", []), score_map, "#2ca02c", "s", "support")
+    _scatter_candidates(
+        ax,
+        candidate_roles_summary.get("promoted_candidates", []),
+        score_map,
+        "#9467bd",
+        "D",
+        "promoted",
+    )
+    _scatter_candidates(
+        ax,
+        candidate_roles_summary.get("suppressed_candidates", []),
+        semantic_map,
+        "#7f7f7f",
+        "x",
+        "suppressed",
+        alpha=0.8,
+    )
+
+    ax.set_title("Roles Overview")
     ax.set_xlabel("frame_idx")
     ax.set_ylabel("normalized magnitude")
     ax.grid(True, alpha=0.25)
     ax.legend(loc="upper right", ncol=2, fontsize=9)
     fig.tight_layout()
-    return fig
-
-
-
-def save_score_curve(rows, output_path):
-    fig = _build_plot(rows, "Segment Analysis Score Curve")
     fig.savefig(str(output_path))
     plt.close(fig)
 
 
-
-def save_score_curve_with_keyframes(rows, output_path, keyframe_indices):
-    fig = _build_plot(rows, "Segment Analysis Score Curve with Uniform Keyframes", keyframe_indices=keyframe_indices)
-    fig.savefig(str(output_path))
-    plt.close(fig)
-
-
-
-def save_peaks_preview(rows, output_path):
-    peak_indices = [int(row["frame_idx"]) for row in rows if bool(row.get("is_peak", False))]
-    fig = _build_plot(rows, "Segment Analysis Peaks Preview", peak_indices=peak_indices)
-    fig.savefig(str(output_path))
-    plt.close(fig)
-
-
-
-def save_candidate_points_overview(rows, output_path, keyframe_indices, candidate_points):
-    x = [int(row["frame_idx"]) for row in rows]
-    score = _series(rows, "score_smooth")
-
-    fig, ax = plt.subplots(figsize=(12, 5), dpi=150)
-    ax.plot(x, score, color="#1f3c88", linewidth=2.0, label="score_smooth")
-
-    for idx in keyframe_indices:
-        ax.axvline(int(idx), color="#b0b0b0", linewidth=0.8, alpha=0.45)
-
-    if candidate_points:
-        cand_x = [int(item["frame_idx"]) for item in candidate_points]
-        cand_y = [float(item["score_smooth"]) for item in candidate_points]
-        ax.scatter(cand_x, cand_y, color="#d62728", s=38, zorder=4, label="candidate peaks")
-        for item in candidate_points:
-            ax.annotate(
-                "#{}".format(int(item.get("peak_rank", 0))),
-                (int(item["frame_idx"]), float(item["score_smooth"])),
-                textcoords="offset points",
-                xytext=(0, 8),
-                ha="center",
-                fontsize=8,
-                color="#222222",
-            )
-
-    ax.set_title("Candidate Points Overview")
-    ax.set_xlabel("frame_idx")
-    ax.set_ylabel("score_smooth")
-    ax.grid(True, alpha=0.25)
-    ax.legend(loc="upper right")
-    fig.tight_layout()
-    fig.savefig(str(output_path))
-    plt.close(fig)
-
-
-def save_semantic_curve(rows, output_path):
+def save_semantic_overview(rows, output_path, keyframe_indices, selected_candidates):
     x = [int(row["frame_idx"]) for row in rows]
     semantic_delta = _series(rows, "semantic_delta")
     semantic_smooth = _series(rows, "semantic_smooth")
+    score_smooth = _normalize(_series(rows, "score_smooth"))
+    semantic_map = {int(row["frame_idx"]): float(row.get("semantic_smooth", 0.0)) for row in rows}
 
     fig, ax = plt.subplots(figsize=(12, 5), dpi=150)
     ax.plot(x, semantic_delta, color="#7f7f7f", linewidth=1.2, label="semantic_delta")
     ax.plot(x, semantic_smooth, color="#c44e52", linewidth=2.0, label="semantic_smooth")
-    ax.set_title("Semantic Delta Overview")
+    ax.plot(x, score_smooth, color="#1f3c88", linewidth=1.6, alpha=0.9, label="score_smooth (norm)")
+    _scatter_candidates(
+        ax,
+        selected_candidates,
+        semantic_map,
+        color="#111111",
+        marker="o",
+        label="selected candidates",
+        size=40,
+    )
+    _keyframe_lines(ax, keyframe_indices)
+    ax.set_title("Semantic Overview")
     ax.set_xlabel("frame_idx")
     ax.set_ylabel("semantic magnitude")
     ax.grid(True, alpha=0.25)
     ax.legend(loc="upper right")
-    fig.tight_layout()
-    fig.savefig(str(output_path))
-    plt.close(fig)
-
-
-def save_semantic_vs_nonsemantic(rows, output_path, keyframe_indices, candidate_points):
-    x = [int(row["frame_idx"]) for row in rows]
-    score_smooth = _normalize(_series(rows, "score_smooth"))
-    semantic_smooth = _normalize(_series(rows, "semantic_smooth"))
-
-    fig, ax = plt.subplots(figsize=(12, 5), dpi=150)
-    ax.plot(x, score_smooth, color="#1f3c88", linewidth=2.0, label="score_smooth")
-    ax.plot(x, semantic_smooth, color="#c44e52", linewidth=2.0, label="semantic_smooth")
-
-    for idx in keyframe_indices:
-        ax.axvline(int(idx), color="#b0b0b0", linewidth=0.8, alpha=0.45)
-
-    if candidate_points:
-        cand_x = [int(item["frame_idx"]) for item in candidate_points]
-        cand_y = []
-        score_map = {int(row["frame_idx"]): semantic_smooth[pos] for pos, row in enumerate(rows)}
-        for item in candidate_points:
-            cand_y.append(float(score_map.get(int(item["frame_idx"]), 0.0)))
-        ax.scatter(cand_x, cand_y, color="#111111", s=36, zorder=4, label="candidate peaks")
-
-    ax.set_title("Semantic vs Nonsemantic Signals")
-    ax.set_xlabel("frame_idx")
-    ax.set_ylabel("normalized magnitude")
-    ax.grid(True, alpha=0.25)
-    ax.legend(loc="upper right")
-    fig.tight_layout()
-    fig.savefig(str(output_path))
-    plt.close(fig)
-
-
-def save_candidate_roles_overview(rows, output_path, keyframe_indices, candidate_roles_summary):
-    x = [int(row["frame_idx"]) for row in rows]
-    score_smooth = _normalize(_series(rows, "score_smooth"))
-    semantic_smooth = _normalize(_series(rows, "semantic_smooth"))
-    score_map = {int(row["frame_idx"]): score_smooth[pos] for pos, row in enumerate(rows)}
-    semantic_map = {int(row["frame_idx"]): semantic_smooth[pos] for pos, row in enumerate(rows)}
-
-    fig, ax = plt.subplots(figsize=(12, 5), dpi=160)
-    ax.plot(x, score_smooth, color="#1f3c88", linewidth=2.1, label="score_smooth")
-    ax.plot(x, semantic_smooth, color="#c44e52", linewidth=1.8, alpha=0.9, label="semantic_smooth")
-
-    for idx in keyframe_indices:
-        ax.axvline(int(idx), color="#b0b0b0", linewidth=0.8, alpha=0.4)
-
-    role_styles = {
-        "boundary_candidates": {
-            "color": "#d62728",
-            "marker": "o",
-            "label": "boundary",
-            "series": score_map,
-        },
-        "support_candidates": {
-            "color": "#2ca02c",
-            "marker": "s",
-            "label": "support",
-            "series": score_map,
-        },
-        "semantic_only_candidates": {
-            "color": "#ff7f0e",
-            "marker": "^",
-            "label": "semantic_only",
-            "series": semantic_map,
-        },
-        "suppressed_candidates": {
-            "color": "#7f7f7f",
-            "marker": "x",
-            "label": "suppressed",
-            "series": score_map,
-        },
-    }
-
-    for key, style in role_styles.items():
-        items = candidate_roles_summary.get(key, [])
-        if not items:
-            continue
-        xs = [int(item["frame_idx"]) for item in items]
-        ys = [float(style["series"].get(int(item["frame_idx"]), 0.0)) for item in items]
-        ax.scatter(
-            xs,
-            ys,
-            s=42,
-            color=style["color"],
-            marker=style["marker"],
-            linewidths=1.0,
-            zorder=4,
-            label=style["label"],
-        )
-
-    ax.set_title("Candidate Roles Overview")
-    ax.set_xlabel("frame_idx")
-    ax.set_ylabel("normalized magnitude")
-    ax.grid(True, alpha=0.25)
-    ax.legend(loc="upper right", ncol=2, fontsize=9)
     fig.tight_layout()
     fig.savefig(str(output_path))
     plt.close(fig)

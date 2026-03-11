@@ -139,7 +139,7 @@ segment → prompt → infer → merge → slam → eval → stats
 - `prompt` 已接入基于 Qwen 的图像到文本流程；
 - `infer` 已接入基于 Wan2.2 的图像与文本到视频流程；
 - 下游 `slam / eval / stats` 已可用于验证几何一致性、统计压缩率与汇总实验信息；
-- 已新增 `segment_analyze.py` 研究旁路，可对既有 `segment/` 产物计算非语义逐帧信号、OpenCLIP 语义变化、candidate role 判别、轻量 rerank 与候选点摘要，用于后续关键帧策略研究；
+- 已新增 `segment_analyze.py` 研究旁路，可对既有 `segment/` 产物计算非语义逐帧信号、OpenCLIP 语义变化、candidate role 判别、轻量 rerank 与候选点摘要；当前 `--mode segment` 在成功后会默认自动触发该分析旁路（可用 `--skip_analyze` 关闭），并将研究输出收敛为 `analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png` 五个核心产物；
 - 各阶段与全流程耗时统计已纳入实验平台。
 
 ### 4.2 尚未完成或尚未正式接入部分
