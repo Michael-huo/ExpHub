@@ -94,15 +94,24 @@ def _semantic_row_map(semantic_rows):
     return {int(row.get("frame_idx", 0)): row for row in semantic_rows}
 
 
-def compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=None):
+def _motion_row_map(motion_rows):
+    if not motion_rows:
+        return {}
+    return {int(row.get("frame_idx", 0)): row for row in motion_rows}
+
+
+def compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=None, motion_rows=None):
     rows = []
     prev_gray = None
     semantic_map = _semantic_row_map(semantic_rows)
+    motion_map = _motion_row_map(motion_rows)
     semantic_enabled = bool(semantic_rows)
+    motion_enabled = bool(motion_rows)
 
     for idx, frame_path in enumerate(frame_paths):
         gray = _read_gray_image(frame_path)
         semantic_row = semantic_map.get(int(idx), {})
+        motion_row = motion_map.get(int(idx), {})
         row = {
             "frame_idx": int(idx),
             "ts_sec": float(timestamps[idx]),
@@ -122,6 +131,15 @@ def compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=None):
             "semantic_acceleration_norm": float(semantic_row.get("semantic_acceleration_norm", 0.0) or 0.0),
             "semantic_density": float(semantic_row.get("semantic_density", 0.0) or 0.0),
             "semantic_action": float(semantic_row.get("semantic_action", 0.0) or 0.0),
+            "motion_displacement": float(motion_row.get("motion_displacement", 0.0) or 0.0),
+            "motion_velocity": float(motion_row.get("motion_velocity", 0.0) or 0.0),
+            "motion_velocity_smooth": float(motion_row.get("motion_velocity_smooth", 0.0) or 0.0),
+            "motion_velocity_norm": float(motion_row.get("motion_velocity_norm", 0.0) or 0.0),
+            "motion_acceleration": float(motion_row.get("motion_acceleration", 0.0) or 0.0),
+            "motion_acceleration_smooth": float(motion_row.get("motion_acceleration_smooth", 0.0) or 0.0),
+            "motion_acceleration_norm": float(motion_row.get("motion_acceleration_norm", 0.0) or 0.0),
+            "motion_density": float(motion_row.get("motion_density", 0.0) or 0.0),
+            "motion_action": float(motion_row.get("motion_action", 0.0) or 0.0),
         }
         rows.append(row)
         prev_gray = gray
@@ -143,8 +161,18 @@ def compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=None):
             "semantic_acceleration_norm",
             "semantic_density",
             "semantic_action",
+            "motion_displacement",
+            "motion_velocity",
+            "motion_velocity_smooth",
+            "motion_velocity_norm",
+            "motion_acceleration",
+            "motion_acceleration_smooth",
+            "motion_acceleration_norm",
+            "motion_density",
+            "motion_action",
         ],
         "semantic_enabled": bool(semantic_enabled),
+        "motion_enabled": bool(motion_enabled),
         "feature_motion_method": "goodFeaturesToTrack + calcOpticalFlowPyrLK median displacement / image diagonal",
         "appearance_delta_method": "mean absolute grayscale difference / 255",
         "brightness_jump_method": "absolute mean grayscale brightness change / 255",
@@ -155,5 +183,10 @@ def compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=None):
         "semantic_acceleration_method": "abs(velocity_t - velocity_{t-1}) / dt",
         "semantic_density_method": "eps + alpha * velocity_norm + beta * acceleration_norm",
         "semantic_action_method": "cumulative sum over semantic_density",
+        "motion_displacement_method": "mean absolute grayscale frame difference after Gaussian blur / 255",
+        "motion_velocity_method": "motion_displacement / dt",
+        "motion_acceleration_method": "abs(velocity_t - velocity_{t-1}) / dt",
+        "motion_density_method": "eps + alpha * velocity_norm + beta * acceleration_norm",
+        "motion_action_method": "cumulative sum over motion_density",
     }
     return rows, meta

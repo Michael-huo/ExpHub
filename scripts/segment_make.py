@@ -324,8 +324,8 @@ def main():
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        choices=["uniform", "sks_v1", "semantic_guarded_v1", "semantic_guarded_v2"],
-        help="keyframe policy: uniform legacy anchors, sks_v1 fixed-budget semantic relocation, or semantic_guarded_v1/v2 guarded refinements",
+        choices=["uniform", "sks_v1", "motion_energy_v1", "semantic_guarded_v1", "semantic_guarded_v2"],
+        help="keyframe policy: uniform anchors, sks_v1 semantic fixed-budget relocation, motion_energy_v1 motion fixed-budget relocation, or semantic_guarded_v1/v2 legacy guarded refinements",
     )
 
     ap.add_argument("--dry_run", action="store_true", help="print plan and exit")

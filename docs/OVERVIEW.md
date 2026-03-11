@@ -30,6 +30,12 @@ ExpHub 严格定义了不可逆的 7 大单向数据流转阶段：
 ExpHub 将所有的执行与调度收口于 `cli.py`。
 - **环境与依赖防呆体检 (Doctor)**：
   `python -m exphub --mode doctor --dataset <ds> --sequence <seq> --tag <tag> ...`
+- **正式 `segment` 策略**：
+  当前正式 analyze 与方法叙事聚焦 `uniform / sks_v1 / motion_energy_v1`；其中 `sks_v1` 与 `motion_energy_v1` 共用 fixed-budget allocation 骨架，只在输入信号上分别使用 semantic kinematics 与 motion energy kinematics。
+- **常用 `segment_policy` 示例**：
+  `python -m exphub --mode segment ... --segment_policy uniform`
+  `python -m exphub --mode segment ... --segment_policy sks_v1`
+  `python -m exphub --mode segment ... --segment_policy motion_energy_v1`
 - **一键贯穿全流程 (All)**：
   `python -m exphub --mode all --dataset <ds> --sequence <seq> --tag <tag> ...`
 - **统一 phase 环境配置**：

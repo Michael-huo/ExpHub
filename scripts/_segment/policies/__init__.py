@@ -5,6 +5,7 @@ import importlib
 
 
 _POLICY_MODULES = {
+    "motion_energy_v1": "_segment.policies.motion_energy_v1",
     "uniform": "_segment.policies.uniform",
     "sks_v1": "_segment.policies.sks_v1",
     "semantic_guarded_v1": "_segment.policies.semantic_guarded_v1",
