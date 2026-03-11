@@ -46,6 +46,7 @@ def _compute_candidate_points(context):
             frame_paths,
             cache_dir,
             smooth_window=5,
+            timestamps=timestamps,
         )
     except RuntimeError as e:
         if "open_clip" in str(e):

@@ -16,7 +16,29 @@ python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_T
 
 ## 3. `segment` 正式关键帧策略冒烟测试
 
-### 3.1 `semantic_guarded_v2` 单步验证
+### 3.1 `sks_v1` 单步验证
+```bash
+python -m exphub \
+  --dataset ncd \
+  --sequence rooster_2020-03-10-10-36-30_0 \
+  --tag debug_sks \
+  --w 480 --h 320 \
+  --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
+  --mode segment \
+  --segment_policy sks_v1 \
+  --sys_py <segmentclip_python_with_openclip>
+```
+
+**最小验收：**
+- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="sks_v1"`。
+- `summary.uniform_count == summary.final_keyframe_count == summary.num_uniform_base == summary.num_final_keyframes`。
+- `summary.fixed_budget=true`。
+- `keyframe_indices[0]` 与 `uniform_base_indices[0]` 一致，最后一个索引也必须与 uniform 尾锚一致。
+- 若场景中存在明显语义变化区，`summary.relocated_count > 0`，且 `summary.avg_abs_shift / summary.max_abs_shift` 可解释。
+- `keyframes[*].source_type` 只应出现 `uniform / semantic`，其中 `semantic` 项必须同时满足 `is_relocated=true` 与 `replaced_uniform_index != null`。
+- 默认会继续自动触发 post analyze；若环境已安装 `torch + open_clip`，日志中应出现 `post analyze start` 与 `post analyze done`。
+
+### 3.2 `semantic_guarded_v2` 单步验证
 ```bash
 python -m exphub \
   --dataset ncd \
@@ -43,7 +65,7 @@ python -m exphub \
 - `keyframes[*].source_role` 应可区分 `boundary_candidate / support_candidate / promoted_support_candidate`。
 - `semantic_only_candidate` 与 `suppressed` 不应作为硬关键帧进入 `keyframe_indices`。
 
-### 3.2 与 uniform 对比
+### 3.3 与 uniform 对比
 ```bash
 python -m exphub \
   --dataset ncd \
@@ -65,7 +87,7 @@ python -m exphub \
 - `num_support_inserted`
 - `num_promoted_support_inserted`
 
-### 3.3 与 `semantic_guarded_v1` 对比
+### 3.4 与 `semantic_guarded_v1` / `semantic_guarded_v2` 对比
 ```bash
 python -m exphub \
   --dataset ncd \
@@ -79,11 +101,12 @@ python -m exphub \
 ```
 
 **重点观察：**
+- `sks_v1` 是否在不改变预算的前提下，把部分中间关键帧向语义高变化区重定位。
 - v2 是否开始出现 `num_support_inserted > 0`
 - v2 是否开始出现 `num_promoted_support_inserted > 0`
 - 若仍为 0，需检查是否被 `support_trigger_gap / promoted_min_distance / rerank_score / burst_window` 规则挡住
 
-### 3.4 主链路安全验证
+### 3.5 主链路安全验证
 ```bash
 python -m exphub \
   --dataset ncd \
@@ -122,7 +145,8 @@ python scripts/segment_analyze.py \
 **最小验收：**
 - `segment/analysis/` 只保留 5 个核心产物：`analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png`。
 - `segment/analysis/frame_scores.csv` 已生成，且数据行数与 `segment/frames/*.png` 数量一致。
-- `segment/analysis/analysis_summary.json` 已生成，并至少包含：基础实验信息、`frame_count_total / uniform_base_count / final_keyframe_count / extra_kf_ratio / keyframe_bytes_sum`、`final_keyframe_source_counts / final_keyframe_source_roles`、`num_boundary_relocated / num_support_inserted / num_promoted_support_inserted / num_burst_windows_triggered`、`candidate_role_counts / selected_candidate_count / suppressed_candidate_count`、`uniform_base_indices / final_keyframe_indices`、`semantic_backend / semantic_model_name / use_semantic_in_score / semantic_cache_hit` 与 `top_candidates` 摘要。
+- `segment/analysis/analysis_summary.json` 已生成，并至少包含：基础实验信息、`policy_name / frame_count_total / uniform_base_count / final_keyframe_count / extra_kf_ratio / keyframe_bytes_sum`、`final_keyframe_source_counts / final_keyframe_source_roles`、`num_boundary_relocated / num_support_inserted / num_promoted_support_inserted / num_burst_windows_triggered`、`candidate_role_counts / selected_candidate_count / suppressed_candidate_count`、`uniform_base_indices / final_keyframe_indices`、`semantic_backend / semantic_model_name / use_semantic_in_score / semantic_cache_hit` 与 `top_candidates` 摘要。
+- 若 `segment_policy=sks_v1`，`analysis_summary.json` 还应包含 `fixed_budget / relocated_count / avg_abs_shift / max_abs_shift / semantic_velocity_mean / semantic_velocity_max / semantic_acceleration_mean / semantic_acceleration_max`。
 - `segment/analysis/` 中不应再出现旧产物：`analysis_meta.json / candidate_points.json / candidate_roles_summary.json / frame_scores.json / peaks_preview.png / score_curve.png / score_curve_with_keyframes.png / candidate_points_overview.png / candidate_roles_overview.png / semantic_curve.png / semantic_vs_nonsemantic.png / semantic_embeddings.npz`。
 - `segment/.segment_cache/segment_analyze/semantic_embeddings.npz` 已生成，第二次运行时应可复用。
-- 若 `segment_policy=semantic_guarded_v1` 或 `semantic_guarded_v2`，`analysis_summary.json` 中的 `uniform_base_indices` 应与 uniform skeleton 对齐，而 `final_keyframe_indices` 反映正式输出的硬关键帧集合。
+- 若 `segment_policy=sks_v1 / semantic_guarded_v1 / semantic_guarded_v2`，`analysis_summary.json` 中的 `uniform_base_indices` 应与 uniform skeleton 对齐，而 `final_keyframe_indices` 反映正式输出的硬关键帧集合。

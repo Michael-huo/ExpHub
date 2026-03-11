@@ -192,7 +192,7 @@ def materialize_keyframe_plan(root_dir, frames_dir, timestamps_path, kf_gap, key
         "keyframes": list(plan["keyframe_items"]),
         "summary": dict(plan["summary"]),
         "policy_meta": dict(plan.get("policy_meta") or {}),
-        "note": "Keyframes remain backward compatible with the legacy uniform layout fields. semantic_guarded policies use a uniform skeleton plus bounded boundary/support refinements.",
+        "note": "Keyframes remain backward compatible with the legacy uniform layout fields. semantic_guarded policies use guarded refinements, and sks_v1 uses fixed-budget bounded relocation on top of the uniform skeleton.",
     }
 
     write_json_atomic(keyframes_dir / "keyframes_meta.json", keyframes_meta, indent=2)
