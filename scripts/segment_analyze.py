@@ -364,6 +364,7 @@ def _analysis_summary(exp_dir, data, rows, candidate_points, keyframes_meta, fin
 
     return {
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "policy_name": str(keyframes_meta.get("policy_name", "") or ""),
         "dataset": exp_info["dataset"],
         "sequence": exp_info["sequence"],
         "tag": exp_info["tag"],
@@ -391,6 +392,19 @@ def _analysis_summary(exp_dir, data, rows, candidate_points, keyframes_meta, fin
         "semantic_model_name": str(semantic_meta.get("model_name", "") or ""),
         "use_semantic_in_score": bool(score_meta.get("use_semantic_in_score", False)),
         "semantic_cache_hit": bool(semantic_meta.get("cache_hit", False)),
+        "fixed_budget": bool(keyframe_summary.get("fixed_budget", False)),
+        "relocated_count": int(keyframe_summary.get("relocated_count", 0) or 0),
+        "avg_abs_shift": float(keyframe_summary.get("avg_abs_shift", 0.0) or 0.0),
+        "max_abs_shift": int(keyframe_summary.get("max_abs_shift", 0) or 0),
+        "semantic_displacement_mean": float(keyframe_summary.get("semantic_displacement_mean", 0.0) or 0.0),
+        "semantic_displacement_max": float(keyframe_summary.get("semantic_displacement_max", 0.0) or 0.0),
+        "semantic_velocity_mean": float(keyframe_summary.get("semantic_velocity_mean", 0.0) or 0.0),
+        "semantic_velocity_max": float(keyframe_summary.get("semantic_velocity_max", 0.0) or 0.0),
+        "semantic_acceleration_mean": float(keyframe_summary.get("semantic_acceleration_mean", 0.0) or 0.0),
+        "semantic_acceleration_max": float(keyframe_summary.get("semantic_acceleration_max", 0.0) or 0.0),
+        "semantic_density_mean": float(keyframe_summary.get("semantic_density_mean", 0.0) or 0.0),
+        "semantic_density_max": float(keyframe_summary.get("semantic_density_max", 0.0) or 0.0),
+        "semantic_signal_stats": dict(semantic_meta.get("signal_stats", {}) or {}),
         "top_candidates": {
             "boundary": _top_candidate_digest(roles_summary.get("boundary_candidates", []) or [], 5),
             "support": _top_candidate_digest(roles_summary.get("support_candidates", []) or [], 5),
@@ -435,6 +449,7 @@ def run_segment_analyze(argv=None):
         data["frame_paths"],
         cache_dir,
         smooth_window=int(args.smooth_window),
+        timestamps=data["timestamps"],
     )
     rows, _signal_meta = compute_frame_signal_rows(data["frame_paths"], data["timestamps"], semantic_rows=semantic_rows)
     uniform_keyframe_set, final_keyframe_set = _resolve_keyframe_sets(data["keyframes_meta"])
@@ -489,7 +504,13 @@ def run_segment_analyze(argv=None):
     write_json_atomic(str(summary_path), analysis_summary, indent=2)
     save_score_overview(rows, score_overview_path, sorted(final_keyframe_set), candidate_points.get("selected_candidates", []))
     save_roles_overview(rows, roles_overview_path, sorted(final_keyframe_set), roles_for_plot)
-    save_semantic_overview(rows, semantic_overview_path, sorted(final_keyframe_set), candidate_points.get("selected_candidates", []))
+    save_semantic_overview(
+        rows,
+        semantic_overview_path,
+        sorted(final_keyframe_set),
+        candidate_points.get("selected_candidates", []),
+        keyframe_items=data["keyframes_meta"].get("keyframes", []),
+    )
 
     log_info("analysis_dir: {}".format(analysis_dir))
     log_info("analysis_summary.json written")

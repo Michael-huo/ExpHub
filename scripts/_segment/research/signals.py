@@ -113,6 +113,15 @@ def compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=None):
             "feature_motion": float(_feature_motion(prev_gray, gray)),
             "semantic_delta": float(semantic_row.get("semantic_delta", 0.0) or 0.0),
             "semantic_smooth": float(semantic_row.get("semantic_smooth", 0.0) or 0.0),
+            "semantic_displacement": float(semantic_row.get("semantic_displacement", 0.0) or 0.0),
+            "semantic_velocity": float(semantic_row.get("semantic_velocity", 0.0) or 0.0),
+            "semantic_velocity_smooth": float(semantic_row.get("semantic_velocity_smooth", 0.0) or 0.0),
+            "semantic_velocity_norm": float(semantic_row.get("semantic_velocity_norm", 0.0) or 0.0),
+            "semantic_acceleration": float(semantic_row.get("semantic_acceleration", 0.0) or 0.0),
+            "semantic_acceleration_smooth": float(semantic_row.get("semantic_acceleration_smooth", 0.0) or 0.0),
+            "semantic_acceleration_norm": float(semantic_row.get("semantic_acceleration_norm", 0.0) or 0.0),
+            "semantic_density": float(semantic_row.get("semantic_density", 0.0) or 0.0),
+            "semantic_action": float(semantic_row.get("semantic_action", 0.0) or 0.0),
         }
         rows.append(row)
         prev_gray = gray
@@ -125,6 +134,15 @@ def compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=None):
             "feature_motion",
             "semantic_delta",
             "semantic_smooth",
+            "semantic_displacement",
+            "semantic_velocity",
+            "semantic_velocity_smooth",
+            "semantic_velocity_norm",
+            "semantic_acceleration",
+            "semantic_acceleration_smooth",
+            "semantic_acceleration_norm",
+            "semantic_density",
+            "semantic_action",
         ],
         "semantic_enabled": bool(semantic_enabled),
         "feature_motion_method": "goodFeaturesToTrack + calcOpticalFlowPyrLK median displacement / image diagonal",
@@ -133,5 +151,9 @@ def compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=None):
         "blur_score_method": "variance of grayscale Laplacian",
         "semantic_delta_method": "1 - cosine_similarity(e_t, e_{t-1}) using OpenCLIP image embeddings",
         "semantic_smooth_method": "moving_average over semantic_delta",
+        "semantic_velocity_method": "semantic_displacement / dt",
+        "semantic_acceleration_method": "abs(velocity_t - velocity_{t-1}) / dt",
+        "semantic_density_method": "eps + alpha * velocity_norm + beta * acceleration_norm",
+        "semantic_action_method": "cumulative sum over semantic_density",
     }
     return rows, meta

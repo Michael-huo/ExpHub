@@ -135,7 +135,7 @@ segment → prompt → infer → merge → slam → eval → stats
   ```text
   segment → prompt → infer → merge → slam → eval → stats
   ```
-- `segment` 正式关键帧层已新增可选策略 `semantic_guarded_v1 / semantic_guarded_v2`，开始将研究旁路的 role-aware candidates 以“uniform 骨架 + boundary/support 修正”的方式接回主链路输出；
+- `segment` 正式关键帧层已新增可选策略 `semantic_guarded_v1 / semantic_guarded_v2 / sks_v1`；其中 `semantic_guarded_*` 继续沿用 rule-based 候选回接，而 `sks_v1` 则开始尝试“uniform 骨架 + 固定预算纯语义重定位”的主方法；
 - `prompt` 已接入基于 Qwen 的图像到文本流程；
 - `infer` 已接入基于 Wan2.2 的图像与文本到视频流程；
 - 下游 `slam / eval / stats` 已可用于验证几何一致性、统计压缩率与汇总实验信息；
@@ -146,7 +146,7 @@ segment → prompt → infer → merge → slam → eval → stats
 
 以下关键模块仍待补强：
 
-- `segment` 默认策略仍为 `uniform`，`semantic_guarded_v1 / semantic_guarded_v2` 只是正式回接的早期 rule-based 版本，还不是最终最优关键帧策略；
+- `segment` 默认策略仍为 `uniform`，`semantic_guarded_v1 / semantic_guarded_v2` 仍属于候选回接式的早期 rule-based 版本；`sks_v1` 虽然已经正式接入，但当前仍是第一版固定预算语义采样方法，不代表最终最优策略；
 - `segment` 研究旁路现已接入基于 OpenCLIP image encoder 的 observe-only 语义变化分析，并能输出 `boundary / support / semantic_only / suppressed` 候选角色与 rerank 摘要；其中 `semantic_guarded_v1` 主要完成 boundary 纠偏，`semantic_guarded_v2` 则进一步尝试 support 插点与 `low_prominence` 型 suppressed-high 晋升；
 - `prompt` 当前使用的语义表示仍相对基础，后续仍有较大优化空间；
 - 语义一致性评测尚未纳入标准工作流；
@@ -181,6 +181,19 @@ segment → prompt → infer → merge → slam → eval → stats
 - 总体仍受 `max_support_extra_ratio / max_promoted_extra_ratio / max_extra_kf_ratio` 约束。
 
 v2 当前仍是 rule-based 工程版，重点是把候选密度修正机制明确接入正式 keyframe 输出，而不是一次性解决所有 suppressed 候选的判别问题。
+
+### 4.2.3 `sks_v1` 的当前定位
+
+`sks_v1` 不再沿用 `boundary / support / suppressed` 的候选回接思路，而是引入一条更简洁的纯语义主方法：
+
+- 仍以 uniform 关键帧布局作为骨架；
+- 关键帧总数严格保持与 uniform 一致，不额外加帧，也不删帧；
+- 首尾关键帧固定；
+- 中间关键帧只允许在 uniform 邻域内做受限重定位；
+- 语义密度由 OpenCLIP image embedding 的 `semantic displacement / velocity / acceleration` 构成；
+- 通过固定预算的 cumulative action sampling，把更多关键帧分配到高语义变化区。
+
+从研究角度看，`sks_v1` 的意义是把“语义变化驱动关键帧密度重分配”第一次以兼容主链路的方式接入正式 `segment` 输出，同时保留 uniform 作为安全兜底骨架。
 
 ### 4.3 当前系统定位
 

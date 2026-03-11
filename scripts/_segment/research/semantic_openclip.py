@@ -25,6 +25,9 @@ DEFAULT_SEMANTIC_MODEL_NAME = "ViT-B-32"
 DEFAULT_SEMANTIC_PRETRAINED = "openai"
 DEFAULT_SEMANTIC_CACHE_NAME = "semantic_embeddings.npz"
 DEFAULT_SEMANTIC_BATCH_SIZE = 16
+DEFAULT_SEMANTIC_DENSITY_EPS = 0.03
+DEFAULT_SEMANTIC_DENSITY_ALPHA = 0.7
+DEFAULT_SEMANTIC_DENSITY_BETA = 0.3
 
 
 def _moving_average(values, window_size):
@@ -45,6 +48,18 @@ def _moving_average(values, window_size):
     return out, window_size
 
 
+def _minmax_normalize(values):
+    if not values:
+        return []
+    arr = np.asarray(values, dtype=np.float32)
+    vmin = float(arr.min())
+    vmax = float(arr.max())
+    if abs(vmax - vmin) < 1e-12:
+        return [0.0 for _ in values]
+    arr = (arr - vmin) / float(vmax - vmin)
+    return [float(x) for x in arr.tolist()]
+
+
 def _select_device():
     if torch.cuda.is_available():
         return "cuda"
@@ -57,6 +72,31 @@ def _normalize_embeddings(embeddings):
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
     norms = np.maximum(norms, 1e-12)
     return embeddings / norms
+
+
+def _resolve_dt(timestamps=None, fps=None):
+    if fps is not None:
+        try:
+            fps_value = float(fps)
+        except Exception:
+            fps_value = 0.0
+        if fps_value > 0.0:
+            return float(1.0 / fps_value), "fps"
+
+    if timestamps:
+        diffs = []
+        prev_t = None
+        for ts_sec in timestamps:
+            cur_t = float(ts_sec)
+            if prev_t is not None:
+                dt = float(cur_t - prev_t)
+                if dt > 1e-9:
+                    diffs.append(dt)
+            prev_t = cur_t
+        if diffs:
+            return float(np.median(np.asarray(diffs, dtype=np.float32))), "timestamps_median"
+
+    return 1.0, "unit_dt_fallback"
 
 
 def _cache_matches(cache_obj, frame_paths, model_name, pretrained):
@@ -186,6 +226,44 @@ def _compute_semantic_delta(embeddings):
     return deltas
 
 
+def _compute_velocity(displacement, dt):
+    dt = max(float(dt), 1e-9)
+    values = []
+    for value in displacement:
+        values.append(float(value) / dt)
+    return values
+
+
+def _compute_acceleration(velocity, dt):
+    dt = max(float(dt), 1e-9)
+    values = [0.0 for _ in velocity]
+    for idx in range(1, len(velocity)):
+        values[idx] = float(abs(float(velocity[idx]) - float(velocity[idx - 1])) / dt)
+    return values
+
+
+def _cumulative_sum(values):
+    out = []
+    total = 0.0
+    for value in values:
+        total += float(value)
+        out.append(float(total))
+    return out
+
+
+def _series_stats(values):
+    if not values:
+        return {
+            "mean": 0.0,
+            "max": 0.0,
+        }
+    arr = np.asarray(values, dtype=np.float32)
+    return {
+        "mean": float(arr.mean()),
+        "max": float(arr.max()),
+    }
+
+
 def compute_semantic_rows(
     frame_paths,
     cache_dir,
@@ -193,6 +271,11 @@ def compute_semantic_rows(
     model_name=DEFAULT_SEMANTIC_MODEL_NAME,
     pretrained=DEFAULT_SEMANTIC_PRETRAINED,
     batch_size=DEFAULT_SEMANTIC_BATCH_SIZE,
+    timestamps=None,
+    fps=None,
+    density_eps=DEFAULT_SEMANTIC_DENSITY_EPS,
+    density_alpha=DEFAULT_SEMANTIC_DENSITY_ALPHA,
+    density_beta=DEFAULT_SEMANTIC_DENSITY_BETA,
 ):
     frame_paths = [Path(p).resolve() for p in frame_paths]
     cache_dir = Path(cache_dir).resolve()
@@ -220,16 +303,40 @@ def compute_semantic_rows(
         _write_embedding_cache(cache_path, frame_paths, embeddings, model_name, pretrained)
         log_info("semantic cache write: {}".format(cache_path))
 
-    semantic_delta = _compute_semantic_delta(embeddings)
-    semantic_smooth, actual_window = _moving_average(semantic_delta, smooth_window)
+    dt_sec, dt_source = _resolve_dt(timestamps=timestamps, fps=fps)
+    semantic_displacement = _compute_semantic_delta(embeddings)
+    semantic_smooth, actual_window = _moving_average(semantic_displacement, smooth_window)
+    semantic_velocity = _compute_velocity(semantic_displacement, dt_sec)
+    semantic_velocity_smooth, velocity_window = _moving_average(semantic_velocity, smooth_window)
+    semantic_acceleration = _compute_acceleration(semantic_velocity, dt_sec)
+    semantic_acceleration_smooth, acceleration_window = _moving_average(semantic_acceleration, smooth_window)
+    semantic_velocity_norm = _minmax_normalize(semantic_velocity_smooth)
+    semantic_acceleration_norm = _minmax_normalize(semantic_acceleration_smooth)
+    semantic_density = []
+    for idx in range(len(frame_paths)):
+        semantic_density.append(
+            float(density_eps)
+            + float(density_alpha) * float(semantic_velocity_norm[idx])
+            + float(density_beta) * float(semantic_acceleration_norm[idx])
+        )
+    semantic_action = _cumulative_sum(semantic_density)
     rows = []
     for idx, frame_path in enumerate(frame_paths):
         rows.append(
             {
                 "frame_idx": int(idx),
                 "file_name": Path(frame_path).name,
-                "semantic_delta": float(semantic_delta[idx]),
+                "semantic_delta": float(semantic_displacement[idx]),
                 "semantic_smooth": float(semantic_smooth[idx]),
+                "semantic_displacement": float(semantic_displacement[idx]),
+                "semantic_velocity": float(semantic_velocity[idx]),
+                "semantic_velocity_smooth": float(semantic_velocity_smooth[idx]),
+                "semantic_velocity_norm": float(semantic_velocity_norm[idx]),
+                "semantic_acceleration": float(semantic_acceleration[idx]),
+                "semantic_acceleration_smooth": float(semantic_acceleration_smooth[idx]),
+                "semantic_acceleration_norm": float(semantic_acceleration_norm[idx]),
+                "semantic_density": float(semantic_density[idx]),
+                "semantic_action": float(semantic_action[idx]),
             }
         )
 
@@ -243,12 +350,33 @@ def compute_semantic_rows(
         "cache_hit": bool(cache_hit),
         "cache_lookup_sec": float(cache_lookup_sec),
         "encode_sec": float(encode_sec),
+        "dt_sec": float(dt_sec),
+        "dt_source": str(dt_source),
         "num_frames": int(len(frame_paths)),
         "embedding_dim": int(embeddings.shape[1]) if embeddings.ndim == 2 and embeddings.shape[0] > 0 else 0,
         "delta_method": "1 - cosine_similarity(e_t, e_{t-1}) using L2-normalized OpenCLIP image embeddings",
         "smoothing": {
             "method": "moving_average",
             "window_size": int(actual_window),
+        },
+        "velocity_smoothing": {
+            "method": "moving_average",
+            "window_size": int(velocity_window),
+        },
+        "acceleration_smoothing": {
+            "method": "moving_average",
+            "window_size": int(acceleration_window),
+        },
+        "density": {
+            "eps": float(density_eps),
+            "alpha": float(density_alpha),
+            "beta": float(density_beta),
+        },
+        "signal_stats": {
+            "semantic_displacement": _series_stats(semantic_displacement),
+            "semantic_velocity": _series_stats(semantic_velocity),
+            "semantic_acceleration": _series_stats(semantic_acceleration),
+            "semantic_density": _series_stats(semantic_density),
         },
         "semantic_peak_enabled": False,
     }
