@@ -48,7 +48,12 @@
   - `keyframes[*]` 额外包含 `source_type / source_role / promotion_source / promotion_reason / window_id / rerank_score / semantic_relation / is_inserted / is_relocated / replaced_uniform_index`。
 
 ### 2.2 `scripts/segment_analyze.py` (研究分析旁路)
-- **职责**：不进入主链路，只读取已存在的 `segment/` 结果，为关键帧研究提供逐帧非语义信号、OpenCLIP 图像语义变化信号、candidate role 判别、候选点 rerank 与可视化。
+- **职责**：不改变主链路关键帧决策，只读取已存在的 `segment/` 结果，为关键帧研究提供逐帧非语义信号、OpenCLIP 图像语义变化信号、candidate role 判别、候选点 rerank 与收敛后的核心可视化。
+- **调度契约**：
+  - `python -m exphub --mode segment ...` 在 `segment` 成功后默认自动触发 `segment_analyze.py --exp_dir <EXP_DIR>`。
+  - 若显式传入 `--skip_analyze`，则跳过该后处理。
+  - `--mode all` 与 `--mode doctor` 不自动触发分析旁路。
+  - analyze 失败只能以 WARN 形式报告，不得让 `segment` 主流程失败。
 - **配置依赖**：优先复用 `exphub/context.py` 的实验路径规则；不读取 `platform.yaml`。
 - **Inputs (读取)**：
   - `segment/frames/`
@@ -61,19 +66,12 @@
   - `keyframe_indices` 仍表示当前 policy 输出的正式硬关键帧集合，可用于可视化最终布局。
   - `keyframes_meta.json` 中的 `keyframes[*].source_role / promotion_source` 可用于区分 `boundary_candidate / support_candidate / promoted_support_candidate` 的最终来源。
 - **Outputs (写入)**：
-  - `segment/analysis/frame_scores.csv`
-  - `segment/analysis/frame_scores.json`
-  - `segment/analysis/score_curve.png`
-  - `segment/analysis/score_curve_with_keyframes.png`
-  - `segment/analysis/analysis_meta.json`
-  - `segment/analysis/candidate_points.json`
-  - `segment/analysis/candidate_roles_summary.json`
-  - `segment/analysis/candidate_points_overview.png`
-  - `segment/analysis/candidate_roles_overview.png`
-  - `segment/analysis/semantic_embeddings.npz`：OpenCLIP image embedding cache，仅供 `segment_analyze.py` 研究旁路复用。
-  - `segment/analysis/semantic_curve.png`
-  - `segment/analysis/semantic_vs_nonsemantic.png`
-  - 可选：`segment/analysis/peaks_preview.png`
+  - `segment/analysis/analysis_summary.json`：唯一核心汇总 json，汇合基础实验信息、关键帧统计、最终来源统计、策略行为统计、候选角色统计、关键索引、语义配置与 boundary/support/promoted 摘要。
+  - `segment/analysis/frame_scores.csv`：逐帧瘦身表，仅保留研究需要的核心列。
+  - `segment/analysis/score_overview.png`
+  - `segment/analysis/roles_overview.png`
+  - `segment/analysis/semantic_overview.png`
+  - `segment/.segment_cache/segment_analyze/semantic_embeddings.npz`：OpenCLIP image embedding cache，仅供 `segment_analyze.py` 旁路复用，不再写入 `analysis/`。
 
 ### 2.3 `scripts/prompt_gen.py` (提示词生成)
 - **职责**：调用 VLM 模型，对 `segment` 提取的关键帧进行理解，生成用于下游视频生成的提示词清单。

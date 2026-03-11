@@ -15,7 +15,7 @@ from .cleanup import apply_keep_level, normalize_keep_level
 from .config import ConfigError, load_datasets_cfg, resolve_dataset
 from .context import ExperimentContext
 from .meta import sanitize_token, write_exp_meta
-from .runner import RunnerConfig, StepRunner, _get_platform_python, conda_exec, detect_conda_base, RunError
+from .runner import RunnerConfig, StepRunner, _get_platform_python, conda_exec, detect_conda_base, run_cmd, RunError
 
 
 _ANSI_RESET = "\033[0m"
@@ -374,6 +374,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
     ap.add_argument("--sys_py", default=os.environ.get("SYS_PY", "/usr/bin/python3"), help="python used for segment step")
+    ap.add_argument("--skip_analyze", action="store_true", help="skip automatic post-segment analyze for --mode segment")
 
     # SLAM sequence selection.
     # Default is "both" so that `--mode slam` runs both ori/gen unless explicitly overridden.
@@ -451,6 +452,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     merge_py = scripts_dir / "merge_seq.py"
     droid_py = scripts_dir / "slam_droid.py"
     stats_py = scripts_dir / "stats_collect.py"
+    segment_analyze_py = scripts_dir / "segment_analyze.py"
     prompt_gen_py = (scripts_dir / "prompt_gen.py").resolve()
     logs_dir = ctx.logs_dir
     child_pass_prefixes = ("[INFO]", "[WARN]", "[ERR]", "[PROG]", "[STEP]")
@@ -663,7 +665,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     else:
         viz_enable = args.mode in ("slam", "eval")
 
-    for p in [seg_py, infer_py, merge_py, droid_py, stats_py]:
+    for p in [seg_py, infer_py, merge_py, droid_py, stats_py, segment_analyze_py]:
         _ensure(p, "file")
 
     _ensure(prompt_gen_py, "file")
@@ -1054,11 +1056,41 @@ def main(argv: Optional[List[str]] = None) -> None:
 
             _run_shell_in_slam_env(cmd, check=False)
 
+    def maybe_run_post_analyze() -> None:
+        if args.mode != "segment":
+            return
+        if args.skip_analyze:
+            _info("post analyze skipped: --skip_analyze")
+            return
+
+        analysis_dir = exp_dir / "segment" / "analysis"
+        cmd = [
+            str(args.sys_py),
+            str(segment_analyze_py),
+            "--exp_dir",
+            str(exp_dir),
+        ]
+        _info("post analyze start: exp_dir={}".format(exp_dir))
+        try:
+            run_cmd(
+                cmd,
+                cwd=exphub_root,
+                check=True,
+                **step_runner._cmd_log_kwargs("segment_analyze.log")
+            )
+        except RunError as e:
+            rc = e.returncode if e.returncode is not None else -1
+            log_path = str(e.log_path) if e.log_path else str(logs_dir / "segment_analyze.log")
+            _warn("post analyze failed: rc={} log={}".format(rc, log_path))
+            return
+        _info("post analyze done: {}".format(analysis_dir))
+
 
     # Execute mode
     try:
         if args.mode == "segment":
             _run_step("segment", step_segment, str(segment_dir))
+            maybe_run_post_analyze()
         elif args.mode == "prompt":
             _run_step("prompt", step_prompt, str(ctx.prompt_manifest_path))
         elif args.mode == "infer":

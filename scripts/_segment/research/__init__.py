@@ -7,13 +7,9 @@ from .semantic_openclip import compute_semantic_rows
 from .scorer import DEFAULT_OBSERVED_SIGNALS, DEFAULT_SCORE_WEIGHTS, DEFAULT_SCORED_SIGNALS, apply_scores
 from .signals import compute_frame_signal_rows
 from .visualize import (
-    save_candidate_points_overview,
-    save_candidate_roles_overview,
-    save_peaks_preview,
-    save_score_curve,
-    save_score_curve_with_keyframes,
-    save_semantic_curve,
-    save_semantic_vs_nonsemantic,
+    save_roles_overview,
+    save_score_overview,
+    save_semantic_overview,
 )
 
 __all__ = [
@@ -26,11 +22,7 @@ __all__ = [
     "build_candidate_points",
     "compute_frame_signal_rows",
     "compute_semantic_rows",
-    "save_candidate_points_overview",
-    "save_candidate_roles_overview",
-    "save_peaks_preview",
-    "save_score_curve",
-    "save_score_curve_with_keyframes",
-    "save_semantic_curve",
-    "save_semantic_vs_nonsemantic",
+    "save_roles_overview",
+    "save_score_overview",
+    "save_semantic_overview",
 ]
