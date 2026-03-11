@@ -14,6 +14,11 @@
 python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_Thu_Oct_28_2 --tag test --w 480 --h 320 --fps 24 --dur 4 --kf_gap 24
 ```
 
+**最小验收：**
+- 输出中能看到 `DOCTOR phase=segment python=... exists=...`。
+- 输出中能看到 `DOCTOR phase=prompt python=... exists=...`、`DOCTOR phase=infer ...`、`DOCTOR phase=slam ...`。
+- 若 `environments.phases.<phase>.python` 未配置或路径不存在，doctor 应直接报 `FAIL`。
+
 ## 3. `segment` 正式关键帧策略冒烟测试
 
 ### 3.1 `sks_v1` 单步验证
@@ -25,8 +30,7 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy sks_v1 \
-  --sys_py <segmentclip_python_with_openclip>
+  --segment_policy sks_v1
 ```
 
 **最小验收：**
@@ -47,8 +51,7 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy semantic_guarded_v2 \
-  --sys_py <segmentclip_python>
+  --segment_policy semantic_guarded_v2
 ```
 
 **最小验收：**
@@ -74,8 +77,7 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy uniform \
-  --sys_py <segmentclip_python>
+  --segment_policy uniform
 ```
 
 **对比项：**
@@ -96,8 +98,7 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy semantic_guarded_v1 \
-  --sys_py <segmentclip_python>
+  --segment_policy semantic_guarded_v1
 ```
 
 **重点观察：**
@@ -115,8 +116,7 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode all \
-  --segment_policy semantic_guarded_v2 \
-  --sys_py <segmentclip_python>
+  --segment_policy semantic_guarded_v2
 ```
 
 **最小验收：**

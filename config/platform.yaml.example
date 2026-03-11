@@ -4,9 +4,15 @@
 # ==============================================================================
 
 environments:
-  prompt_python: "/home/hx/anaconda3/envs/vlm_prompt/bin/python"
-  infer_python:  "/home/hx/anaconda3/envs/videox/bin/python"
-  slam_python:   "/home/hx/anaconda3/envs/droid/bin/python"
+  phases:
+    segment:
+      python: "/home/hx/anaconda3/envs/segmentclip/bin/python"
+    prompt:
+      python: "/home/hx/anaconda3/envs/vlm_prompt/bin/python"
+    infer:
+      python: "/home/hx/anaconda3/envs/videox/bin/python"
+    slam:
+      python: "/home/hx/anaconda3/envs/droid/bin/python"
 
 repos:
   videox_fun: "/data/hx/VideoX-Fun"

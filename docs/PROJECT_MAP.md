@@ -8,9 +8,9 @@
 | 文件路径 | 核心职责 | 关键数据/产物 |
 |---|---|---|
 | `exphub/__main__.py` | 框架统一入口，拦截 `python -m exphub` | 转发至 `cli.main()` |
-| `exphub/cli.py` | 命令行参数解析、流水线模式 (mode) 分发、依赖校验 (doctor) | 统筹整个实验生命周期 |
+| `exphub/cli.py` | 命令行参数解析、流水线模式 (mode) 分发、依赖校验 (doctor) | 统筹整个实验生命周期；统一通过 phase resolver 取得各阶段解释器 |
 | `exphub/context.py` | 实验上下文中心，负责计算所有相对/绝对路径及命名契约 | 输出 `EXP_NAME` 及各阶段落盘路径 |
-| `exphub/runner.py` | **跨环境执行器**。封装 `subprocess`，调用目标环境的绝对路径解释器拉起子进程 | 提供 `run_env_python`, `ros_exec`, `conda_exec` |
+| `exphub/runner.py` | **跨环境执行器**。封装 `subprocess`，调用目标环境的绝对路径解释器拉起子进程 | 提供 `run_env_python`, `ros_exec`, `conda_exec` 与 phase interpreter 解析 |
 | `exphub/config.py` | `datasets.json` 解析与校验 | `DatasetResolved` (含 bag/topic/intrinsics) |
 | `exphub/meta.py` | 元信息辅助，实验参数序列化 | 读写 `step_meta.json` |
 | `exphub/cleanup.py` | 中间文件清理策略 | 根据 `keep_level` 删除缓存 |
@@ -36,7 +36,7 @@
 
 | 文件路径 | 核心职责 | 备注 |
 |---|---|---|
-| `config/platform.yaml` | **外部依赖注册表** | 配置各跨域 Python 解释器、模型路径、算法源码路径 |
+| `config/platform.yaml` | **外部依赖注册表** | 配置各跨域 Python 解释器（通过 `environments.phases.<phase>.python` 组织）、模型路径、算法源码路径 |
 | `config/datasets.json` | **数据源注册表** | 定义实验可用的数据集 (如 ROS bag 路径、内参矩阵) |
 | `config/prompt_manifest.json`| **提示词模板库** | 提供基础 prompt 与负向 prompt 的预设配置 |
 
@@ -45,11 +45,11 @@
 
 | 模式 (Mode) | 调度链条 (Call Chain) |
 |---|---|
-| `segment` | `cli.py` -> `runner.ros_exec` -> `segment_make.py` |
-| `prompt` | `cli.py` -> `runner.run_env_python` -> `prompt_gen.py` |
-| `infer` | `cli.py` -> `runner.run_env_python` -> `infer_i2v.py` -> `sys.executable` -> `_infer_i2v_impl.py` |
-| `merge` | `cli.py` -> `runner.run_env_python` -> `merge_seq.py` |
-| `slam` | `cli.py` -> `runner.run_env_python` -> `slam_droid.py` |
-| `eval` | `cli.py` -> `runner.run_env_python` -> `evo_traj` / `evo_ape` (外部二进制工具) |
-| `stats` | `cli.py` -> `runner.run_env_python` -> `stats_collect.py` |
-| `all` | 依次自动串行执行上述 1~7 步 |
+| `segment` | `cli.py` -> resolve phase `segment` -> `runner.ros_exec` -> `segment_make.py` |
+| `prompt` | `cli.py` -> resolve phase `prompt` -> `runner.run_env_python` -> `prompt_gen.py` |
+| `infer` | `cli.py` -> resolve phase `infer` -> `runner.run_env_python` -> `infer_i2v.py` -> `sys.executable` -> `_infer_i2v_impl.py` |
+| `merge` | `cli.py` -> resolve phase `infer` -> `runner.run_env_python` -> `merge_seq.py` |
+| `slam` | `cli.py` -> resolve phase `slam` -> `runner.run_env_python` -> `slam_droid.py` |
+| `eval` | `cli.py` -> resolve phase `slam` -> `runner.run_env_python` -> `evo_traj` / `evo_ape` (外部二进制工具) |
+| `stats` | `cli.py` -> resolve phase `prompt` -> `runner.run_env_python` -> `stats_collect.py` |
+| `all` | 依次自动串行执行上述 1~7 步；其中各阶段解释器统一来自 phase resolver |

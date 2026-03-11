@@ -6,12 +6,12 @@
 
 | 执行阶段 | 核心脚本 | 环境要求 | 核心产物落盘位置 |
 |---|---|---|---|
-| `segment` | `scripts/segment_make.py` | 主环境 | `segment/` |
-| `prompt` | `scripts/prompt_gen.py` | `prompt_python` | `prompt/` |
-| `infer` | `scripts/infer_i2v.py` <br> `_infer_i2v_impl.py` | `infer_python` | `infer/` |
+| `segment` | `scripts/segment_make.py` | phase `segment` | `segment/` |
+| `prompt` | `scripts/prompt_gen.py` | phase `prompt` | `prompt/` |
+| `infer` | `scripts/infer_i2v.py` <br> `_infer_i2v_impl.py` | phase `infer` | `infer/` |
 | `merge` | `scripts/merge_seq.py` | 主环境 | `merge/` |
-| `slam` | `scripts/slam_droid.py` | `slam_python` | `slam/<track>/` |
-| `eval` | `exphub/cli.py` (调用 evo) | `slam_python` | `eval/<track>/` |
+| `slam` | `scripts/slam_droid.py` | phase `slam` | `slam/<track>/` |
+| `eval` | `exphub/cli.py` (调用 evo) | phase `slam` | `eval/<track>/` |
 | `stats` | `scripts/stats_collect.py` | 主环境 | `stats/` 或根目录报告 |
 
 ---
@@ -20,7 +20,7 @@
 
 ### 2.1 `scripts/segment_make.py` (切片锚定)
 - **职责**：`segment` 的稳定命令行入口。内部实现位于 `scripts/_segment/`，负责解析原始数据集、抽帧、写回标准目录结构。
-- **配置依赖**：`config/datasets.json`。
+- **配置依赖**：`config/datasets.json`；顶层默认解释器来自 `config/platform.yaml -> environments.phases.segment.python`。
 - **Inputs (读取)**：外部原始数据集。
 - **Outputs (写入)**：
   - `segment/frames/`：按规范命名（如 `000000.png`）的抽帧图像。
@@ -59,6 +59,7 @@
   - `python -m exphub --mode segment ...` 在 `segment` 成功后默认自动触发 `segment_analyze.py --exp_dir <EXP_DIR>`。
   - 若显式传入 `--skip_analyze`，则跳过该后处理。
   - `--mode all` 与 `--mode doctor` 不自动触发分析旁路。
+  - 由 `cli.py` 自动触发时，默认复用与 `segment_make.py` 相同的 `segment` phase interpreter。
   - analyze 失败只能以 WARN 形式报告，不得让 `segment` 主流程失败。
 - **配置依赖**：优先复用 `exphub/context.py` 的实验路径规则；不读取 `platform.yaml`。
 - **Inputs (读取)**：

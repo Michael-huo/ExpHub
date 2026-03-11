@@ -16,16 +16,75 @@ _ANSI_ERR = "\033[31m"
 _ANSI_WARN = "\033[33m"
 
 
-def _get_platform_python(env_key: str) -> Optional[str]:
-    config_path = Path(__file__).resolve().parent.parent / "config" / "platform.yaml"
-    if not config_path.is_file():
-        return None
+def _load_platform_config() -> Dict[str, object]:
     try:
-        with open(str(config_path), "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
-        return cfg.get("environments", {}).get(env_key)
+        try:
+            from scripts._common import get_platform_config
+        except Exception:
+            local_scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+            if str(local_scripts_dir) not in os.sys.path:
+                os.sys.path.insert(0, str(local_scripts_dir))
+            from _common import get_platform_config
+
+        cfg = get_platform_config()
+        return cfg if isinstance(cfg, dict) else {}
     except Exception:
+        config_path = Path(__file__).resolve().parent.parent / "config" / "platform.yaml"
+        if not config_path.is_file():
+            return {}
+        try:
+            with open(str(config_path), "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f)
+            return cfg if isinstance(cfg, dict) else {}
+        except Exception:
+            return {}
+
+
+def _python_cmd_exists(cmd: Optional[str]) -> bool:
+    if not cmd:
+        return False
+
+    text = str(cmd).strip()
+    if not text:
+        return False
+
+    if os.path.isabs(text) or os.sep in text:
+        p = Path(text).expanduser()
+        return p.is_file() and os.access(str(p), os.X_OK)
+
+    found = _which(text)
+    return bool(found)
+
+
+def get_phase_python_config(phase_name: str) -> Optional[str]:
+    cfg = _load_platform_config()
+    phases_cfg = cfg.get("environments", {}).get("phases", {})
+    if not isinstance(phases_cfg, dict):
         return None
+
+    phase_cfg = phases_cfg.get(str(phase_name), {})
+    if not isinstance(phase_cfg, dict):
+        return None
+
+    python_bin = str(phase_cfg.get("python", "") or "").strip()
+    if not python_bin:
+        return None
+    return python_bin
+
+
+def resolve_phase_python(phase_name: str) -> str:
+    python_bin = get_phase_python_config(phase_name)
+    if not python_bin:
+        raise RuntimeError(
+            "Missing 'environments.phases.{}.python' in config/platform.yaml.".format(phase_name)
+        )
+    if not _python_cmd_exists(python_bin):
+        raise RuntimeError(
+            "Configured python for phase '{}' not found or not executable: {}".format(
+                phase_name, python_bin
+            )
+        )
+    return python_bin
 
 
 class RunError(RuntimeError):
@@ -107,18 +166,14 @@ class StepRunner:
     def run_env_python(
         self,
         cmd: Sequence[str],
-        env_key: str,
+        phase_name: str,
         log_name: str,
         cwd: Optional[Path] = None,
         check: bool = True,
         extra_env: Optional[Dict[str, str]] = None,
     ) -> int:
         """Execute a command directly using the absolute Python path from platform.yaml."""
-        python_bin = _get_platform_python(env_key)
-        if not python_bin:
-            raise RuntimeError(
-                "Missing '{}' in config/platform.yaml 'environments' section.".format(env_key)
-            )
+        python_bin = resolve_phase_python(phase_name)
 
         new_cmd = list(cmd)
         if new_cmd and new_cmd[0] in ("python", "python3"):

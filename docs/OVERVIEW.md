@@ -32,6 +32,10 @@ ExpHub 将所有的执行与调度收口于 `cli.py`。
   `python -m exphub --mode doctor --dataset <ds> --sequence <seq> --tag <tag> ...`
 - **一键贯穿全流程 (All)**：
   `python -m exphub --mode all --dataset <ds> --sequence <seq> --tag <tag> ...`
+- **统一 phase 环境配置**：
+  `segment / prompt / infer / slam` 的解释器现在统一从 `config/platform.yaml -> environments.phases.<phase>.python` 读取，不再使用 `--sys_py`。
+- **Doctor 观测点**：
+  `--mode doctor` 现在只展示各个 core phase 的 python 路径与 `exists=True/False` 检查结果。
 
 ---
 

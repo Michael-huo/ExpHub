@@ -37,7 +37,7 @@ def _load_semantic_rows(context):
         if missing_name in ("torch", "open_clip"):
             raise RuntimeError(
                 "sks_v1 requires torch/open_clip in the segment python environment. "
-                "Use --sys_py with an interpreter that already has these dependencies, or keep --segment_policy uniform."
+                "Configure environments.phases.segment.python with an interpreter that already has these dependencies, or keep --segment_policy uniform."
             )
         raise
 
@@ -56,7 +56,7 @@ def _load_semantic_rows(context):
         if "open_clip" in str(e):
             raise RuntimeError(
                 "sks_v1 failed to initialize OpenCLIP in the segment python environment. "
-                "Use --sys_py with an interpreter that already has torch/open_clip, or keep --segment_policy uniform."
+                "Configure environments.phases.segment.python with an interpreter that already has torch/open_clip, or keep --segment_policy uniform."
             )
         raise
     return semantic_rows, semantic_meta
