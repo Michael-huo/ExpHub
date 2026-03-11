@@ -32,7 +32,7 @@ def _compute_candidate_points(context):
         if missing_name in ("torch", "open_clip"):
             raise RuntimeError(
                 "semantic_guarded_v1 requires torch/open_clip in the segment python environment. "
-                "Use --sys_py with an interpreter that already has these dependencies, or keep --segment_policy uniform."
+                "Configure environments.phases.segment.python with an interpreter that already has these dependencies, or keep --segment_policy uniform."
             )
         raise
 
@@ -52,7 +52,7 @@ def _compute_candidate_points(context):
         if "open_clip" in str(e):
             raise RuntimeError(
                 "semantic_guarded_v1 failed to initialize OpenCLIP in the segment python environment. "
-                "Use --sys_py with an interpreter that already has torch/open_clip, or keep --segment_policy uniform."
+                "Configure environments.phases.segment.python with an interpreter that already has torch/open_clip, or keep --segment_policy uniform."
             )
         raise
     rows, signal_meta = compute_frame_signal_rows(frame_paths, timestamps, semantic_rows=semantic_rows)

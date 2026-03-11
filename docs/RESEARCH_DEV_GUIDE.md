@@ -136,6 +136,7 @@ segment → prompt → infer → merge → slam → eval → stats
   segment → prompt → infer → merge → slam → eval → stats
   ```
 - `segment` 正式关键帧层已新增可选策略 `semantic_guarded_v1 / semantic_guarded_v2 / sks_v1`；其中 `semantic_guarded_*` 继续沿用 rule-based 候选回接，而 `sks_v1` 则开始尝试“uniform 骨架 + 固定预算纯语义重定位”的主方法；
+- `segment / prompt / infer / slam` 的解释器现已统一由 `config/platform.yaml -> environments.phases.<phase>.python` 管理，日常 `--mode segment / --mode all` 不再依赖 CLI override；doctor 仅暴露 phase python 路径与 exists 状态；
 - `prompt` 已接入基于 Qwen 的图像到文本流程；
 - `infer` 已接入基于 Wan2.2 的图像与文本到视频流程；
 - 下游 `slam / eval / stats` 已可用于验证几何一致性、统计压缩率与汇总实验信息；

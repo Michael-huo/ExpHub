@@ -15,7 +15,15 @@ from .cleanup import apply_keep_level, normalize_keep_level
 from .config import ConfigError, load_datasets_cfg, resolve_dataset
 from .context import ExperimentContext
 from .meta import sanitize_token, write_exp_meta
-from .runner import RunnerConfig, StepRunner, _get_platform_python, conda_exec, detect_conda_base, run_cmd, RunError
+from .runner import (
+    RunnerConfig,
+    StepRunner,
+    detect_conda_base,
+    get_phase_python_config,
+    resolve_phase_python,
+    run_cmd,
+    RunError,
+)
 
 
 _ANSI_RESET = "\033[0m"
@@ -373,7 +381,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
-    ap.add_argument("--sys_py", default=os.environ.get("SYS_PY", "/usr/bin/python3"), help="python used for segment step")
     ap.add_argument("--skip_analyze", action="store_true", help="skip automatic post-segment analyze for --mode segment")
 
     # SLAM sequence selection.
@@ -444,6 +451,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         conda_base=detect_conda_base() if args.auto_conda else None,
         ros_setup=Path(args.ros_setup) if args.ros_setup else None,
     )
+    phase_python_cache = {}  # type: Dict[str, str]
 
     # script paths
     scripts_dir = exphub_root / "scripts"
@@ -502,130 +510,38 @@ def main(argv: Optional[List[str]] = None) -> None:
         else:
             _step(f"{step_name} done sec={sec:.2f}")
 
+    def _phase_python(phase_name: str) -> str:
+        phase_key = str(phase_name)
+        if phase_key not in phase_python_cache:
+            try:
+                phase_python_cache[phase_key] = resolve_phase_python(phase_key)
+            except RuntimeError as e:
+                _die(str(e))
+        return phase_python_cache[phase_key]
+
     def step_doctor() -> int:
         _info("STEP doctor: begin")
-        _info(f"DOCTOR EXPHUB={exphub_root}")
-        _info(f"DOCTOR PYTHON={sys.version.splitlines()[0]}")
-        _info(f"DOCTOR NOW={datetime.datetime.now().isoformat(timespec='seconds')}")
-        _info(f"DOCTOR EXP_NAME={exp_name}")
-        _info(f"DOCTOR EXP_DIR={exp_dir}")
-        _info("DOCTOR modes=all,segment,prompt,stats,infer,merge,slam,eval,doctor")
-        _info("DOCTOR layout=segment/,prompt/,infer/,merge/,slam/<track>/,eval/,stats/")
-
         has_critical_missing = False
-        has_optional_missing = False
-
-        _info("STEP doctor: check datasets config")
-        cfg_ok = cfg_path.is_file()
-        _info(f"DOCTOR datasets_cfg={cfg_path} exists={cfg_ok}")
-        if not cfg_ok:
-            has_critical_missing = True
-
-        ds = None
-        if cfg_ok:
-            try:
-                cfg_obj = load_datasets_cfg(cfg_path)
-                ds = resolve_dataset(cfg_obj, exphub_root, dataset, sequence)
-            except ConfigError as e:
+        phase_names = ["segment", "prompt", "infer", "slam"]
+        for phase_name in phase_names:
+            python_bin = get_phase_python_config(phase_name)
+            exists = False
+            if python_bin:
+                phase_path = Path(str(python_bin)).expanduser()
+                exists = phase_path.is_file() and os.access(str(phase_path), os.X_OK)
+            _info(
+                "DOCTOR phase={} python={} exists={}".format(
+                    phase_name,
+                    python_bin or "<missing>",
+                    exists,
+                )
+            )
+            if not python_bin or not exists:
                 has_critical_missing = True
-                _warn(f"DOCTOR dataset resolve failed: {e}")
-
-        _info("STEP doctor: check dataset resolved fields")
-        if ds is not None:
-            _info(f"DOCTOR dataset={ds.dataset} sequence={ds.sequence}")
-            _info(f"DOCTOR bag={ds.bag}")
-            _info(f"DOCTOR topic={ds.topic}")
-            _info(f"DOCTOR intrinsics=fx:{ds.fx} fy:{ds.fy} cx:{ds.cx} cy:{ds.cy}")
-            _info(f"DOCTOR dist={ds.dist}")
-            bag_ok = ds.bag.exists()
-            _info(f"DOCTOR bag_exists={bag_ok}")
-            if not bag_ok:
-                has_critical_missing = True
-        else:
-            _warn("DOCTOR dataset/sequence unresolved")
-
-        _info("STEP doctor: check scripts")
-        must_scripts = [
-            seg_py,
-            prompt_gen_py,
-            infer_py,
-            merge_py,
-            droid_py,
-            stats_py,
-        ]
-        for script in must_scripts:
-            ok = script.is_file()
-            _info(f"DOCTOR script={script} exists={ok}")
-            if not ok:
-                has_critical_missing = True
-
-        _info("STEP doctor: check external paths")
-        optional_dirs = [
-            ("videox_root", str(args.videox_root)),
-            ("droid_repo", str(args.droid_repo)),
-            ("qwen_model_dir", str(args.qwen_model_dir)),
-        ]
-        for name, raw_path in optional_dirs:
-            raw_text = str(raw_path).strip()
-            if not raw_text:
-                ok = False
-                _info(f"DOCTOR optional_dir={name} path=<empty> is_dir={ok}")
-                has_optional_missing = True
-                _warn(f"DOCTOR optional path missing: {name} (<empty>)")
-                continue
-
-            p = Path(raw_text).expanduser().resolve()
-            ok = p.is_dir()
-            _info(f"DOCTOR optional_dir={name} path={p} is_dir={ok}")
-            if not ok:
-                has_optional_missing = True
-                _warn(f"DOCTOR optional path missing: {name} ({p})")
-
-        if args.auto_conda:
-            _info("STEP doctor: check conda tools")
-            if runner_cfg.conda_base is None:
-                has_optional_missing = True
-                _warn("DOCTOR conda base not found; skip env tool checks")
-            else:
-                conda_sh = runner_cfg.conda_base / "etc" / "profile.d" / "conda.sh"
-                _info(f"DOCTOR conda_sh={conda_sh} exists={conda_sh.exists()}")
-                if not conda_sh.exists():
-                    has_optional_missing = True
-                    _warn("DOCTOR conda.sh missing; skip env tool checks")
-                else:
-                    tool_checks = [
-                        (args.conda_env_vlm, "python"),
-                        (args.conda_env_videox, "python"),
-                        (args.conda_env_droid, "evo_traj"),
-                        (args.conda_env_droid, "evo_ape"),
-                    ]
-                    for env_name, tool_name in tool_checks:
-                        _info(f"STEP doctor: env={env_name} which {tool_name}")
-                        try:
-                            rc = conda_exec(
-                                ["which", tool_name],
-                                env_name=env_name,
-                                cfg=runner_cfg,
-                                cwd=exphub_root,
-                                check=False,
-                            )
-                            if rc == 0:
-                                _info(f"DOCTOR env={env_name} tool={tool_name} ok")
-                            else:
-                                has_optional_missing = True
-                                _warn(f"DOCTOR env={env_name} tool={tool_name} missing (rc={rc})")
-                        except Exception as e:
-                            has_optional_missing = True
-                            _warn(f"DOCTOR env/tool check exception: env={env_name} tool={tool_name} ({e})")
-        else:
-            _info("STEP doctor: skip conda checks (--no_auto_conda)")
 
         if has_critical_missing:
-            _warn("DOCTOR result=FAIL (critical missing)")
+            _warn("DOCTOR result=FAIL")
             return 2
-        if has_optional_missing:
-            _warn("DOCTOR result=PASS_WITH_WARN (optional missing)")
-            return 0
         _info("DOCTOR result=PASS")
         return 0
 
@@ -724,6 +640,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             },
             "paths": {
                 "segment_dir": str(segment_dir),
+                "segment_python": _phase_python("segment"),
                 "videox_root": args.videox_root,
                 "droid_repo": args.droid_repo,
             },
@@ -733,13 +650,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     def step_segment() -> None:
         ensure_clean_exp_dir()
         write_meta_snapshot()
+        segment_python = _phase_python("segment")
+        _info("STEP segment: interpreter={}".format(segment_python))
 
         dist_args: List[str] = []
         if ds.dist:
             dist_args = ["--dist", *[str(x) for x in ds.dist]]
 
         cmd = [
-            args.sys_py,
+            segment_python,
             str(seg_py),
             "--bag",
             str(ds.bag),
@@ -818,7 +737,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(ctx.prompt_manifest_path),
         ]
 
-        step_runner.run_env_python(cmd, env_key="prompt_python", log_name="prompt.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd, phase_name="prompt", log_name="prompt.log", cwd=exphub_root)
         _ensure(ctx.prompt_manifest_path, "file")
 
     def step_stats() -> None:
@@ -828,7 +747,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "--exp_dir",
             str(exp_dir),
         ]
-        step_runner.run_env_python(cmd, env_key="prompt_python", log_name="stats.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd, phase_name="prompt", log_name="stats.log", cwd=exphub_root)
         _ensure(ctx.stats_report_path, "file")
 
     def step_infer() -> None:
@@ -866,7 +785,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         if args.infer_extra:
             import shlex as _sh
             cmd_infer.extend(_sh.split(args.infer_extra))
-        step_runner.run_env_python(cmd_infer, env_key="infer_python", log_name="infer.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd_infer, phase_name="infer", log_name="infer.log", cwd=exphub_root)
         _ensure(ctx.infer_runs_dir, "dir")
         _ensure(ctx.infer_runs_plan_path, "file")
 
@@ -891,7 +810,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "--out_dir",
             str(merge_dir),
         ]
-        step_runner.run_env_python(cmd_merge, env_key="infer_python", log_name="merge.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd_merge, phase_name="infer", log_name="merge.log", cwd=exphub_root)
 
         _ensure(ctx.merge_frames_dir, "dir")
         _ensure(ctx.merge_calib_path, "file")
@@ -933,7 +852,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             if not viz_enable:
                 cmd.append("--disable_vis")
 
-            step_runner.run_env_python(cmd, env_key="slam_python", log_name=f"slam_{tag_name}.log", cwd=exphub_root)
+            step_runner.run_env_python(cmd, phase_name="slam", log_name=f"slam_{tag_name}.log", cwd=exphub_root)
             _ensure(ctx.slam_traj_path(tag_name), "file")
             _ensure(ctx.slam_run_meta_path(tag_name), "file")
 
@@ -968,14 +887,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         # Do not use shutil.which() from the orchestrator process, because PATH
         # may differ from the slam interpreter's bin directory.
 
-        _info(f"STEP eval: env_key=slam_python viz={viz_enable}")
+        _info(f"STEP eval: phase=slam viz={viz_enable}")
 
         _rm_tree(eval_dir)
         eval_dir.mkdir(parents=True, exist_ok=True)
 
-        slam_python = _get_platform_python("slam_python")
-        if not slam_python:
-            _die("missing environments.slam_python in config/platform.yaml")
+        slam_python = _phase_python("slam")
         slam_bin_dir = Path(slam_python).resolve().parent
 
         def _tool_path(tool: str) -> Path:
@@ -985,7 +902,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             py_cmd = "import subprocess,sys;sys.exit(subprocess.call({!r}, shell=True))".format(shell_cmd)
             return step_runner.run_env_python(
                 ["python", "-c", py_cmd],
-                env_key="slam_python",
+                phase_name="slam",
                 check=check,
                 log_name="eval.log",
                 cwd=exphub_root,
@@ -1064,13 +981,14 @@ def main(argv: Optional[List[str]] = None) -> None:
             return
 
         analysis_dir = exp_dir / "segment" / "analysis"
+        segment_python = _phase_python("segment")
         cmd = [
-            str(args.sys_py),
+            str(segment_python),
             str(segment_analyze_py),
             "--exp_dir",
             str(exp_dir),
         ]
-        _info("post analyze start: exp_dir={}".format(exp_dir))
+        _info("post analyze start: exp_dir={} interpreter={}".format(exp_dir, segment_python))
         try:
             run_cmd(
                 cmd,
