@@ -45,6 +45,11 @@ if _REPO_ROOT not in sys.path:
 from _common import list_frames_sorted, log_err, log_info, log_prog, log_warn, write_json_atomic
 from _schedule import build_wan_r4_deploy_schedule
 from _segment.api import materialize_keyframe_plan
+from _segment.policies.naming import (
+    OFFICIAL_POLICY_NAMES,
+    is_supported_policy_name,
+    normalize_policy_name,
+)
 
 try:
     import cv2
@@ -325,14 +330,23 @@ def main():
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        choices=["uniform", "sks_v1", "motion_energy_v1"],
-        help="keyframe policy: uniform anchors, sks_v1 semantic fixed-budget relocation, or motion_energy_v1 motion fixed-budget relocation",
+        help="keyframe policy: uniform anchors, motion fixed-budget relocation, or semantic fixed-budget relocation",
     )
 
     ap.add_argument("--dry_run", action="store_true", help="print plan and exit")
     ap.add_argument("--quiet", action="store_true", help="less logs")
 
     args = ap.parse_args()
+    raw_segment_policy = str(args.segment_policy or "uniform")
+    if not is_supported_policy_name(raw_segment_policy):
+        log_err(
+            "unsupported segment policy: {} (expected one of: {})".format(
+                raw_segment_policy,
+                ", ".join(OFFICIAL_POLICY_NAMES),
+            )
+        )
+        sys.exit(2)
+    args.segment_policy = normalize_policy_name(raw_segment_policy)
 
     if args.width % 16 != 0 or args.height % 16 != 0:
         log_warn("target size {}x{} is not divisible by 16 (may affect diffusion models)".format(args.width, args.height))

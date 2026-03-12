@@ -141,20 +141,20 @@ segment → prompt → infer → merge → slam → eval → stats
   ```text
   segment → prompt → infer → merge → slam → eval → stats
   ```
-- `segment` 正式关键帧层当前聚焦三种策略：`uniform / sks_v1 / motion_energy_v1`；其中 `sks_v1` 与 `motion_energy_v1` 共用“uniform 骨架 + fixed-budget allocation”的正式主框架，只在输入信号上分别使用 semantic kinematics 与 motion energy kinematics；
+- `segment` 正式关键帧层当前聚焦三种策略：`uniform / motion / semantic`；其中 `semantic` 与 `motion` 共用“uniform 骨架 + fixed-budget allocation”的正式主框架，只在输入信号上分别使用 semantic kinematics 与 motion energy kinematics；
 - `segment / prompt / infer / slam` 的解释器现已统一由 `config/platform.yaml -> environments.phases.<phase>.python` 管理，日常 `--mode segment / --mode all` 不再依赖 CLI override；doctor 仅暴露 phase python 路径与 exists 状态；
 - `prompt` 已接入基于 Qwen 的图像到文本流程；
 - `infer` 已接入基于 Wan2.2 的图像与文本到视频流程；
 - 下游 `slam / eval / stats` 已可用于验证几何一致性、统计压缩率与汇总实验信息；
-- 已新增 `segment_analyze.py` 研究旁路，可对既有 `segment/` 产物输出正式三策略的逐帧 kinematics/allocation 分析；当前 `--mode segment` 在成功后会默认自动触发该分析旁路（可用 `--skip_analyze` 关闭），并将研究输出收敛为 `analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png` 五个核心产物，其中主图语义已从 legacy role 转向 kinematics / allocation；同时正式 analyze 已内建 active policy + passive observer 横向对比：`sks_v1 ↔ motion_energy_v1` 默认互为 observer，`uniform` 同时观测两者，对比结果仅写 analyze summary 与 compare 图，不进入 prompt / infer / merge / slam 主链路；
+- 已新增 `segment_analyze.py` 研究旁路，可对既有 `segment/` 产物输出正式三策略的逐帧 kinematics / allocation / projection 分析；当前 `--mode segment` 与 `--mode all` 都会在 `segment` 成功后默认立即自动触发该分析旁路（可用 `--skip_analyze` 关闭），并将研究输出收敛为 `segment_summary.json / segment_timeseries.csv / kinematics_overview.png / allocation_overview.png / comparison_overview.png / projection_overview.png` 六个正式产物；其中 `projection_overview.png` 专门回答 raw schedule -> deploy schedule 的投影偏移。正式 analyze 仍内建 active policy + passive observer 横向对比：`semantic ↔ motion` 默认互为 observer，`uniform` 同时观测两者；对比结果仅写 analyze 产物，不进入 prompt / infer / merge / slam 主链路；
 - 各阶段与全流程耗时统计已纳入实验平台。
 
 ### 4.2 尚未完成或尚未正式接入部分
 
 以下关键模块仍待补强：
 
-- `segment` 默认策略仍为 `uniform`；`sks_v1` 与 `motion_energy_v1` 已作为当前正式收敛对象接入，其中 `sks_v1` 代表第一版固定预算语义采样方法，`motion_energy_v1` 则提供同预算骨架下的轻量 motion baseline；两者都不代表最终最优策略；
-- `segment` 研究旁路当前正式只服务 `uniform / sks_v1 / motion_energy_v1`，并围绕 shared allocator、kinematics 密度、observer alignment 与关键帧重定位进行分析；`semantic_guarded_v1 / semantic_guarded_v2` 已作为早期 rule-based 启发式策略移除，不再作为当前系统的正式方法或 analyze 主叙事；
+- `segment` 默认策略仍为 `uniform`；`semantic` 与 `motion` 已作为当前正式收敛对象接入，其中 `semantic` 代表第一版固定预算语义采样方法，`motion` 则提供同预算骨架下的轻量 motion baseline；两者都不代表最终最优策略；
+- `segment` 研究旁路当前正式只服务 `uniform / motion / semantic`，并围绕 shared allocator、kinematics 密度、observer alignment、关键帧重定位与 raw->deploy projection 进行分析；`semantic_guarded_v1 / semantic_guarded_v2` 已作为早期 rule-based 启发式策略移除，不再作为当前系统的正式方法或 analyze 主叙事；
 - `prompt` 当前使用的语义表示仍相对基础，后续仍有较大优化空间；
 - 语义一致性评测尚未纳入标准工作流；
 - 当前生成结果是否真正“SLAM-friendly”仍需更系统的定量分析。
@@ -163,9 +163,9 @@ segment → prompt → infer → merge → slam → eval → stats
 
 `semantic_guarded_v1 / semantic_guarded_v2` 曾是围绕 boundary/support 类启发式候选回接的早期探索版本。当前代码库已移除其正式策略身份、CLI 入口与 analyze 主路径，只保留与正式三策略仍有复用价值的通用信号/可视化支撑。
 
-### 4.2.2 `sks_v1` 的当前定位
+### 4.2.2 `semantic` 的当前定位
 
-`sks_v1` 不再沿用 `boundary / support / suppressed` 的候选回接思路，而是引入一条更简洁的纯语义主方法：
+`semantic` 当前由 `semantic.py` 承载。该方法不再沿用 `boundary / support / suppressed` 的候选回接思路，而是引入一条更简洁的纯语义主方法：
 
 - 仍以 uniform 关键帧布局作为骨架；
 - 关键帧总数严格保持与 uniform 一致，不额外加帧，也不删帧；
@@ -174,20 +174,20 @@ segment → prompt → infer → merge → slam → eval → stats
 - 语义密度由 OpenCLIP image embedding 的 `semantic displacement / velocity / acceleration` 构成；
 - 通过固定预算的 cumulative action sampling，把更多关键帧分配到高语义变化区。
 
-从研究角度看，`sks_v1` 的意义是把“语义变化驱动关键帧密度重分配”第一次以兼容主链路的方式接入正式 `segment` 输出，同时保留 uniform 作为安全兜底骨架。
+从研究角度看，`semantic` 的意义是把“语义变化驱动关键帧密度重分配”第一次以兼容主链路的方式接入正式 `segment` 输出，同时保留 uniform 作为安全兜底骨架。
 
-### 4.2.3 `motion_energy_v1` 的当前定位
+### 4.2.3 `motion` 的当前定位
 
-`motion_energy_v1` 是当前阶段新增的正式 baseline，用来回答“如果保留与 `sks_v1` 完全相同的 fixed-budget allocation 骨架，只把输入信号替换成轻量 motion energy kinematics，会得到怎样的关键帧分配”：
+`motion` 当前由 `motion.py` 承载。它是当前阶段新增的正式 baseline，用来回答“如果保留与 `semantic` 完全相同的 fixed-budget allocation 骨架，只把输入信号替换成轻量 motion energy kinematics，会得到怎样的关键帧分配”：
 
 - 仍以 uniform 关键帧布局作为骨架；
 - 关键帧总数严格保持与 uniform 一致；
 - 首尾关键帧固定；
 - 中间关键帧仅允许在 uniform 邻域内做受限重定位；
 - 输入信号由统一尺寸帧序列的灰度高斯模糊后相邻帧差分构成，并进一步计算 `motion displacement / velocity / acceleration / density / cumulative action`；
-- `relocate_radius / min_gap / snap_radius / density` 默认参数与 `sks_v1` 保持一致。
+- `relocate_radius / min_gap / snap_radius / density` 默认参数与 `semantic` 保持一致。
 
-从研究角度看，`motion_energy_v1` 的价值在于提供一个不依赖 OpenCLIP 的轻量对照组，使后续实验可以直接比较“同一 allocator 框架下，semantic kinematics 与 motion energy kinematics 谁更能为 VSLAM 关键帧预算重分配提供有效信号”。
+从研究角度看，`motion` 的价值在于提供一个不依赖 OpenCLIP 的轻量对照组，使后续实验可以直接比较“同一 allocator 框架下，semantic kinematics 与 motion energy kinematics 谁更能为 VSLAM 关键帧预算重分配提供有效信号”。
 
 ### 4.3 当前系统定位
 

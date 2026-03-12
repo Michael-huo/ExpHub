@@ -21,17 +21,28 @@ else:
 from exphub.context import ExperimentContext
 from scripts._common import ensure_dir, ensure_file, list_frames_sorted, log_info, log_prog, log_warn, write_json_atomic
 from scripts._segment.policies.fixed_budget import allocate_fixed_budget, build_fixed_budget_rules
+from scripts._segment.policies.naming import (
+    OFFICIAL_POLICY_NAMES,
+    normalize_policy_name,
+    policy_display_name,
+)
 from scripts._segment.research import (
+    save_allocation_overview,
+    save_comparison_overview,
+    save_kinematics_overview,
+    save_projection_overview,
     compute_frame_signal_rows,
     compute_motion_rows,
     compute_semantic_rows,
-    save_roles_overview,
-    save_score_overview,
-    save_semantic_overview,
 )
 
 
 LEGACY_OUTPUT_NAMES = [
+    "analysis_summary.json",
+    "frame_scores.csv",
+    "score_overview.png",
+    "roles_overview.png",
+    "semantic_overview.png",
     "analysis_meta.json",
     "candidate_points.json",
     "candidate_roles_summary.json",
@@ -46,11 +57,10 @@ LEGACY_OUTPUT_NAMES = [
     "semantic_embeddings.npz",
 ]
 DEFAULT_SEMANTIC_CACHE_NAME = "semantic_embeddings.npz"
-OFFICIAL_POLICY_NAMES = ("uniform", "sks_v1", "motion_energy_v1")
 SINGLE_OBSERVER_MAP = {
-    "sks_v1": ["motion_energy_v1"],
-    "motion_energy_v1": ["sks_v1"],
-    "uniform": ["sks_v1", "motion_energy_v1"],
+    "semantic": ["motion"],
+    "motion": ["semantic"],
+    "uniform": ["semantic", "motion"],
 }
 FIXED_BUDGET_RULE_KEYS = (
     "relocate_radius",
@@ -140,6 +150,7 @@ def _load_segment_inputs(exp_dir, segment_dir):
     keyframes_meta_path = ensure_file(segment_dir / "keyframes" / "keyframes_meta.json", name="segment keyframes meta")
     step_meta_path = ensure_file(segment_dir / "step_meta.json", name="segment step meta")
     preprocess_meta_path = segment_dir / "preprocess_meta.json"
+    deploy_schedule_path = segment_dir / "deploy_schedule.json"
     exp_meta_path = exp_dir / "exp_meta.json"
 
     frame_paths = list_frames_sorted(frames_dir)
@@ -154,6 +165,7 @@ def _load_segment_inputs(exp_dir, segment_dir):
     keyframes_meta = _read_json(keyframes_meta_path)
     step_meta = _read_json(step_meta_path)
     preprocess_meta = _read_json(preprocess_meta_path) if preprocess_meta_path.is_file() else None
+    deploy_schedule = _read_json(deploy_schedule_path) if deploy_schedule_path.is_file() else None
     exp_meta = _read_json(exp_meta_path) if exp_meta_path.is_file() else {}
     return {
         "frames_dir": frames_dir,
@@ -162,6 +174,7 @@ def _load_segment_inputs(exp_dir, segment_dir):
         "keyframes_meta": keyframes_meta,
         "step_meta": step_meta,
         "preprocess_meta": preprocess_meta,
+        "deploy_schedule": deploy_schedule,
         "exp_meta": exp_meta,
     }
 
@@ -209,13 +222,14 @@ def _remove_legacy_outputs(analysis_dir):
 
 
 def _policy_name(keyframes_meta):
-    return str(keyframes_meta.get("policy_name", "") or "uniform")
+    return normalize_policy_name(keyframes_meta.get("policy_name", "") or "uniform")
 
 
 def _signal_prefix(policy_name):
-    if policy_name == "sks_v1":
+    policy_name = normalize_policy_name(policy_name)
+    if policy_name == "semantic":
         return "semantic"
-    if policy_name == "motion_energy_v1":
+    if policy_name == "motion":
         return "motion"
     return ""
 
@@ -226,13 +240,13 @@ def _observer_policies(policy_name):
 
 def _needed_signal_policies(policy_name):
     names = set(_observer_policies(policy_name))
-    if policy_name in ("sks_v1", "motion_energy_v1"):
+    if normalize_policy_name(policy_name) in ("semantic", "motion"):
         names.add(str(policy_name))
     return names
 
 
 def _resolve_semantic_cache_dir(segment_dir, keyframes_meta):
-    policy_name = str(keyframes_meta.get("policy_name", "") or "").strip()
+    policy_name = normalize_policy_name(keyframes_meta.get("policy_name", "") or "")
     if policy_name:
         policy_cache_dir = segment_dir / ".segment_cache" / policy_name
         if (policy_cache_dir / DEFAULT_SEMANTIC_CACHE_NAME).is_file():
@@ -466,8 +480,8 @@ def _observer_summary(policy_name, signal_bundle, final_indices):
 
 
 def _resolve_semantic_cache_dir_for_policy(segment_dir, keyframes_meta, policy_name):
-    policy_name = str(policy_name or "").strip()
-    active_policy_name = str(keyframes_meta.get("policy_name", "") or "").strip()
+    policy_name = normalize_policy_name(policy_name)
+    active_policy_name = _policy_name(keyframes_meta)
     if policy_name and policy_name == active_policy_name:
         return _resolve_semantic_cache_dir(segment_dir, keyframes_meta)
     if policy_name:
@@ -620,8 +634,8 @@ def _official_signal_rows(data, segment_dir, keyframes_meta, smooth_window):
     motion_rows = None
     signal_meta = {}
 
-    if "sks_v1" in needed_policies:
-        cache_dir = _resolve_semantic_cache_dir_for_policy(segment_dir, keyframes_meta, "sks_v1")
+    if "semantic" in needed_policies:
+        cache_dir = _resolve_semantic_cache_dir_for_policy(segment_dir, keyframes_meta, "semantic")
         cache_dir.mkdir(parents=True, exist_ok=True)
         semantic_rows, signal_meta["semantic"] = compute_semantic_rows(
             data["frame_paths"],
@@ -630,7 +644,7 @@ def _official_signal_rows(data, segment_dir, keyframes_meta, smooth_window):
             timestamps=data["timestamps"],
         )
 
-    if "motion_energy_v1" in needed_policies:
+    if "motion" in needed_policies:
         motion_rows, signal_meta["motion"] = compute_motion_rows(
             data["frame_paths"],
             smooth_window=int(smooth_window),
@@ -679,7 +693,7 @@ def _build_official_comparison(rows, keyframes_meta, signal_meta):
     observer_entries = {}
     rules = _allocator_rules(keyframes_meta)
 
-    if policy_name in ("sks_v1", "motion_energy_v1"):
+    if policy_name in ("semantic", "motion"):
         active_prefix = _signal_prefix(policy_name)
         active_meta = signal_meta.get(active_prefix, {})
         active_bundle = _signal_bundle_from_rows(rows, keyframes_meta, policy_name, active_meta)
@@ -702,8 +716,8 @@ def _build_official_comparison(rows, keyframes_meta, signal_meta):
         }
 
     if policy_name == "uniform":
-        left_name = "sks_v1"
-        right_name = "motion_energy_v1"
+        left_name = "semantic"
+        right_name = "motion"
         left_entry = observer_entries.get(left_name)
         right_entry = observer_entries.get(right_name)
         comparison_block = {
@@ -746,11 +760,58 @@ def _build_official_comparison(rows, keyframes_meta, signal_meta):
     }
 
 
-def _official_csv_rows(rows, keyframes_meta, comparison):
+def _projection_maps(deploy_schedule):
+    if not isinstance(deploy_schedule, dict):
+        return {
+            "raw_boundary_order": {},
+            "deploy_boundary_order": {},
+            "raw_segments": {},
+            "deploy_segments": {},
+        }
+
+    raw_boundary_order = {}
+    for pos, frame_idx in enumerate(list(deploy_schedule.get("raw_keyframe_indices") or [])):
+        raw_boundary_order[int(frame_idx)] = int(pos)
+
+    deploy_boundary_order = {}
+    for pos, frame_idx in enumerate(list(deploy_schedule.get("deploy_keyframe_indices") or [])):
+        deploy_boundary_order[int(frame_idx)] = int(pos)
+
+    raw_segments = {}
+    deploy_segments = {}
+    for item in list(deploy_schedule.get("segments") or []):
+        segment_id = int(item.get("segment_id", 0) or 0)
+        raw_end_idx = int(item.get("raw_end_idx", 0) or 0)
+        deploy_end_idx = int(item.get("deploy_end_idx", 0) or 0)
+        raw_segments[raw_end_idx] = {
+            "projection_segment_id": segment_id,
+            "projection_raw_gap": int(item.get("raw_gap", 0) or 0),
+            "projection_deploy_gap": int(item.get("deploy_gap", 0) or 0),
+            "projection_gap_error": int(item.get("gap_error", 0) or 0),
+            "projection_boundary_shift": int(item.get("boundary_shift", 0) or 0),
+        }
+        deploy_segments[deploy_end_idx] = {
+            "projection_segment_id": segment_id,
+            "projection_raw_gap": int(item.get("raw_gap", 0) or 0),
+            "projection_deploy_gap": int(item.get("deploy_gap", 0) or 0),
+            "projection_gap_error": int(item.get("gap_error", 0) or 0),
+            "projection_boundary_shift": int(item.get("boundary_shift", 0) or 0),
+        }
+
+    return {
+        "raw_boundary_order": raw_boundary_order,
+        "deploy_boundary_order": deploy_boundary_order,
+        "raw_segments": raw_segments,
+        "deploy_segments": deploy_segments,
+    }
+
+
+def _official_csv_rows(rows, keyframes_meta, comparison, deploy_schedule):
     policy_name = _policy_name(keyframes_meta)
     prefix = _signal_prefix(policy_name)
     maps = _keyframe_maps(keyframes_meta)
     observer_entries = dict(comparison.get("observer_entries", {}) or {})
+    projection = _projection_maps(deploy_schedule)
     csv_rows = []
 
     for row in rows:
@@ -764,7 +825,22 @@ def _official_csv_rows(rows, keyframes_meta, comparison):
             "selected_order": maps["selected_order_map"].get(frame_idx),
             "active_selected_order": maps["selected_order_map"].get(frame_idx),
             "uniform_anchor_idx": maps["uniform_anchor_idx_map"].get(frame_idx),
+            "is_raw_boundary": bool(frame_idx in projection["raw_boundary_order"]),
+            "raw_boundary_order": projection["raw_boundary_order"].get(frame_idx),
+            "is_deploy_boundary": bool(frame_idx in projection["deploy_boundary_order"]),
+            "deploy_boundary_order": projection["deploy_boundary_order"].get(frame_idx),
         }
+        raw_projection = projection["raw_segments"].get(frame_idx, {})
+        deploy_projection = projection["deploy_segments"].get(frame_idx, {})
+        projection_row = raw_projection or deploy_projection
+        for key in (
+            "projection_segment_id",
+            "projection_raw_gap",
+            "projection_deploy_gap",
+            "projection_gap_error",
+            "projection_boundary_shift",
+        ):
+            csv_row[key] = projection_row.get(key)
         if prefix:
             csv_row["{}_displacement".format(prefix)] = float(row.get("{}_displacement".format(prefix), 0.0) or 0.0)
             csv_row["{}_velocity".format(prefix)] = float(row.get("{}_velocity".format(prefix), 0.0) or 0.0)
@@ -823,14 +899,39 @@ def _experiment_info(exp_dir, exp_meta, step_meta):
     }
 
 
+def _projection_summary(deploy_schedule):
+    if not isinstance(deploy_schedule, dict):
+        return {}
+    projection_stats = dict(deploy_schedule.get("projection_stats", {}) or {})
+    return {
+        "mean_abs_boundary_shift": float(projection_stats.get("mean_abs_boundary_shift", 0.0) or 0.0),
+        "max_abs_boundary_shift": int(projection_stats.get("max_abs_boundary_shift", 0) or 0),
+        "mean_abs_gap_error": float(projection_stats.get("mean_abs_gap_error", 0.0) or 0.0),
+        "max_abs_gap_error": int(projection_stats.get("max_abs_gap_error", 0) or 0),
+    }
+
+
 def _official_analysis_summary(exp_dir, data, rows, keyframes_meta, comparison):
     exp_info = _experiment_info(exp_dir, data["exp_meta"], data["step_meta"])
     policy_name = _policy_name(keyframes_meta)
     prefix = _signal_prefix(policy_name)
     keyframe_summary = dict(keyframes_meta.get("summary", {}) or {})
+    projection = _projection_summary(data.get("deploy_schedule"))
+    allocation = {
+        "policy_name": str(policy_name),
+        "uniform_base_count": int(len(keyframes_meta.get("uniform_base_indices", []) or [])),
+        "final_keyframe_count": int(len(keyframes_meta.get("keyframe_indices", []) or [])),
+        "fixed_budget": bool(keyframe_summary.get("fixed_budget", policy_name != "uniform")),
+        "relocated_count": int(keyframe_summary.get("relocated_count", 0) or 0),
+        "avg_abs_shift": float(keyframe_summary.get("avg_abs_shift", 0.0) or 0.0),
+        "max_abs_shift": int(keyframe_summary.get("max_abs_shift", 0) or 0),
+        "keyframe_bytes_sum": int(keyframes_meta.get("keyframe_bytes_sum", 0) or 0),
+        "extra_kf_ratio": float(keyframe_summary.get("extra_kf_ratio", 0.0) or 0.0),
+    }
     summary = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "policy_name": str(policy_name),
+        "policy_display_name": policy_display_name(policy_name),
         "dataset": exp_info["dataset"],
         "sequence": exp_info["sequence"],
         "tag": exp_info["tag"],
@@ -838,25 +939,27 @@ def _official_analysis_summary(exp_dir, data, rows, keyframes_meta, comparison):
         "dur": exp_info["dur"],
         "fps": exp_info["fps"],
         "kf_gap": exp_info["kf_gap"],
-        "uniform_base_count": int(len(keyframes_meta.get("uniform_base_indices", []) or [])),
-        "final_keyframe_count": int(len(keyframes_meta.get("keyframe_indices", []) or [])),
-        "keyframe_bytes_sum": int(keyframes_meta.get("keyframe_bytes_sum", 0) or 0),
-        "extra_kf_ratio": float(keyframe_summary.get("extra_kf_ratio", 0.0) or 0.0),
-        "comparison": comparison.get("summary_block", {}),
+        "allocation": allocation,
     }
 
+    if projection:
+        summary["projection"] = projection
+
+    comparison_block = dict(comparison.get("summary_block", {}) or {})
     if policy_name == "uniform":
+        if comparison_block:
+            summary["comparison"] = comparison_block
         return summary
 
-    summary.update(
-        {
-            "fixed_budget": bool(keyframe_summary.get("fixed_budget", False)),
-            "relocated_count": int(keyframe_summary.get("relocated_count", 0) or 0),
-            "avg_abs_shift": float(keyframe_summary.get("avg_abs_shift", 0.0) or 0.0),
-            "max_abs_shift": int(keyframe_summary.get("max_abs_shift", 0) or 0),
-        }
-    )
-    summary.update(_signal_summary_from_rows(rows, prefix))
+    observer_policy = str(comparison_block.get("observer_policy", "") or "")
+    if observer_policy:
+        summary["alignment"] = dict(comparison_block.get("signal_alignment", {}) or {})
+        summary["alignment"].update(dict(comparison_block.get("allocation_alignment", {}) or {}))
+        summary["alignment"]["observer_policy"] = observer_policy
+
+    signal_stats = _signal_summary_from_rows(rows, prefix)
+    if signal_stats:
+        summary["signals"] = signal_stats
     return summary
 
 
@@ -864,8 +967,8 @@ def _official_log(signal_meta, keyframes_meta, csv_rows, analysis_dir, compariso
     policy_name = _policy_name(keyframes_meta)
     maps = _keyframe_maps(keyframes_meta)
     log_info("analysis_dir: {}".format(analysis_dir))
-    log_info("analysis_summary.json written")
-    log_info("frame_scores.csv rows: {}".format(len(csv_rows)))
+    log_info("segment_summary.json written")
+    log_info("segment_timeseries.csv rows: {}".format(len(csv_rows)))
     log_info("uniform base keyframes: {}".format(len(maps["uniform_indices"])))
     log_info("final keyframes: {}".format(len(maps["final_indices"])))
     log_info("policy analyzed: {}".format(policy_name))
@@ -883,41 +986,51 @@ def _run_official_analysis(exp_dir, segment_dir, analysis_dir, data, args):
     maps = _keyframe_maps(data["keyframes_meta"])
     _mark_uniform_keyframes(rows, maps["uniform_indices"])
     comparison = _build_official_comparison(rows, data["keyframes_meta"], signal_meta)
-    csv_rows = _official_csv_rows(rows, data["keyframes_meta"], comparison)
+    csv_rows = _official_csv_rows(rows, data["keyframes_meta"], comparison, data.get("deploy_schedule"))
     analysis_summary = _official_analysis_summary(exp_dir, data, rows, data["keyframes_meta"], comparison)
     final_keyframe_set = set(maps["final_indices"])
 
-    csv_path = analysis_dir / "frame_scores.csv"
-    summary_path = analysis_dir / "analysis_summary.json"
-    score_overview_path = analysis_dir / "score_overview.png"
-    roles_overview_path = analysis_dir / "roles_overview.png"
-    semantic_overview_path = analysis_dir / "semantic_overview.png"
+    csv_path = analysis_dir / "segment_timeseries.csv"
+    summary_path = analysis_dir / "segment_summary.json"
+    comparison_overview_path = analysis_dir / "comparison_overview.png"
+    allocation_overview_path = analysis_dir / "allocation_overview.png"
+    kinematics_overview_path = analysis_dir / "kinematics_overview.png"
+    projection_overview_path = analysis_dir / "projection_overview.png"
 
     _write_csv(csv_path, csv_rows)
     write_json_atomic(str(summary_path), analysis_summary, indent=2)
-    save_score_overview(
+    save_comparison_overview(
         rows,
-        score_overview_path,
+        comparison_overview_path,
         sorted(final_keyframe_set),
         policy_name=_policy_name(data["keyframes_meta"]),
         uniform_indices=maps["uniform_indices"],
         keyframe_items=data["keyframes_meta"].get("keyframes", []),
         comparison_payload=comparison.get("plot_payload", {}),
     )
-    save_roles_overview(
+    save_allocation_overview(
         rows,
-        roles_overview_path,
+        allocation_overview_path,
         sorted(final_keyframe_set),
         policy_name=_policy_name(data["keyframes_meta"]),
         uniform_indices=maps["uniform_indices"],
         keyframe_items=data["keyframes_meta"].get("keyframes", []),
     )
-    save_semantic_overview(
+    save_kinematics_overview(
         rows,
-        semantic_overview_path,
+        kinematics_overview_path,
         sorted(final_keyframe_set),
         keyframe_items=data["keyframes_meta"].get("keyframes", []),
         policy_name=_policy_name(data["keyframes_meta"]),
+        uniform_indices=maps["uniform_indices"],
+    )
+    deploy_schedule = data.get("deploy_schedule") or {}
+    save_projection_overview(
+        projection_overview_path,
+        policy_name=_policy_name(data["keyframes_meta"]),
+        raw_keyframe_indices=list(deploy_schedule.get("raw_keyframe_indices") or maps["final_indices"]),
+        deploy_keyframe_indices=list(deploy_schedule.get("deploy_keyframe_indices") or maps["final_indices"]),
+        segments=list(deploy_schedule.get("segments") or []),
         uniform_indices=maps["uniform_indices"],
     )
 
