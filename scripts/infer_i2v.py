@@ -32,6 +32,13 @@ from collections import deque
 from pathlib import Path
 from datetime import datetime
 from _common import ensure_dir, ensure_file, get_platform_config, list_frames_sorted, write_json_atomic
+from _schedule import (
+    build_execution_segments_from_deploy_schedule,
+    build_legacy_execution_segments,
+    extract_execution_segments_from_manifest,
+    load_deploy_schedule,
+    load_prompt_manifest,
+)
 
 
 ALLOW_PREFIX = ("[PROG]", "[INFO]", "[WARN]", "[ERR]", "[BAR]", "[PROMPT]")
@@ -55,6 +62,12 @@ def _resolve_frames_dir(segment_dir: Path) -> Path:
     if frames.is_dir():
         return frames
     return segment_dir
+
+
+def _mean(values):
+    if not values:
+        return 0.0
+    return float(sum(values)) / float(len(values))
 
 
 def _run_filtered(cmd: list, cwd: Path, env: dict) -> int:
@@ -125,6 +138,7 @@ def main():
     ensure_dir(segment_dir, "segment_dir")
     frames_dir = _resolve_frames_dir(segment_dir)
     ensure_dir(frames_dir, "segment/frames")
+    schedule_dir = frames_dir.parent if frames_dir.name == "frames" else segment_dir
 
     frames_avail = len(list_frames_sorted(frames_dir))
     if frames_avail <= 0:
@@ -151,32 +165,6 @@ def main():
         raise SystemExit("[ERR] --base_idx must be >= 0")
     if base_idx >= frames_avail:
         raise SystemExit(f"[ERR] base_idx={base_idx} out of range (frames_avail={frames_avail})")
-
-    # Derive max segments that can be formed with anchors [s, s+kf_gap] within available frames.
-    max_segments = (frames_avail - 1 - base_idx) // kf_gap
-    if max_segments <= 0:
-        raise SystemExit(
-            f"[ERR] not enough frames for even 1 segment: frames_avail={frames_avail} base_idx={base_idx} kf_gap={kf_gap}"
-        )
-
-    segments = max_segments
-    if int(args.num_segments) > 0:
-        segments = min(segments, int(args.num_segments))
-
-    used_end_idx = base_idx + segments * kf_gap
-    used_frames = used_end_idx - base_idx + 1
-    tail_drop = frames_avail - (base_idx + used_frames)
-    if tail_drop < 0:
-        tail_drop = 0
-
-    sys.stdout.write(
-        f"[WARN] segment has {frames_avail} frames (base_idx={base_idx}); plan uses {used_frames} frames, tail_drop={tail_drop}\n"
-        if tail_drop > 0
-        else f"[INFO] segment has {frames_avail} frames (base_idx={base_idx}); plan uses {used_frames} frames\n"
-    )
-
-    # Keep metadata consistent: one segment spans (kf_gap / fps) seconds on the dataset time grid.
-    segment_seconds = float(kf_gap) / float(fps)
 
     exp_dir = Path(args.exp_dir).resolve()
     prompt_dir = exp_dir / "prompt"
@@ -216,6 +204,41 @@ def main():
             )
         )
 
+    manifest_obj = load_prompt_manifest(prompt_manifest_std)
+    execution_segments = extract_execution_segments_from_manifest(manifest_obj)
+    schedule_source = str(manifest_obj.get("schedule_source", "") or "")
+    schedule_backend = str(manifest_obj.get("execution_backend", "") or "")
+
+    if not execution_segments:
+        deploy_schedule = load_deploy_schedule(schedule_dir / "deploy_schedule.json")
+        if deploy_schedule:
+            execution_segments = build_execution_segments_from_deploy_schedule(deploy_schedule)
+            schedule_source = "deploy_schedule"
+            schedule_backend = str(deploy_schedule.get("backend", "") or "wan_r4")
+
+    if not execution_segments:
+        execution_segments = build_legacy_execution_segments(frames_avail, base_idx, kf_gap, int(args.num_segments))
+        schedule_source = "legacy_kf_gap"
+        schedule_backend = "legacy_uniform"
+        sys.stdout.write("[WARN] execution schedule fallback: manifest/deploy schedule missing, using legacy kf_gap slicing\n")
+
+    segments = int(len(execution_segments))
+    if segments <= 0:
+        raise SystemExit("[ERR] execution schedule resolved to 0 segments")
+
+    used_start_idx = int(execution_segments[0]["start_idx"])
+    used_end_idx = int(execution_segments[-1]["end_idx"])
+    used_frames = int(used_end_idx - used_start_idx + 1)
+    tail_drop = int(max(0, frames_avail - (used_end_idx + 1)))
+    gap_seconds = [float(int(seg["deploy_gap"])) / float(fps) for seg in execution_segments]
+    segment_seconds = float(gap_seconds[0]) if gap_seconds else float(kf_gap) / float(fps)
+
+    sys.stdout.write(
+        f"[WARN] segment has {frames_avail} frames (plan {schedule_source}/{schedule_backend}); uses {used_frames} frames [{used_start_idx}->{used_end_idx}], tail_drop={tail_drop}\n"
+        if tail_drop > 0
+        else f"[INFO] segment has {frames_avail} frames (plan {schedule_source}/{schedule_backend}); uses {used_frames} frames [{used_start_idx}->{used_end_idx}]\n"
+    )
+
     env = os.environ.copy()
     old_pp = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(videox_root) + (os.pathsep + old_pp if old_pp else "")
@@ -248,7 +271,7 @@ def main():
         "--segment_seconds",
         f"{segment_seconds:.9f}",
         "--base_idx",
-        str(base_idx),
+        str(used_start_idx),
         "--num_segments",
         str(segments),
         "--seed_base",
@@ -265,7 +288,7 @@ def main():
 
     t0 = time.time()
     sys.stdout.write(
-        f"[PROG] infer start: segments={segments} fps={fps} kf_gap={kf_gap} used_frames={used_frames} gpus={args.gpus}\n"
+        f"[PROG] infer start: segments={segments} fps={fps} schedule_source={schedule_source} backend={schedule_backend} used_frames={used_frames} gpus={args.gpus}\n"
     )
     rc = _run_filtered(cmd, cwd=videox_root, env=env)
     if rc != 0:
@@ -288,6 +311,11 @@ def main():
         "frames_avail": int(frames_avail),
         "segments": int(plan_segments),
         "used_frames": int(used_frames),
+        "used_start_idx": int(used_start_idx),
+        "used_end_idx": int(used_end_idx),
+        "schedule_source": str(schedule_source),
+        "execution_backend": str(schedule_backend),
+        "mean_deploy_gap": float(_mean([int(seg["deploy_gap"]) for seg in execution_segments])),
         "runs_plan_path": str(runs_plan),
         "runs_plan_size": int(len(plan_bytes)),
         "runs_plan_sha1": hashlib.sha1(plan_bytes).hexdigest(),

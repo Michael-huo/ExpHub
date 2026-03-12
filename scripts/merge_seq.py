@@ -307,6 +307,8 @@ def main():
         "runs": int(len(segs)),
         "merged_start_idx": int(merged_start_idx),
         "merged_end_idx": int(merged_end_idx) if merged_end_idx is not None else None,
+        "schedule_source": str(plan.get("schedule_source", "")),
+        "execution_backend": str(plan.get("execution_backend", "")),
         "preview": str(preview_mp4) if preview_ok else "",
         "created_at": datetime.now().isoformat(),
     }
@@ -319,6 +321,8 @@ def main():
         "merged_frame_count": int(merged_count),
         "timestamps_count": int(len(out_lines)),
         "merged_segments": int(len(segs)),
+        "schedule_source": str(plan.get("schedule_source", "")),
+        "execution_backend": str(plan.get("execution_backend", "")),
         "runs_plan_path": str(plan_path),
         "runs_plan_sha1": hashlib.sha1(plan_bytes).hexdigest(),
     }

@@ -40,6 +40,8 @@ python -m exphub \
 
 **最小验收：**
 - `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="sks_v1"`。
+- `segment/deploy_schedule.json` 已生成，且 `backend="wan_r4"`。
+- `deploy_schedule.json` 中 `raw_keyframe_indices` 与 `keyframes_meta.json.keyframe_indices` 对齐；`deploy_keyframe_indices[0/-1]` 与 raw 首尾一致。
 - `summary.uniform_count == summary.final_keyframe_count == summary.num_uniform_base == summary.num_final_keyframes`。
 - `summary.fixed_budget=true`。
 - `keyframe_indices[0]` 与 `uniform_base_indices[0]` 一致，最后一个索引也必须与 uniform 尾锚一致。
@@ -61,6 +63,7 @@ python -m exphub \
 
 **最小验收：**
 - `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="motion_energy_v1"`。
+- `segment/deploy_schedule.json` 已生成，且 `segments[*].deploy_gap % 4 == 0`。
 - 默认会继续自动触发 post analyze，日志中应出现 `post analyze start` 与 `post analyze done`。
 - `segment/analysis/` 最终只保留 `analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png`。
 - `segment/analysis/` 中不应再出现 `analysis_meta.json / candidate_points.json / candidate_roles_summary.json / frame_scores.json / peaks_preview.png / score_curve.png / score_curve_with_keyframes.png / candidate_points_overview.png / candidate_roles_overview.png / semantic_curve.png / semantic_vs_nonsemantic.png`。
@@ -123,8 +126,11 @@ python -m exphub \
 
 **最小验收：**
 - `segment` step 不因新 policy 崩溃。
-- `segment/frames/`、`segment/keyframes/`、`segment/keyframes/keyframes_meta.json`、`segment/timestamps.txt`、`segment/calib.txt`、`segment/preprocess_meta.json`、`segment/step_meta.json` 全部存在。
-- 若 `all` 全链路耗时过长，至少应人工确认 `segment` 产物格式未破坏，且 `prompt / infer / merge / slam / stats` 未新增对 `keyframes_meta.json` 旧字段的破坏性依赖。
+- `segment/frames/`、`segment/keyframes/`、`segment/keyframes/keyframes_meta.json`、`segment/deploy_schedule.json`、`segment/timestamps.txt`、`segment/calib.txt`、`segment/preprocess_meta.json`、`segment/step_meta.json` 全部存在。
+- `prompt/manifest.json` 中 `segments[*]` 应包含 `start_idx / end_idx / num_frames / deploy_gap`。
+- `infer.log` 不应再只出现固定 stride 的 `0->24 / 24->48 / ...`；应体现真实 deploy 边界，例如 `0->28 / 28->60 / 60->92`。
+- `infer/runs_plan.json` 应保存真实执行边界；`merge/frames/` 数量必须等于 `runs_plan` 推导出的 `merged_end_idx - merged_start_idx + 1`。
+- 若 `all` 全链路耗时过长，至少应人工确认新链路对旧实验产物仍保留 legacy fallback（manifest/deploy schedule 缺失时退回旧 `kf_gap` 切段）。
 
 ## 4. `segment` 研究旁路冒烟测试
 `segment_analyze.py` 不接入 `--mode all`，但会在 `--mode segment` 成功后默认自动触发；也可在已有 `segment/` 产物基础上单独运行。

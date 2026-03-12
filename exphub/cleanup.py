@@ -57,7 +57,6 @@ def _cleanup_min(exp_dir: Path) -> None:
     # and final outputs for batch runs.
     heavy_dirs = [
         exp_dir / "segment" / "frames",
-        exp_dir / "segment" / "keyframes",
         exp_dir / "infer" / "runs",
         exp_dir / "merge" / "frames",
     ]
@@ -73,9 +72,14 @@ def _cleanup_min(exp_dir: Path) -> None:
             _rm_if_exists(exp_dir, child)
 
     # Keep lightweight, reproducibility-critical metadata.
-    _prune_dir_keep_names(exp_dir, exp_dir / "segment", {"step_meta.json", "calib.txt", "timestamps.txt", "analysis"})
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "segment",
+        {"step_meta.json", "calib.txt", "timestamps.txt", "analysis", "deploy_schedule.json", "keyframes"},
+    )
+    _prune_dir_keep_names(exp_dir, exp_dir / "segment" / "keyframes", {"keyframes_meta.json"})
     _prune_dir_keep_names(exp_dir, exp_dir / "prompt", {"manifest.json", "step_meta.json"})
-    _prune_dir_keep_names(exp_dir, exp_dir / "infer", {"step_meta.json"})
+    _prune_dir_keep_names(exp_dir, exp_dir / "infer", {"step_meta.json", "runs_plan.json"})
     _prune_dir_keep_names(exp_dir, exp_dir / "merge", {"step_meta.json", "calib.txt", "timestamps.txt"})
 
 

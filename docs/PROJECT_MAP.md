@@ -21,13 +21,13 @@
 | 文件路径 | 对应 Pipeline 阶段 | 核心职责 |
 |---|---|---|
 | `scripts/_common.py` | **全局基建** (All) | **极其重要**：负责解析 `config/platform.yaml`；提供标准日志门面 (`log_info`, `[BAR]`) |
-| `scripts/segment_make.py` | `segment` | `segment` 稳定入口，负责生成标准 segment 产物 |
+| `scripts/segment_make.py` | `segment` | `segment` 稳定入口，负责生成标准 segment 产物，并在 raw keyframes 之外额外写出 Wan `deploy_schedule.json` |
 | `scripts/segment_analyze.py` | `segment` 研究旁路 | 读取既有 `segment/` 产物，输出正式三策略（`uniform / sks_v1 / motion_energy_v1`）的逐帧 kinematics/allocation 分析图表，并内建 active policy + passive observer 横向对比（summary + compare 图，不改正式 keyframes） |
 | `scripts/_segment/` | `segment` (内部实现) | `api/extract/materialize/policies/research` 内聚 `segment` 的主链路与研究旁路逻辑；当前 `policies/` 只承载正式策略 `uniform / sks_v1 / motion_energy_v1`，研究侧 `research/` 负责共享信号与可视化支撑 |
-| `scripts/prompt_gen.py` | `prompt` | 调用 VLM 生成 `manifest.json` |
-| `scripts/infer_i2v.py` | `infer` (外壳) | i2v 任务规划、多进程分发与合并调度 |
-| `scripts/_infer_i2v_impl.py`| `infer` (内核) | Wan2.2 实际的 float8 量化与张量推理逻辑 |
-| `scripts/merge_seq.py` | `merge` | 时间轴对齐、冗余去重、合并长视频/图像序列 |
+| `scripts/prompt_gen.py` | `prompt` | 调用 VLM 生成 `manifest.json`，并将 deploy-derived execution segments 写入 `segments[*]` |
+| `scripts/infer_i2v.py` | `infer` (外壳) | 读取 execution manifest / deploy schedule，生成逐段运行计划并分发 Wan 推理 |
+| `scripts/_infer_i2v_impl.py`| `infer` (内核) | Wan2.2 实际的 float8 量化与张量推理逻辑；按逐段 `start_idx / end_idx / num_frames` 执行 |
+| `scripts/merge_seq.py` | `merge` | 基于 `runs_plan.json` 的真实逐段边界做时间轴对齐、冗余去重与合并 |
 | `scripts/slam_droid.py` | `slam` | 调用 DROID-SLAM 提取生成轨道或原始轨道的位姿 |
 | `scripts/stats_collect.py` | `stats` | 扫描各阶段 `step_meta.json`，汇总全链路性能数据 |
 

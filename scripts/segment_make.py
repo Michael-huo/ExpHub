@@ -43,6 +43,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from _common import list_frames_sorted, log_err, log_info, log_prog, log_warn, write_json_atomic
+from _schedule import build_wan_r4_deploy_schedule
 from _segment.api import materialize_keyframe_plan
 
 try:
@@ -574,6 +575,18 @@ def main():
                 float(summary.get("extra_kf_ratio", 0.0)),
             )
         )
+        log_info("deploy schedule build start: backend=wan_r4 segments={}".format(max(0, len(kf_meta.get("keyframe_indices", [])) - 1)))
+        deploy_schedule = build_wan_r4_deploy_schedule(kf_meta)
+        deploy_schedule_path = os.path.join(root_dir, "deploy_schedule.json")
+        write_json_atomic(deploy_schedule_path, deploy_schedule, indent=2)
+        proj_stats = dict(deploy_schedule.get("projection_stats") or {})
+        log_info(
+            "deploy schedule build done: backend=wan_r4 segments={} mean_abs_boundary_shift={:.3f} max_abs_gap_error={}".format(
+                int(proj_stats.get("segment_count", 0)),
+                float(proj_stats.get("mean_abs_boundary_shift", 0.0)),
+                int(proj_stats.get("max_abs_gap_error", 0)),
+            )
+        )
 
     # Step-level compact metadata (additional, non-breaking).
     actual_frame_count = len(list_frames_sorted(frames_dir))
@@ -623,6 +636,14 @@ def main():
             "uniform_base_count": int((kf_meta.get("summary") or {}).get("num_uniform_base", 0)),
             "final_keyframe_count": int((kf_meta.get("summary") or {}).get("num_final_keyframes", 0)),
             "extra_kf_ratio": float((kf_meta.get("summary") or {}).get("extra_kf_ratio", 0.0)),
+        }
+    if int(args.kf_gap) > 0 and 'deploy_schedule' in locals():
+        step_meta["outputs"]["deploy_schedule"] = {
+            "path": str(os.path.join(root_dir, "deploy_schedule.json")),
+            "backend": str(deploy_schedule.get("backend", "")),
+            "segment_count": int((deploy_schedule.get("projection_stats") or {}).get("segment_count", 0)),
+            "mean_abs_boundary_shift": float((deploy_schedule.get("projection_stats") or {}).get("mean_abs_boundary_shift", 0.0)),
+            "max_abs_gap_error": int((deploy_schedule.get("projection_stats") or {}).get("max_abs_gap_error", 0)),
         }
     write_json_atomic(os.path.join(root_dir, "step_meta.json"), step_meta, indent=2)
 
