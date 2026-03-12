@@ -3,20 +3,21 @@
 
 import importlib
 
+from .naming import OFFICIAL_POLICY_NAMES, normalize_policy_name
 
 _POLICY_MODULES = {
-    "motion_energy_v1": "_segment.policies.motion_energy_v1",
+    "motion": "_segment.policies.motion",
     "uniform": "_segment.policies.uniform",
-    "sks_v1": "_segment.policies.sks_v1",
+    "semantic": "_segment.policies.semantic",
 }
 
 
 def list_policy_names():
-    return sorted(_POLICY_MODULES.keys())
+    return sorted(OFFICIAL_POLICY_NAMES)
 
 
 def get_policy_builder(policy_name):
-    name = str(policy_name or "uniform")
+    name = normalize_policy_name(policy_name)
     if name not in _POLICY_MODULES:
         raise ValueError("unsupported segment policy: {}".format(name))
     module = importlib.import_module(_POLICY_MODULES[name])

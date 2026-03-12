@@ -38,14 +38,15 @@ ExpHub 将所有的执行与调度收口于 `cli.py`。
 - **环境与依赖防呆体检 (Doctor)**：
   `python -m exphub --mode doctor --dataset <ds> --sequence <seq> --tag <tag> ...`
 - **正式 `segment` 策略**：
-  当前正式 analyze 与方法叙事聚焦 `uniform / sks_v1 / motion_energy_v1`；其中 `sks_v1` 与 `motion_energy_v1` 共用 fixed-budget allocation 骨架，只在输入信号上分别使用 semantic kinematics 与 motion energy kinematics。
-  每次正式 `--mode segment` 成功后触发的 analyze 现已内建 observer-based comparison：`sks_v1` 默认旁路观测 `motion_energy_v1`，`motion_energy_v1` 默认旁路观测 `sks_v1`，`uniform` 则同时观测两者；observer 结果只写 `segment/analysis/analysis_summary.json` 与 `score_overview.png`，不会改写正式 `keyframes_meta.json`。
+  当前正式 analyze 与方法叙事聚焦 `uniform / motion / semantic`；其中 `semantic` 与 `motion` 共用 fixed-budget allocation 骨架，只在输入信号上分别使用 semantic kinematics 与 motion energy kinematics。CLI、summary、图标题与图例现在都只接受并展示这三个正式名称。
+  每次正式 `--mode segment` 成功后都会默认立即触发 analyze；`--mode all` 现在也会在 `segment` 结束后、进入 `prompt` 之前自动触发 analyze；如需关闭可显式传入 `--skip_analyze`。observer-based comparison 仍保持 `semantic` 默认旁路观测 `motion`、`motion` 默认旁路观测 `semantic`、`uniform` 同时观测两者；observer 结果只写 `segment/analysis/segment_summary.json`、`comparison_overview.png` 等 analyze 产物，不会改写正式 `keyframes_meta.json`。
 - **常用 `segment_policy` 示例**：
   `python -m exphub --mode segment ... --segment_policy uniform`
-  `python -m exphub --mode segment ... --segment_policy sks_v1`
-  `python -m exphub --mode segment ... --segment_policy motion_energy_v1`
+  `python -m exphub --mode segment ... --segment_policy semantic`
+  `python -m exphub --mode segment ... --segment_policy motion`
 - **一键贯穿全流程 (All)**：
   `python -m exphub --mode all --dataset <ds> --sequence <seq> --tag <tag> ...`
+  `all` 会在 `segment` 完成后默认尝试生成 6 个 analyze 正式产物：`segment_summary.json / segment_timeseries.csv / kinematics_overview.png / allocation_overview.png / comparison_overview.png / projection_overview.png`。
 - **统一 phase 环境配置**：
   `segment / prompt / infer / slam` 的解释器现在统一从 `config/platform.yaml -> environments.phases.<phase>.python` 读取，不再使用 `--sys_py`。
 - **Doctor 观测点**：

@@ -23,10 +23,10 @@ python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_T
 
 当前正式测试与 analyze 收敛对象为：
 - `uniform`
-- `sks_v1`
-- `motion_energy_v1`
+- `semantic`
+- `motion`
 
-### 3.1 `sks_v1` 单步验证
+### 3.1 `semantic` 单步验证
 ```bash
 python -m exphub \
   --dataset ncd \
@@ -35,11 +35,11 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy sks_v1
+  --segment_policy semantic
 ```
 
 **最小验收：**
-- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="sks_v1"`。
+- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="semantic"`。
 - `segment/deploy_schedule.json` 已生成，且 `backend="wan_r4"`。
 - `deploy_schedule.json` 中 `raw_keyframe_indices` 与 `keyframes_meta.json.keyframe_indices` 对齐；`deploy_keyframe_indices[0/-1]` 与 raw 首尾一致。
 - `summary.uniform_count == summary.final_keyframe_count == summary.num_uniform_base == summary.num_final_keyframes`。
@@ -49,7 +49,7 @@ python -m exphub \
 - `keyframes[*].source_type` 只应出现 `uniform / semantic`，其中 `semantic` 项必须同时满足 `is_relocated=true` 与 `replaced_uniform_index != null`。
 - 默认会继续自动触发 post analyze；若环境已安装 `torch + open_clip`，日志中应出现 `post analyze start` 与 `post analyze done`。
 
-### 3.2 `motion_energy_v1` 单步验证
+### 3.2 `motion` 单步验证
 ```bash
 python -m exphub \
   --dataset ncd \
@@ -58,14 +58,14 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy motion_energy_v1
+  --segment_policy motion
 ```
 
 **最小验收：**
-- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="motion_energy_v1"`。
+- `segment/keyframes/keyframes_meta.json` 已生成，且 `policy_name="motion"`。
 - `segment/deploy_schedule.json` 已生成，且 `segments[*].deploy_gap % 4 == 0`。
 - 默认会继续自动触发 post analyze，日志中应出现 `post analyze start` 与 `post analyze done`。
-- `segment/analysis/` 最终只保留 `analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png`。
+- `segment/analysis/` 最终只保留 `segment_summary.json / segment_timeseries.csv / comparison_overview.png / allocation_overview.png / kinematics_overview.png / projection_overview.png`。
 - `segment/analysis/` 中不应再出现 `analysis_meta.json / candidate_points.json / candidate_roles_summary.json / frame_scores.json / peaks_preview.png / score_curve.png / score_curve_with_keyframes.png / candidate_points_overview.png / candidate_roles_overview.png / semantic_curve.png / semantic_vs_nonsemantic.png`。
 - `semantic_embeddings.npz` 不应写入 `segment/analysis/`，而应位于 `segment/.segment_cache/segment_analyze/`。
 - `summary.uniform_count == summary.final_keyframe_count == summary.num_uniform_base == summary.num_final_keyframes`。
@@ -90,11 +90,11 @@ python -m exphub \
 - `num_uniform_base`
 - `num_final_keyframes`
 - `extra_kf_ratio`
-- `comparison.observers.sks_v1.observer_summary`
-- `comparison.observers.motion_energy_v1.observer_summary`
+- `comparison.observers.semantic.observer_summary`
+- `comparison.observers.motion.observer_summary`
 - `comparison.observer_pair_alignment`
 
-### 3.4 `uniform / sks_v1 / motion_energy_v1` 对比
+### 3.4 `uniform / semantic / motion` 对比
 ```bash
 python -m exphub \
   --dataset ncd \
@@ -103,14 +103,14 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode segment \
-  --segment_policy motion_energy_v1
+  --segment_policy motion
 ```
 
 **重点观察：**
-- `uniform / sks_v1 / motion_energy_v1` 三者的 `final_keyframe_count` 是否一致。
-- `sks_v1` 是否在不改变预算的前提下，把部分中间关键帧向语义高变化区重定位。
-- `motion_energy_v1` 是否在不改变预算的前提下，把部分中间关键帧向运动高变化区重定位。
-- `analysis_summary.json` 是否分别输出 `semantic_*` 与 `motion_*` 平行字段。
+- `uniform / semantic / motion` 三者的 `final_keyframe_count` 是否一致。
+- `semantic` 是否在不改变预算的前提下，把部分中间关键帧向语义高变化区重定位。
+- `motion` 是否在不改变预算的前提下，把部分中间关键帧向运动高变化区重定位。
+- `segment_summary.json` 是否分别输出 `semantic_*` 与 `motion_*` 平行统计，并包含 `projection` block。
 
 ### 3.5 主链路安全验证
 ```bash
@@ -121,11 +121,12 @@ python -m exphub \
   --w 480 --h 320 \
   --start_sec 30 --fps 12 --kf_gap 24 --dur 48 \
   --mode all \
-  --segment_policy motion_energy_v1
+  --segment_policy motion
 ```
 
 **最小验收：**
 - `segment` step 不因新 policy 崩溃。
+- `segment` 完成后、进入 `prompt` 前，日志中应出现 `post analyze start` 与 `post analyze done`；若 analyze 失败，也只应 WARN，不应阻断后续主链路。
 - `segment/frames/`、`segment/keyframes/`、`segment/keyframes/keyframes_meta.json`、`segment/deploy_schedule.json`、`segment/timestamps.txt`、`segment/calib.txt`、`segment/preprocess_meta.json`、`segment/step_meta.json` 全部存在。
 - `prompt/manifest.json` 中 `segments[*]` 应包含 `start_idx / end_idx / num_frames / deploy_gap`。
 - `infer.log` 不应再只出现固定 stride 的 `0->24 / 24->48 / ...`；应体现真实 deploy 边界，例如 `0->28 / 28->60 / 60->92`。
@@ -133,7 +134,7 @@ python -m exphub \
 - 若 `all` 全链路耗时过长，至少应人工确认新链路对旧实验产物仍保留 legacy fallback（manifest/deploy schedule 缺失时退回旧 `kf_gap` 切段）。
 
 ## 4. `segment` 研究旁路冒烟测试
-`segment_analyze.py` 不接入 `--mode all`，但会在 `--mode segment` 成功后默认自动触发；也可在已有 `segment/` 产物基础上单独运行。
+`segment_analyze.py` 现在既会在 `--mode segment` 成功后默认自动触发，也会在 `--mode all` 中于 `segment` 后、`prompt` 前自动触发；也可在已有 `segment/` 产物基础上单独运行。
 
 **按 `exp_dir` 直接分析：**
 ```bash
@@ -151,11 +152,11 @@ python scripts/segment_analyze.py \
 ```
 
 **最小验收：**
-- `segment/analysis/` 只保留 5 个核心产物：`analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png`。
-- `segment/analysis/frame_scores.csv` 已生成，且数据行数与 `segment/frames/*.png` 数量一致。
-- `segment/analysis/analysis_summary.json` 已生成；对 `uniform` 至少包含 `policy_name / uniform_base_count / final_keyframe_count / keyframe_bytes_sum / extra_kf_ratio`，并带有 `comparison.observers.{sks_v1,motion_energy_v1}` 与 `observer_pair_alignment`；对 `sks_v1 / motion_energy_v1` 还应包含 `fixed_budget / relocated_count / avg_abs_shift / max_abs_shift` 与成套 `semantic_*` 或 `motion_*` kinematics 统计，以及 `comparison.{observer_policy,signal_alignment,allocation_alignment,observer_summary}`。
+- `segment/analysis/` 只保留 6 个核心产物：`segment_summary.json / segment_timeseries.csv / comparison_overview.png / allocation_overview.png / kinematics_overview.png / projection_overview.png`。
+- `segment/analysis/segment_timeseries.csv` 已生成，且数据行数与 `segment/frames/*.png` 数量一致。
+- `segment/analysis/segment_summary.json` 已生成；对 `uniform` 至少包含 `policy_name / allocation / projection / comparison`，并带有 `comparison.observers.{semantic,motion}` 与 `observer_pair_alignment`；对 `semantic / motion` 还应包含 `allocation / alignment / projection / signals` 四类 block。
 - `segment/analysis/` 中不应再出现旧产物：`analysis_meta.json / candidate_points.json / candidate_roles_summary.json / frame_scores.json / peaks_preview.png / score_curve.png / score_curve_with_keyframes.png / candidate_points_overview.png / candidate_roles_overview.png / semantic_curve.png / semantic_vs_nonsemantic.png / semantic_embeddings.npz`。
-- 若 `segment_policy=sks_v1`，`comparison.observer_policy` 应为 `motion_energy_v1`；若 `segment_policy=motion_energy_v1`，则应反向为 `sks_v1`；若 `segment_policy=uniform`，则应同时生成两条 observer 分支。
-- 若正式 analyze 需要 `sks_v1` 语义信号，`segment/.segment_cache/sks_v1/semantic_embeddings.npz` 应生成并在 analyze 阶段复用；不会写回 `segment/analysis/`。
-- `score_overview.png` 应体现 compare 角色，不再回到 legacy candidate/role 主叙事。
-- 若 `segment_policy=sks_v1 / motion_energy_v1`，`analysis_summary.json` 中的 `final_keyframe_count` 应与 uniform 一致，且 `frame_scores.csv` 中 `is_relocated_keyframe=True` 的帧应与 `keyframes_meta.json` 对齐。
+- 若 `segment_policy=semantic`，`alignment.observer_policy` 应为 `motion`；若 `segment_policy=motion`，则应反向为 `semantic`；若 `segment_policy=uniform`，则应同时生成两条 observer 分支。
+- 若正式 analyze 需要 `semantic` 语义信号，`segment/.segment_cache/semantic/semantic_embeddings.npz` 应生成并在后续 analyze 中被复用。
+- `comparison_overview.png` 应体现 compare 角色，`allocation_overview.png` 应体现 fixed-budget relocation，`projection_overview.png` 应清楚表达 raw -> deploy 的投影关系。
+- 若 `segment_policy=semantic / motion`，`segment_summary.json` 中的 `allocation.final_keyframe_count` 应与 uniform 一致，且 `segment_timeseries.csv` 中 `is_relocated_keyframe=True` 的帧应与 `keyframes_meta.json` 对齐。

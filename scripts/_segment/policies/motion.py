@@ -19,7 +19,7 @@ def build_policy_plan(context):
     rules = build_fixed_budget_rules(context["kf_gap"])
 
     if len(base_indices) <= 2:
-        return build_short_plan(context, "motion_energy_v1", rules)
+        return build_short_plan(context, "motion", rules)
 
     signal_bundle = load_motion_signal_bundle(context, rules["smooth_window"])
     allocation = allocate_fixed_budget(
@@ -41,12 +41,12 @@ def build_policy_plan(context):
                 base_idx=base_idx,
                 density_value=signal_bundle["density"][final_idx] if final_idx < len(signal_bundle["density"]) else 0.0,
                 source_type="motion",
-                source_role="motion_energy_candidate",
+                source_role="motion_candidate",
             )
         )
 
     log_info(
-        "motion_energy_v1 selected: uniform_base={} relocated={} final={}".format(
+        "motion selected: uniform_base={} relocated={} final={}".format(
             len(base_indices),
             len(allocation["relocated_shifts"]),
             len(allocation["final_indices"]),
@@ -61,7 +61,7 @@ def build_policy_plan(context):
         "keyframe_indices": list(allocation["final_indices"]),
         "keyframe_items": keyframe_items,
         "summary": build_signal_summary(
-            policy_name="motion_energy_v1",
+            policy_name="motion",
             base_indices=base_indices,
             final_indices=allocation["final_indices"],
             relocated_shifts=allocation["relocated_shifts"],

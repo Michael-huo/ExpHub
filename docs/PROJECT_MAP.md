@@ -22,8 +22,8 @@
 |---|---|---|
 | `scripts/_common.py` | **全局基建** (All) | **极其重要**：负责解析 `config/platform.yaml`；提供标准日志门面 (`log_info`, `[BAR]`) |
 | `scripts/segment_make.py` | `segment` | `segment` 稳定入口，负责生成标准 segment 产物，并在 raw keyframes 之外额外写出 Wan `deploy_schedule.json` |
-| `scripts/segment_analyze.py` | `segment` 研究旁路 | 读取既有 `segment/` 产物，输出正式三策略（`uniform / sks_v1 / motion_energy_v1`）的逐帧 kinematics/allocation 分析图表，并内建 active policy + passive observer 横向对比（summary + compare 图，不改正式 keyframes） |
-| `scripts/_segment/` | `segment` (内部实现) | `api/extract/materialize/policies/research` 内聚 `segment` 的主链路与研究旁路逻辑；当前 `policies/` 只承载正式策略 `uniform / sks_v1 / motion_energy_v1`，研究侧 `research/` 负责共享信号与可视化支撑 |
+| `scripts/segment_analyze.py` | `segment` 研究旁路 | 读取既有 `segment/` 产物，输出正式三策略（`uniform / motion / semantic`）的逐帧 kinematics/allocation/projection 分析图表，并内建 active policy + passive observer 横向对比（summary + compare 图，不改正式 keyframes） |
+| `scripts/_segment/` | `segment` (内部实现) | `api/extract/materialize/policies/research` 内聚 `segment` 的主链路与研究旁路逻辑；当前 `policies/` 只承载正式策略 `uniform / motion / semantic`，并由 `uniform.py / motion.py / semantic.py` 三个正式实现入口对外服务；研究侧 `research/` 负责共享信号与可视化支撑 |
 | `scripts/prompt_gen.py` | `prompt` | 调用 VLM 生成 `manifest.json`，并将 deploy-derived execution segments 写入 `segments[*]` |
 | `scripts/infer_i2v.py` | `infer` (外壳) | 读取 execution manifest / deploy schedule，生成逐段运行计划并分发 Wan 推理 |
 | `scripts/_infer_i2v_impl.py`| `infer` (内核) | Wan2.2 实际的 float8 量化与张量推理逻辑；按逐段 `start_idx / end_idx / num_frames` 执行 |
@@ -52,4 +52,4 @@
 | `slam` | `cli.py` -> resolve phase `slam` -> `runner.run_env_python` -> `slam_droid.py` |
 | `eval` | `cli.py` -> resolve phase `slam` -> `runner.run_env_python` -> `evo_traj` / `evo_ape` (外部二进制工具) |
 | `stats` | `cli.py` -> resolve phase `prompt` -> `runner.run_env_python` -> `stats_collect.py` |
-| `all` | 依次自动串行执行上述 1~7 步；其中各阶段解释器统一来自 phase resolver |
+| `all` | 依次自动串行执行上述 1~7 步；其中 `segment` 完成后会立即尝试触发 `segment_analyze.py`，各阶段解释器统一来自 phase resolver |

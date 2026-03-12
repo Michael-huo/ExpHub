@@ -24,6 +24,11 @@ from .runner import (
     run_cmd,
     RunError,
 )
+from scripts._segment.policies.naming import (
+    OFFICIAL_POLICY_NAMES,
+    is_supported_policy_name,
+    normalize_policy_name,
+)
 
 
 _ANSI_RESET = "\033[0m"
@@ -337,8 +342,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        choices=["uniform", "sks_v1", "motion_energy_v1"],
-        help="segment keyframe policy",
+        help="segment keyframe policy: uniform | motion | semantic",
     )
     ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
@@ -381,7 +385,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
-    ap.add_argument("--skip_analyze", action="store_true", help="skip automatic post-segment analyze for --mode segment")
+    ap.add_argument(
+        "--skip_analyze",
+        action="store_true",
+        help="skip automatic post-segment analyze for --mode segment/--mode all",
+    )
 
     # SLAM sequence selection.
     # Default is "both" so that `--mode slam` runs both ori/gen unless explicitly overridden.
@@ -391,6 +399,15 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     args = ap.parse_args(argv)
     args.keep_level = normalize_keep_level(args.keep_level)
+    raw_segment_policy = str(args.segment_policy or "uniform")
+    if not is_supported_policy_name(raw_segment_policy):
+        _die(
+            "unsupported segment policy: {} (expected one of: {})".format(
+                raw_segment_policy,
+                ", ".join(OFFICIAL_POLICY_NAMES),
+            )
+        )
+    args.segment_policy = normalize_policy_name(raw_segment_policy)
 
     fps_arg = _fmt_intlike(args.fps)
 
@@ -974,7 +991,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             _run_shell_in_slam_env(cmd, check=False)
 
     def maybe_run_post_analyze() -> None:
-        if args.mode != "segment":
+        if args.mode not in ("segment", "all"):
             return
         if args.skip_analyze:
             _info("post analyze skipped: --skip_analyze")
@@ -1023,6 +1040,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             _run_step("stats", step_stats, str(ctx.stats_report_path))
         else:  # all
             _run_step("segment", step_segment, str(segment_dir))
+            maybe_run_post_analyze()
             _run_step("prompt", step_prompt, str(ctx.prompt_manifest_path))
             _run_step("infer", step_infer, str(ctx.infer_runs_plan_path))
             _run_step("merge", step_merge, str(merge_dir))
