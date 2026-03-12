@@ -81,37 +81,187 @@ def _official_y_map(rows, key):
     return {int(row["frame_idx"]): float(row.get(key, 0.0) or 0.0) for row in rows}
 
 
-def _save_official_score_overview(rows, output_path, keyframe_indices, policy_name, uniform_indices=None, keyframe_items=None):
+def _values_map(rows, values):
+    return {int(row["frame_idx"]): float(values[pos]) for pos, row in enumerate(rows)}
+
+
+def _policy_display_name(policy_name):
+    if policy_name == "sks_v1":
+        return "sks_v1 (semantic)"
+    if policy_name == "motion_energy_v1":
+        return "motion_energy_v1 (motion)"
+    return str(policy_name)
+
+
+def _save_official_score_overview(
+    rows,
+    output_path,
+    keyframe_indices,
+    policy_name,
+    uniform_indices=None,
+    keyframe_items=None,
+    comparison_payload=None,
+):
     x = [int(row["frame_idx"]) for row in rows]
-    prefix = _policy_signal_prefix(policy_name)
-    appearance = _normalize(_series(rows, "appearance_delta"))
-    motion = _normalize(_series(rows, "feature_motion"))
-    fig, ax = plt.subplots(figsize=(12, 5), dpi=140)
+    comparison_payload = dict(comparison_payload or {})
+    observer_map = dict(comparison_payload.get("observers", {}) or {})
+    uniform_points = [{"frame_idx": int(idx)} for idx in uniform_indices or []]
 
-    ax.plot(x, appearance, label="appearance_delta (norm)", linewidth=1.8, color="#1f3c88")
-    ax.plot(x, motion, label="feature_motion (norm)", linewidth=1.5, color="#8c564b", alpha=0.9)
+    if not observer_map:
+        prefix = _policy_signal_prefix(policy_name)
+        appearance = _normalize(_series(rows, "appearance_delta"))
+        motion = _normalize(_series(rows, "feature_motion"))
+        fig, ax = plt.subplots(figsize=(12, 5), dpi=140)
+        ax.plot(x, appearance, label="appearance_delta (norm)", linewidth=1.8, color="#1f3c88")
+        ax.plot(x, motion, label="feature_motion (norm)", linewidth=1.5, color="#8c564b", alpha=0.9)
+        y_key = "feature_motion"
+        if prefix:
+            density_key = "{}_density".format(prefix)
+            density = _normalize(_series(rows, density_key))
+            action = _normalize(_series(rows, "{}_action".format(prefix)))
+            ax.fill_between(x, density, color="#dcefd9", alpha=0.45, label="{}_density (norm)".format(prefix))
+            ax.plot(x, action, linewidth=1.2, color="#2a9d8f", alpha=0.95, label="{}_action (norm)".format(prefix))
+            y_key = density_key
+        y_map = _official_y_map(rows, y_key)
+        _scatter_candidates(ax, uniform_points, y_map, "#7f7f7f", "|", "uniform anchors", size=120, alpha=0.9)
+        _scatter_candidates(ax, [{"frame_idx": int(idx)} for idx in keyframe_indices], y_map, "#111111", "o", "final keyframes", size=34)
+        _keyframe_lines(ax, keyframe_indices)
+        ax.set_title("Comparison Overview")
+        ax.set_xlabel("frame_idx")
+        ax.set_ylabel("normalized magnitude")
+        ax.grid(True, alpha=0.25)
+        ax.legend(loc="upper right", fontsize=9, ncol=2)
+        fig.tight_layout()
+        fig.savefig(str(output_path))
+        plt.close(fig)
+        return
 
-    y_key = "feature_motion"
-    if prefix:
-        density_key = "{}_density".format(prefix)
-        density = _normalize(_series(rows, density_key))
-        action = _normalize(_series(rows, "{}_action".format(prefix)))
-        ax.fill_between(x, density, color="#dcefd9", alpha=0.45, label="{}_density (norm)".format(prefix))
-        ax.plot(x, action, linewidth=1.2, color="#2a9d8f", alpha=0.95, label="{}_action (norm)".format(prefix))
-        y_key = density_key
+    fig, axes = plt.subplots(3, 1, figsize=(12, 8), dpi=145, sharex=True)
+    density_ax = axes[0]
+    action_ax = axes[1]
+    alloc_ax = axes[2]
 
-    y_map = _official_y_map(rows, y_key)
-    uniform_points, final_points, relocated_points = _official_points(keyframe_items, uniform_indices, keyframe_indices)
-    _scatter_candidates(ax, uniform_points, y_map, "#7f7f7f", "|", "uniform anchors", size=120, alpha=0.9)
-    _scatter_candidates(ax, final_points, y_map, "#111111", "o", "final keyframes", size=34)
-    _scatter_candidates(ax, relocated_points, y_map, "#ff7f0e", "D", "relocated keyframes", size=36)
-    _keyframe_lines(ax, keyframe_indices)
+    density_y_maps = {}
 
-    ax.set_title("Score Overview")
-    ax.set_xlabel("frame_idx")
-    ax.set_ylabel("normalized magnitude")
-    ax.grid(True, alpha=0.25)
-    ax.legend(loc="upper right", fontsize=9, ncol=2)
+    if policy_name in ("sks_v1", "motion_energy_v1"):
+        active_prefix = _policy_signal_prefix(policy_name)
+        observer_policy = sorted(observer_map.keys())[0]
+        observer_prefix = _policy_signal_prefix(observer_policy)
+
+        active_density = _normalize(_series(rows, "{}_density".format(active_prefix)))
+        observer_density = _normalize(_series(rows, "{}_density".format(observer_prefix)))
+        active_action = _normalize(_series(rows, "{}_action".format(active_prefix)))
+        observer_action = _normalize(_series(rows, "{}_action".format(observer_prefix)))
+
+        density_ax.plot(x, active_density, color="#1f3c88", linewidth=2.0, label="active {} density (norm)".format(_policy_display_name(policy_name)))
+        density_ax.plot(x, observer_density, color="#e76f51", linewidth=1.8, label="observer {} density (norm)".format(_policy_display_name(observer_policy)))
+        action_ax.plot(x, active_action, color="#2a9d8f", linewidth=2.0, label="active {} action (norm)".format(_policy_display_name(policy_name)))
+        action_ax.plot(x, observer_action, color="#b56576", linewidth=1.8, label="observer {} action (norm)".format(_policy_display_name(observer_policy)))
+
+        density_y_maps[policy_name] = _values_map(rows, active_density)
+        density_y_maps[observer_policy] = _values_map(rows, observer_density)
+
+        active_points = [{"frame_idx": int(idx)} for idx in keyframe_indices]
+        observer_points = [{"frame_idx": int(idx)} for idx in observer_map[observer_policy].get("keyframes", [])]
+        _scatter_candidates(density_ax, active_points, density_y_maps[policy_name], "#111111", "o", "active final keyframes", size=26)
+        _scatter_candidates(density_ax, observer_points, density_y_maps[observer_policy], "#d62728", "D", "observer final keyframes", size=28)
+        _scatter_candidates(density_ax, uniform_points, density_y_maps[policy_name], "#7f7f7f", "|", "uniform anchors", size=120, alpha=0.7)
+    else:
+        sks_points = observer_map.get("sks_v1", {}).get("keyframes", [])
+        motion_points = observer_map.get("motion_energy_v1", {}).get("keyframes", [])
+        semantic_density = _normalize(_series(rows, "semantic_density"))
+        motion_density = _normalize(_series(rows, "motion_density"))
+        semantic_action = _normalize(_series(rows, "semantic_action"))
+        motion_action = _normalize(_series(rows, "motion_action"))
+
+        density_ax.plot(x, semantic_density, color="#1f3c88", linewidth=2.0, label="observer sks_v1 density (norm)")
+        density_ax.plot(x, motion_density, color="#e76f51", linewidth=1.8, label="observer motion_energy_v1 density (norm)")
+        action_ax.plot(x, semantic_action, color="#2a9d8f", linewidth=2.0, label="observer sks_v1 action (norm)")
+        action_ax.plot(x, motion_action, color="#b56576", linewidth=1.8, label="observer motion_energy_v1 action (norm)")
+
+        density_y_maps["sks_v1"] = _values_map(rows, semantic_density)
+        density_y_maps["motion_energy_v1"] = _values_map(rows, motion_density)
+
+        _scatter_candidates(density_ax, [{"frame_idx": int(idx)} for idx in sks_points], density_y_maps["sks_v1"], "#111111", "o", "observer sks_v1 keyframes", size=26)
+        _scatter_candidates(density_ax, [{"frame_idx": int(idx)} for idx in motion_points], density_y_maps["motion_energy_v1"], "#d62728", "D", "observer motion keyframes", size=28)
+        _scatter_candidates(density_ax, uniform_points, density_y_maps["sks_v1"], "#7f7f7f", "|", "active uniform anchors", size=120, alpha=0.7)
+
+    density_ax.set_ylabel("density (norm)")
+    density_ax.grid(True, alpha=0.25)
+    density_ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+    action_ax.set_ylabel("action (norm)")
+    action_ax.grid(True, alpha=0.25)
+    action_ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+    if uniform_points:
+        alloc_ax.scatter(
+            [int(item["frame_idx"]) for item in uniform_points],
+            [1.0 for _ in uniform_points],
+            color="#7f7f7f",
+            marker="|",
+            s=120,
+            label="uniform anchors",
+        )
+
+    if policy_name in ("sks_v1", "motion_energy_v1"):
+        alloc_ax.scatter(
+            [int(idx) for idx in keyframe_indices],
+            [0.68 for _ in keyframe_indices],
+            color="#111111",
+            marker="o",
+            s=22,
+            label="active final keyframes",
+        )
+        observer_policy = sorted(observer_map.keys())[0]
+        observer_points = observer_map[observer_policy].get("keyframes", [])
+        alloc_ax.scatter(
+            [int(idx) for idx in observer_points],
+            [0.32 for _ in observer_points],
+            color="#d62728",
+            marker="D",
+            s=24,
+            label="observer final keyframes",
+        )
+        alloc_ax.set_yticks([0.32, 0.68, 1.0])
+        alloc_ax.set_yticklabels(["observer", "active", "uniform"])
+    else:
+        sks_points = observer_map.get("sks_v1", {}).get("keyframes", [])
+        motion_points = observer_map.get("motion_energy_v1", {}).get("keyframes", [])
+        alloc_ax.scatter(
+            [int(idx) for idx in keyframe_indices],
+            [0.82 for _ in keyframe_indices],
+            color="#111111",
+            marker="o",
+            s=20,
+            label="active uniform final",
+        )
+        alloc_ax.scatter(
+            [int(idx) for idx in sks_points],
+            [0.52 for _ in sks_points],
+            color="#1f3c88",
+            marker="D",
+            s=24,
+            label="observer sks_v1 final",
+        )
+        alloc_ax.scatter(
+            [int(idx) for idx in motion_points],
+            [0.22 for _ in motion_points],
+            color="#e76f51",
+            marker="s",
+            s=22,
+            label="observer motion final",
+        )
+        alloc_ax.set_yticks([0.22, 0.52, 0.82, 1.0])
+        alloc_ax.set_yticklabels(["motion", "sks_v1", "active", "uniform"])
+
+    alloc_ax.set_ylim(0.05, 1.1)
+    alloc_ax.set_xlabel("frame_idx")
+    alloc_ax.set_ylabel("allocation")
+    alloc_ax.grid(True, alpha=0.2)
+    alloc_ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+    fig.suptitle("Comparison Overview", fontsize=13)
     fig.tight_layout()
     fig.savefig(str(output_path))
     plt.close(fig)
@@ -283,9 +433,26 @@ def _save_official_semantic_overview(rows, output_path, keyframe_indices, policy
     plt.close(fig)
 
 
-def save_score_overview(rows, output_path, keyframe_indices, selected_candidates=None, policy_name="", uniform_indices=None, keyframe_items=None):
+def save_score_overview(
+    rows,
+    output_path,
+    keyframe_indices,
+    selected_candidates=None,
+    policy_name="",
+    uniform_indices=None,
+    keyframe_items=None,
+    comparison_payload=None,
+):
     if _official_mode(policy_name, uniform_indices, keyframe_items):
-        _save_official_score_overview(rows, output_path, keyframe_indices, policy_name, uniform_indices, keyframe_items)
+        _save_official_score_overview(
+            rows,
+            output_path,
+            keyframe_indices,
+            policy_name,
+            uniform_indices,
+            keyframe_items,
+            comparison_payload,
+        )
         return
 
     x = [int(row["frame_idx"]) for row in rows]

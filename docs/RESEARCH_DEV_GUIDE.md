@@ -140,7 +140,7 @@ segment → prompt → infer → merge → slam → eval → stats
 - `prompt` 已接入基于 Qwen 的图像到文本流程；
 - `infer` 已接入基于 Wan2.2 的图像与文本到视频流程；
 - 下游 `slam / eval / stats` 已可用于验证几何一致性、统计压缩率与汇总实验信息；
-- 已新增 `segment_analyze.py` 研究旁路，可对既有 `segment/` 产物输出正式三策略的逐帧 kinematics/allocation 分析；当前 `--mode segment` 在成功后会默认自动触发该分析旁路（可用 `--skip_analyze` 关闭），并将研究输出收敛为 `analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png` 五个核心产物，其中主图语义已从 legacy role 转向 kinematics / allocation；
+- 已新增 `segment_analyze.py` 研究旁路，可对既有 `segment/` 产物输出正式三策略的逐帧 kinematics/allocation 分析；当前 `--mode segment` 在成功后会默认自动触发该分析旁路（可用 `--skip_analyze` 关闭），并将研究输出收敛为 `analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png` 五个核心产物，其中主图语义已从 legacy role 转向 kinematics / allocation；同时正式 analyze 已内建 active policy + passive observer 横向对比：`sks_v1 ↔ motion_energy_v1` 默认互为 observer，`uniform` 同时观测两者，对比结果仅写 analyze summary 与 compare 图，不进入 prompt / infer / merge / slam 主链路；
 - 各阶段与全流程耗时统计已纳入实验平台。
 
 ### 4.2 尚未完成或尚未正式接入部分
@@ -148,7 +148,7 @@ segment → prompt → infer → merge → slam → eval → stats
 以下关键模块仍待补强：
 
 - `segment` 默认策略仍为 `uniform`；`sks_v1` 与 `motion_energy_v1` 已作为当前正式收敛对象接入，其中 `sks_v1` 代表第一版固定预算语义采样方法，`motion_energy_v1` 则提供同预算骨架下的轻量 motion baseline；两者都不代表最终最优策略；
-- `segment` 研究旁路当前正式只服务 `uniform / sks_v1 / motion_energy_v1`，并围绕 shared allocator、kinematics 密度与关键帧重定位进行分析；`semantic_guarded_v1 / semantic_guarded_v2` 保留在代码库中作为历史遗留 rule-based 版本，但不再作为 analyze 主叙事继续演进；
+- `segment` 研究旁路当前正式只服务 `uniform / sks_v1 / motion_energy_v1`，并围绕 shared allocator、kinematics 密度、observer alignment 与关键帧重定位进行分析；`semantic_guarded_v1 / semantic_guarded_v2` 保留在代码库中作为历史遗留 rule-based 版本，但不再作为 analyze 主叙事继续演进；
 - `prompt` 当前使用的语义表示仍相对基础，后续仍有较大优化空间；
 - 语义一致性评测尚未纳入标准工作流；
 - 当前生成结果是否真正“SLAM-friendly”仍需更系统的定量分析。

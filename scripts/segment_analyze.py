@@ -3,9 +3,11 @@
 """Analyze an existing segment directory without touching the main pipeline."""
 
 import argparse
+import math
 import csv
 import json
 import sys
+from bisect import bisect_left
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +20,7 @@ else:
 
 from exphub.context import ExperimentContext
 from scripts._common import ensure_dir, ensure_file, list_frames_sorted, log_info, log_prog, write_json_atomic
+from scripts._segment.policies.fixed_budget import allocate_fixed_budget, build_fixed_budget_rules
 from scripts._segment.research import (
     DEFAULT_PEAK_CONFIG,
     DEFAULT_SCORE_WEIGHTS,
@@ -49,6 +52,20 @@ LEGACY_OUTPUT_NAMES = [
 ]
 DEFAULT_SEMANTIC_CACHE_NAME = "semantic_embeddings.npz"
 OFFICIAL_POLICY_NAMES = ("uniform", "sks_v1", "motion_energy_v1")
+SINGLE_OBSERVER_MAP = {
+    "sks_v1": ["motion_energy_v1"],
+    "motion_energy_v1": ["sks_v1"],
+    "uniform": ["sks_v1", "motion_energy_v1"],
+}
+FIXED_BUDGET_RULE_KEYS = (
+    "relocate_radius",
+    "min_gap",
+    "snap_radius",
+    "density_eps",
+    "density_alpha",
+    "density_beta",
+    "smooth_window",
+)
 
 
 def build_arg_parser():
@@ -345,6 +362,364 @@ def _signal_prefix(policy_name):
     return ""
 
 
+def _observer_policies(policy_name):
+    return list(SINGLE_OBSERVER_MAP.get(str(policy_name), []))
+
+
+def _needed_signal_policies(policy_name):
+    names = set(_observer_policies(policy_name))
+    if policy_name in ("sks_v1", "motion_energy_v1"):
+        names.add(str(policy_name))
+    return names
+
+
+def _used_frame_count(keyframes_meta, total_rows):
+    value = int(keyframes_meta.get("frame_count_used", 0) or 0)
+    if value <= 0:
+        return int(total_rows)
+    return int(min(value, int(total_rows)))
+
+
+def _used_rows(rows, keyframes_meta):
+    return list(rows[:_used_frame_count(keyframes_meta, len(rows))])
+
+
+def _mean(values):
+    if not values:
+        return 0.0
+    return float(sum(float(v) for v in values) / float(len(values)))
+
+
+def _max(values):
+    if not values:
+        return 0.0
+    return float(max(float(v) for v in values))
+
+
+def _series(rows, key):
+    return [float(row.get(key, 0.0) or 0.0) for row in rows]
+
+
+def _rankdata(values):
+    indexed = [(float(value), idx) for idx, value in enumerate(values)]
+    indexed.sort(key=lambda item: (item[0], item[1]))
+    ranks = [0.0 for _ in indexed]
+    pos = 0
+    while pos < len(indexed):
+        end = pos + 1
+        while end < len(indexed) and indexed[end][0] == indexed[pos][0]:
+            end += 1
+        avg_rank = (float(pos + 1) + float(end)) / 2.0
+        for cur in range(pos, end):
+            ranks[indexed[cur][1]] = float(avg_rank)
+        pos = end
+    return ranks
+
+
+def _pearson(values_a, values_b):
+    if not values_a or not values_b:
+        return 0.0
+    count = min(len(values_a), len(values_b))
+    if count < 2:
+        return 0.0
+    xs = [float(values_a[idx]) for idx in range(count)]
+    ys = [float(values_b[idx]) for idx in range(count)]
+    mean_x = _mean(xs)
+    mean_y = _mean(ys)
+    num = 0.0
+    den_x = 0.0
+    den_y = 0.0
+    for idx in range(count):
+        dx = float(xs[idx] - mean_x)
+        dy = float(ys[idx] - mean_y)
+        num += dx * dy
+        den_x += dx * dx
+        den_y += dy * dy
+    denom = math.sqrt(max(den_x, 0.0) * max(den_y, 0.0))
+    if denom <= 1e-12:
+        return 0.0
+    return float(num / denom)
+
+
+def _spearman(values_a, values_b):
+    if not values_a or not values_b:
+        return 0.0
+    count = min(len(values_a), len(values_b))
+    if count < 2:
+        return 0.0
+    return float(_pearson(_rankdata(values_a[:count]), _rankdata(values_b[:count])))
+
+
+def _lagged_pair(values_a, values_b, lag):
+    lag = int(lag)
+    if lag > 0:
+        if lag >= len(values_a) or lag >= len(values_b):
+            return [], []
+        return values_a[:-lag], values_b[lag:]
+    if lag < 0:
+        lag_abs = abs(lag)
+        if lag_abs >= len(values_a) or lag_abs >= len(values_b):
+            return [], []
+        return values_a[lag_abs:], values_b[:-lag_abs]
+    return list(values_a), list(values_b)
+
+
+def _best_lagged_density_corr(values_a, values_b, max_abs_lag):
+    best_lag = 0
+    best_corr = -1e9
+    for lag in range(-int(max_abs_lag), int(max_abs_lag) + 1):
+        left, right = _lagged_pair(values_a, values_b, lag)
+        corr = _pearson(left, right)
+        if corr > best_corr:
+            best_corr = float(corr)
+            best_lag = int(lag)
+    if best_corr < -1e8:
+        best_corr = 0.0
+    return int(best_lag), float(best_corr)
+
+
+def _nearest_distance(value, sorted_values):
+    if not sorted_values:
+        return 0.0
+    pos = bisect_left(sorted_values, int(value))
+    best = None
+    if pos < len(sorted_values):
+        best = abs(int(sorted_values[pos]) - int(value))
+    if pos > 0:
+        cand = abs(int(sorted_values[pos - 1]) - int(value))
+        if best is None or cand < best:
+            best = cand
+    return float(best or 0.0)
+
+
+def _direction(value):
+    value = int(value)
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
+
+
+def _signed_anchor_shifts(base_indices, final_indices):
+    count = min(len(base_indices), len(final_indices))
+    shifts = []
+    for idx in range(count):
+        shifts.append(int(final_indices[idx]) - int(base_indices[idx]))
+    return shifts
+
+
+def _allocation_alignment(active_indices, observer_indices, base_indices):
+    active_sorted = sorted(int(idx) for idx in active_indices)
+    observer_sorted = sorted(int(idx) for idx in observer_indices)
+    if not active_sorted:
+        return {
+            "exact_overlap_ratio": 0.0,
+            "tolerance_overlap_ratio_at_3": 0.0,
+            "mean_nearest_keyframe_distance": 0.0,
+            "anchor_shift_corr": 0.0,
+            "anchor_shift_direction_agreement": 0.0,
+        }
+
+    overlap_count = 0
+    tolerance_hits = 0
+    nearest_distances = []
+    observer_set = set(observer_sorted)
+    for frame_idx in active_sorted:
+        if frame_idx in observer_set:
+            overlap_count += 1
+        distance = _nearest_distance(frame_idx, observer_sorted)
+        nearest_distances.append(float(distance))
+        if distance <= 3.0:
+            tolerance_hits += 1
+
+    active_shifts = _signed_anchor_shifts(base_indices, active_sorted)
+    observer_shifts = _signed_anchor_shifts(base_indices, observer_sorted)
+    directional_hits = 0
+    directional_total = 0
+    for idx in range(min(len(active_shifts), len(observer_shifts))):
+        left_dir = _direction(active_shifts[idx])
+        right_dir = _direction(observer_shifts[idx])
+        if left_dir == 0 and right_dir == 0:
+            continue
+        directional_total += 1
+        if left_dir == right_dir:
+            directional_hits += 1
+
+    if directional_total <= 0:
+        direction_agreement = 1.0
+    else:
+        direction_agreement = float(directional_hits) / float(directional_total)
+
+    return {
+        "exact_overlap_ratio": float(overlap_count) / float(len(active_sorted)),
+        "tolerance_overlap_ratio_at_3": float(tolerance_hits) / float(len(active_sorted)),
+        "mean_nearest_keyframe_distance": float(_mean(nearest_distances)),
+        "anchor_shift_corr": float(_pearson(active_shifts, observer_shifts)),
+        "anchor_shift_direction_agreement": float(direction_agreement),
+    }
+
+
+def _signal_alignment(active_bundle, observer_bundle):
+    best_lag, lagged_corr = _best_lagged_density_corr(
+        active_bundle["density"],
+        observer_bundle["density"],
+        3,
+    )
+    return {
+        "density_pearson": float(_pearson(active_bundle["density"], observer_bundle["density"])),
+        "density_spearman": float(_spearman(active_bundle["density"], observer_bundle["density"])),
+        "action_pearson": float(_pearson(active_bundle["action"], observer_bundle["action"])),
+        "action_spearman": float(_spearman(active_bundle["action"], observer_bundle["action"])),
+        "best_lag": int(best_lag),
+        "lagged_density_corr": float(lagged_corr),
+    }
+
+
+def _observer_summary(policy_name, signal_bundle, final_indices):
+    prefix = _signal_prefix(policy_name)
+    base_indices = list(signal_bundle.get("base_indices", []))
+    shifts = _signed_anchor_shifts(base_indices, final_indices)
+    relocated_shifts = [abs(int(shift)) for shift in shifts if int(shift) != 0]
+    summary = {
+        "policy_name": str(policy_name),
+        "signal_prefix": str(prefix),
+        "uniform_base_count": int(len(base_indices)),
+        "final_keyframe_count": int(len(final_indices)),
+        "observer_final_indices": list(int(idx) for idx in final_indices),
+        "observer_relocated_count": int(len(relocated_shifts)),
+        "observer_avg_abs_shift": float(_mean(relocated_shifts)),
+        "observer_max_abs_shift": int(max(relocated_shifts) if relocated_shifts else 0),
+    }
+    if prefix:
+        summary["{}_density_mean".format(prefix)] = float(_mean(signal_bundle["density"]))
+        summary["{}_density_max".format(prefix)] = float(_max(signal_bundle["density"]))
+        summary["{}_action_total".format(prefix)] = float(signal_bundle["action"][-1]) if signal_bundle["action"] else 0.0
+    return summary
+
+
+def _resolve_semantic_cache_dir_for_policy(segment_dir, keyframes_meta, policy_name):
+    policy_name = str(policy_name or "").strip()
+    active_policy_name = str(keyframes_meta.get("policy_name", "") or "").strip()
+    if policy_name and policy_name == active_policy_name:
+        return _resolve_semantic_cache_dir(segment_dir, keyframes_meta)
+    if policy_name:
+        return segment_dir / ".segment_cache" / policy_name
+    return segment_dir / ".segment_cache" / "segment_analyze"
+
+
+def _allocator_rules(keyframes_meta):
+    kf_gap = int(keyframes_meta.get("kf_gap", 1) or 1)
+    rules = build_fixed_budget_rules(kf_gap)
+    stored_rules = dict((keyframes_meta.get("policy_meta", {}) or {}).get("rules", {}) or {})
+    for key in FIXED_BUDGET_RULE_KEYS:
+        value = stored_rules.get(key)
+        if isinstance(value, (int, float)):
+            if key in ("relocate_radius", "min_gap", "snap_radius", "smooth_window"):
+                rules[key] = int(value)
+            else:
+                rules[key] = float(value)
+    return rules
+
+
+def _signal_bundle_from_rows(rows, keyframes_meta, policy_name, meta):
+    prefix = _signal_prefix(policy_name)
+    used_rows = _used_rows(rows, keyframes_meta)
+    return {
+        "policy_name": str(policy_name),
+        "prefix": str(prefix),
+        "meta": dict(meta or {}),
+        "base_indices": list(_resolve_keyframe_sets(keyframes_meta)[0]),
+        "rows": list(used_rows),
+        "density": _series(used_rows, "{}_density".format(prefix)),
+        "action": _series(used_rows, "{}_action".format(prefix)),
+        "displacement": _series(used_rows, "{}_displacement".format(prefix)),
+        "velocity": _series(used_rows, "{}_velocity".format(prefix)),
+        "velocity_smooth": _series(used_rows, "{}_velocity_smooth".format(prefix)),
+        "acceleration": _series(used_rows, "{}_acceleration".format(prefix)),
+        "acceleration_smooth": _series(used_rows, "{}_acceleration_smooth".format(prefix)),
+    }
+
+
+def _active_allocation_summary(keyframes_meta):
+    base_indices, final_indices, _uniform_set, final_set = _resolve_keyframe_sets(keyframes_meta)
+    shift_values = _signed_anchor_shifts(base_indices, final_indices)
+    relocated_shifts = [abs(int(shift)) for shift in shift_values if int(shift) != 0]
+    selected_order_map = {}
+    for pos, frame_idx in enumerate(final_indices):
+        selected_order_map[int(frame_idx)] = int(pos)
+    return {
+        "policy_name": str(_policy_name(keyframes_meta)),
+        "base_indices": list(base_indices),
+        "final_indices": list(final_indices),
+        "final_set": set(final_set),
+        "selected_order_map": selected_order_map,
+        "shift_values": list(shift_values),
+        "relocated_count": int(len(relocated_shifts)),
+        "avg_abs_shift": float(_mean(relocated_shifts)),
+        "max_abs_shift": int(max(relocated_shifts) if relocated_shifts else 0),
+    }
+
+
+def _observer_allocation(signal_bundle, keyframes_meta, rules):
+    base_indices = list(signal_bundle.get("base_indices", []))
+    if not base_indices:
+        return {
+            "policy_name": str(signal_bundle.get("policy_name", "")),
+            "final_indices": [],
+            "final_set": set(),
+            "selected_order_map": {},
+            "shift_values": [],
+            "relocated_count": 0,
+            "avg_abs_shift": 0.0,
+            "max_abs_shift": 0,
+        }
+
+    if len(base_indices) <= 2:
+        final_indices = list(base_indices)
+    else:
+        allocation = allocate_fixed_budget(
+            base_indices=base_indices,
+            used_last_idx=max(0, _used_frame_count(keyframes_meta, len(signal_bundle.get("rows", []))) - 1),
+            density_values=signal_bundle["density"],
+            action_values=signal_bundle["action"],
+            rules=rules,
+        )
+        final_indices = list(allocation["final_indices"])
+
+    shift_values = _signed_anchor_shifts(base_indices, final_indices)
+    relocated_shifts = [abs(int(shift)) for shift in shift_values if int(shift) != 0]
+    selected_order_map = {}
+    for pos, frame_idx in enumerate(final_indices):
+        selected_order_map[int(frame_idx)] = int(pos)
+    return {
+        "policy_name": str(signal_bundle.get("policy_name", "")),
+        "final_indices": list(final_indices),
+        "final_set": set(int(idx) for idx in final_indices),
+        "selected_order_map": selected_order_map,
+        "shift_values": list(shift_values),
+        "relocated_count": int(len(relocated_shifts)),
+        "avg_abs_shift": float(_mean(relocated_shifts)),
+        "max_abs_shift": int(max(relocated_shifts) if relocated_shifts else 0),
+    }
+
+
+def _build_comparison_payload(active_policy, active_allocation, observer_entries):
+    payload = {
+        "active_policy": str(active_policy),
+        "active_keyframes": list(active_allocation["final_indices"]),
+        "uniform_indices": list(active_allocation["base_indices"]),
+        "observers": {},
+    }
+    for policy_name, entry in observer_entries.items():
+        payload["observers"][policy_name] = {
+            "policy_name": str(policy_name),
+            "signal_prefix": str(_signal_prefix(policy_name)),
+            "keyframes": list(entry["allocation"]["final_indices"]),
+        }
+    return payload
+
+
 def _keyframe_maps(keyframes_meta):
     uniform_indices, final_indices, uniform_set, final_set = _resolve_keyframe_sets(keyframes_meta)
     uniform_anchor_idx_map = {}
@@ -373,37 +748,34 @@ def _keyframe_maps(keyframes_meta):
 
 def _official_signal_rows(data, segment_dir, keyframes_meta, smooth_window):
     policy_name = _policy_name(keyframes_meta)
-    cache_dir = _resolve_semantic_cache_dir(segment_dir, keyframes_meta)
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    needed_policies = _needed_signal_policies(policy_name)
+    semantic_rows = None
+    motion_rows = None
+    signal_meta = {}
 
-    if policy_name == "sks_v1":
-        semantic_rows, signal_meta = compute_semantic_rows(
+    if "sks_v1" in needed_policies:
+        cache_dir = _resolve_semantic_cache_dir_for_policy(segment_dir, keyframes_meta, "sks_v1")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        semantic_rows, signal_meta["semantic"] = compute_semantic_rows(
             data["frame_paths"],
             cache_dir,
             smooth_window=int(smooth_window),
             timestamps=data["timestamps"],
         )
-        rows, _signal_side_meta = compute_frame_signal_rows(
-            data["frame_paths"],
-            data["timestamps"],
-            semantic_rows=semantic_rows,
-        )
-        return rows, signal_meta
 
-    if policy_name == "motion_energy_v1":
-        motion_rows, signal_meta = compute_motion_rows(
+    if "motion_energy_v1" in needed_policies:
+        motion_rows, signal_meta["motion"] = compute_motion_rows(
             data["frame_paths"],
             smooth_window=int(smooth_window),
             timestamps=data["timestamps"],
         )
-        rows, _signal_side_meta = compute_frame_signal_rows(
-            data["frame_paths"],
-            data["timestamps"],
-            motion_rows=motion_rows,
-        )
-        return rows, signal_meta
 
-    rows, signal_meta = compute_frame_signal_rows(data["frame_paths"], data["timestamps"])
+    rows, signal_meta["frame_signals"] = compute_frame_signal_rows(
+        data["frame_paths"],
+        data["timestamps"],
+        semantic_rows=semantic_rows,
+        motion_rows=motion_rows,
+    )
     return rows, signal_meta
 
 
@@ -443,10 +815,85 @@ def _signal_summary_from_rows(rows, prefix):
     }
 
 
-def _official_csv_rows(rows, keyframes_meta):
+def _build_official_comparison(rows, keyframes_meta, signal_meta):
+    policy_name = _policy_name(keyframes_meta)
+    observer_policies = _observer_policies(policy_name)
+    active_allocation = _active_allocation_summary(keyframes_meta)
+    observer_entries = {}
+    rules = _allocator_rules(keyframes_meta)
+
+    if policy_name in ("sks_v1", "motion_energy_v1"):
+        active_prefix = _signal_prefix(policy_name)
+        active_meta = signal_meta.get(active_prefix, {})
+        active_bundle = _signal_bundle_from_rows(rows, keyframes_meta, policy_name, active_meta)
+    else:
+        active_bundle = None
+
+    for observer_policy in observer_policies:
+        observer_prefix = _signal_prefix(observer_policy)
+        observer_bundle = _signal_bundle_from_rows(
+            rows,
+            keyframes_meta,
+            observer_policy,
+            signal_meta.get(observer_prefix, {}),
+        )
+        observer_allocation = _observer_allocation(observer_bundle, keyframes_meta, rules)
+        observer_entries[str(observer_policy)] = {
+            "bundle": observer_bundle,
+            "allocation": observer_allocation,
+            "summary": _observer_summary(observer_policy, observer_bundle, observer_allocation["final_indices"]),
+        }
+
+    if policy_name == "uniform":
+        left_name = "sks_v1"
+        right_name = "motion_energy_v1"
+        left_entry = observer_entries.get(left_name)
+        right_entry = observer_entries.get(right_name)
+        comparison_block = {
+            "observers": {},
+        }
+        for observer_policy in observer_policies:
+            comparison_block["observers"][observer_policy] = {
+                "observer_summary": dict(observer_entries[observer_policy]["summary"]),
+            }
+        if left_entry is not None and right_entry is not None:
+            comparison_block["observer_pair_alignment"] = {
+                "reference_policy": str(left_name),
+                "compare_policy": str(right_name),
+                "signal_alignment": _signal_alignment(left_entry["bundle"], right_entry["bundle"]),
+                "allocation_alignment": _allocation_alignment(
+                    left_entry["allocation"]["final_indices"],
+                    right_entry["allocation"]["final_indices"],
+                    active_allocation["base_indices"],
+                ),
+            }
+    else:
+        observer_policy = observer_policies[0] if observer_policies else ""
+        observer_entry = observer_entries.get(observer_policy)
+        comparison_block = {
+            "observer_policy": str(observer_policy),
+            "signal_alignment": _signal_alignment(active_bundle, observer_entry["bundle"]) if observer_entry else {},
+            "allocation_alignment": _allocation_alignment(
+                active_allocation["final_indices"],
+                observer_entry["allocation"]["final_indices"] if observer_entry else [],
+                active_allocation["base_indices"],
+            ),
+            "observer_summary": dict(observer_entry["summary"]) if observer_entry else {},
+        }
+
+    return {
+        "active_allocation": active_allocation,
+        "observer_entries": observer_entries,
+        "summary_block": comparison_block,
+        "plot_payload": _build_comparison_payload(policy_name, active_allocation, observer_entries),
+    }
+
+
+def _official_csv_rows(rows, keyframes_meta, comparison):
     policy_name = _policy_name(keyframes_meta)
     prefix = _signal_prefix(policy_name)
     maps = _keyframe_maps(keyframes_meta)
+    observer_entries = dict(comparison.get("observer_entries", {}) or {})
     csv_rows = []
 
     for row in rows:
@@ -456,7 +903,9 @@ def _official_csv_rows(rows, keyframes_meta):
             "is_uniform_anchor": bool(frame_idx in maps["uniform_set"]),
             "is_selected_keyframe": bool(frame_idx in maps["final_set"]),
             "is_relocated_keyframe": bool(frame_idx in maps["relocated_set"]),
+            "is_active_keyframe": bool(frame_idx in maps["final_set"]),
             "selected_order": maps["selected_order_map"].get(frame_idx),
+            "active_selected_order": maps["selected_order_map"].get(frame_idx),
             "uniform_anchor_idx": maps["uniform_anchor_idx_map"].get(frame_idx),
         }
         if prefix:
@@ -467,11 +916,35 @@ def _official_csv_rows(rows, keyframes_meta):
             csv_row["{}_acceleration_smooth".format(prefix)] = float(row.get("{}_acceleration_smooth".format(prefix), 0.0) or 0.0)
             csv_row["{}_density".format(prefix)] = float(row.get("{}_density".format(prefix), 0.0) or 0.0)
             csv_row["{}_action".format(prefix)] = float(row.get("{}_action".format(prefix), 0.0) or 0.0)
+            csv_row["active_density"] = float(row.get("{}_density".format(prefix), 0.0) or 0.0)
+            csv_row["active_action"] = float(row.get("{}_action".format(prefix), 0.0) or 0.0)
+        for observer_policy, observer_entry in observer_entries.items():
+            observer_prefix = _signal_prefix(observer_policy)
+            observer_key = "observer_{}".format(observer_policy)
+            csv_row["is_{}_keyframe".format(observer_key)] = bool(
+                frame_idx in observer_entry["allocation"]["final_set"]
+            )
+            csv_row["{}_selected_order".format(observer_key)] = observer_entry["allocation"]["selected_order_map"].get(frame_idx)
+            csv_row["{}_density".format(observer_policy)] = float(
+                row.get("{}_density".format(observer_prefix), 0.0) or 0.0
+            )
+            csv_row["{}_action".format(observer_policy)] = float(
+                row.get("{}_action".format(observer_prefix), 0.0) or 0.0
+            )
+        if policy_name != "uniform" and observer_entries:
+            observer_policy = sorted(observer_entries.keys())[0]
+            observer_prefix = _signal_prefix(observer_policy)
+            csv_row["observer_policy"] = str(observer_policy)
+            csv_row["observer_density"] = float(row.get("{}_density".format(observer_prefix), 0.0) or 0.0)
+            csv_row["observer_action"] = float(row.get("{}_action".format(observer_prefix), 0.0) or 0.0)
+            csv_row["is_observer_keyframe"] = bool(
+                frame_idx in observer_entries[observer_policy]["allocation"]["final_set"]
+            )
         csv_rows.append(csv_row)
     return csv_rows
 
 
-def _official_analysis_summary(exp_dir, data, rows, keyframes_meta):
+def _official_analysis_summary(exp_dir, data, rows, keyframes_meta, comparison):
     exp_info = _experiment_info(exp_dir, data["exp_meta"], data["step_meta"])
     policy_name = _policy_name(keyframes_meta)
     prefix = _signal_prefix(policy_name)
@@ -490,6 +963,7 @@ def _official_analysis_summary(exp_dir, data, rows, keyframes_meta):
         "final_keyframe_count": int(len(keyframes_meta.get("keyframe_indices", []) or [])),
         "keyframe_bytes_sum": int(keyframes_meta.get("keyframe_bytes_sum", 0) or 0),
         "extra_kf_ratio": float(keyframe_summary.get("extra_kf_ratio", 0.0) or 0.0),
+        "comparison": comparison.get("summary_block", {}),
     }
 
     if policy_name == "uniform":
@@ -507,7 +981,7 @@ def _official_analysis_summary(exp_dir, data, rows, keyframes_meta):
     return summary
 
 
-def _official_log(signal_meta, keyframes_meta, csv_rows, analysis_dir):
+def _official_log(signal_meta, keyframes_meta, csv_rows, analysis_dir, comparison):
     policy_name = _policy_name(keyframes_meta)
     maps = _keyframe_maps(keyframes_meta)
     log_info("analysis_dir: {}".format(analysis_dir))
@@ -516,9 +990,13 @@ def _official_log(signal_meta, keyframes_meta, csv_rows, analysis_dir):
     log_info("uniform base keyframes: {}".format(len(maps["uniform_indices"])))
     log_info("final keyframes: {}".format(len(maps["final_indices"])))
     log_info("policy analyzed: {}".format(policy_name))
-    if policy_name == "sks_v1":
-        log_info("semantic cache hit: {}".format(bool(signal_meta.get("cache_hit", False))))
-        log_info("semantic cache path: {}".format(signal_meta.get("cache_path", "")))
+    observer_entries = dict(comparison.get("observer_entries", {}) or {})
+    if observer_entries:
+        log_info("observer policies: {}".format(", ".join(sorted(observer_entries.keys()))))
+    semantic_meta = dict(signal_meta.get("semantic", {}) or {})
+    if semantic_meta:
+        log_info("semantic cache hit: {}".format(bool(semantic_meta.get("cache_hit", False))))
+        log_info("semantic cache path: {}".format(semantic_meta.get("cache_path", "")))
 
 
 def _slim_rows(rows, candidate_points, keyframes_meta):
@@ -619,8 +1097,9 @@ def _run_official_analysis(exp_dir, segment_dir, analysis_dir, data, args):
     rows, signal_meta = _official_signal_rows(data, segment_dir, data["keyframes_meta"], args.smooth_window)
     maps = _keyframe_maps(data["keyframes_meta"])
     _mark_uniform_keyframes(rows, maps["uniform_indices"])
-    csv_rows = _official_csv_rows(rows, data["keyframes_meta"])
-    analysis_summary = _official_analysis_summary(exp_dir, data, rows, data["keyframes_meta"])
+    comparison = _build_official_comparison(rows, data["keyframes_meta"], signal_meta)
+    csv_rows = _official_csv_rows(rows, data["keyframes_meta"], comparison)
+    analysis_summary = _official_analysis_summary(exp_dir, data, rows, data["keyframes_meta"], comparison)
     final_keyframe_set = set(maps["final_indices"])
 
     csv_path = analysis_dir / "frame_scores.csv"
@@ -638,6 +1117,7 @@ def _run_official_analysis(exp_dir, segment_dir, analysis_dir, data, args):
         policy_name=_policy_name(data["keyframes_meta"]),
         uniform_indices=maps["uniform_indices"],
         keyframe_items=data["keyframes_meta"].get("keyframes", []),
+        comparison_payload=comparison.get("plot_payload", {}),
     )
     save_roles_overview(
         rows,
@@ -656,7 +1136,7 @@ def _run_official_analysis(exp_dir, segment_dir, analysis_dir, data, args):
         uniform_indices=maps["uniform_indices"],
     )
 
-    _official_log(signal_meta, data["keyframes_meta"], csv_rows, analysis_dir)
+    _official_log(signal_meta, data["keyframes_meta"], csv_rows, analysis_dir, comparison)
 
 
 def _run_legacy_analysis(exp_dir, segment_dir, analysis_dir, data, args):
