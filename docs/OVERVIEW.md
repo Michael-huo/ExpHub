@@ -32,6 +32,7 @@ ExpHub 将所有的执行与调度收口于 `cli.py`。
   `python -m exphub --mode doctor --dataset <ds> --sequence <seq> --tag <tag> ...`
 - **正式 `segment` 策略**：
   当前正式 analyze 与方法叙事聚焦 `uniform / sks_v1 / motion_energy_v1`；其中 `sks_v1` 与 `motion_energy_v1` 共用 fixed-budget allocation 骨架，只在输入信号上分别使用 semantic kinematics 与 motion energy kinematics。
+  每次正式 `--mode segment` 成功后触发的 analyze 现已内建 observer-based comparison：`sks_v1` 默认旁路观测 `motion_energy_v1`，`motion_energy_v1` 默认旁路观测 `sks_v1`，`uniform` 则同时观测两者；observer 结果只写 `segment/analysis/analysis_summary.json` 与 `score_overview.png`，不会改写正式 `keyframes_meta.json`。
 - **常用 `segment_policy` 示例**：
   `python -m exphub --mode segment ... --segment_policy uniform`
   `python -m exphub --mode segment ... --segment_policy sks_v1`

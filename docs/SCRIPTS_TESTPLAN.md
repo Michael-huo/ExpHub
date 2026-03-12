@@ -150,7 +150,9 @@ python scripts/segment_analyze.py \
 **最小验收：**
 - `segment/analysis/` 只保留 5 个核心产物：`analysis_summary.json / frame_scores.csv / score_overview.png / roles_overview.png / semantic_overview.png`。
 - `segment/analysis/frame_scores.csv` 已生成，且数据行数与 `segment/frames/*.png` 数量一致。
-- `segment/analysis/analysis_summary.json` 已生成；对 `uniform` 至少包含 `policy_name / uniform_base_count / final_keyframe_count / keyframe_bytes_sum / extra_kf_ratio`；对 `sks_v1 / motion_energy_v1` 还应包含 `fixed_budget / relocated_count / avg_abs_shift / max_abs_shift` 与成套 `semantic_*` 或 `motion_*` kinematics 统计。
+- `segment/analysis/analysis_summary.json` 已生成；对 `uniform` 至少包含 `policy_name / uniform_base_count / final_keyframe_count / keyframe_bytes_sum / extra_kf_ratio`，并带有 `comparison.observers.{sks_v1,motion_energy_v1}` 与 `observer_pair_alignment`；对 `sks_v1 / motion_energy_v1` 还应包含 `fixed_budget / relocated_count / avg_abs_shift / max_abs_shift` 与成套 `semantic_*` 或 `motion_*` kinematics 统计，以及 `comparison.{observer_policy,signal_alignment,allocation_alignment,observer_summary}`。
 - `segment/analysis/` 中不应再出现旧产物：`analysis_meta.json / candidate_points.json / candidate_roles_summary.json / frame_scores.json / peaks_preview.png / score_curve.png / score_curve_with_keyframes.png / candidate_points_overview.png / candidate_roles_overview.png / semantic_curve.png / semantic_vs_nonsemantic.png / semantic_embeddings.npz`。
-- 若 `segment_policy=sks_v1`，`segment/.segment_cache/sks_v1/semantic_embeddings.npz` 应生成并在 analyze 阶段复用；`uniform / motion_energy_v1` 不应额外依赖 OpenCLIP cache。
+- 若 `segment_policy=sks_v1`，`comparison.observer_policy` 应为 `motion_energy_v1`；若 `segment_policy=motion_energy_v1`，则应反向为 `sks_v1`；若 `segment_policy=uniform`，则应同时生成两条 observer 分支。
+- 若正式 analyze 需要 `sks_v1` 语义信号，`segment/.segment_cache/sks_v1/semantic_embeddings.npz` 应生成并在 analyze 阶段复用；不会写回 `segment/analysis/`。
+- `score_overview.png` 应体现 compare 角色，不再回到 legacy candidate/role 主叙事。
 - 若 `segment_policy=sks_v1 / motion_energy_v1`，`analysis_summary.json` 中的 `final_keyframe_count` 应与 uniform 一致，且 `frame_scores.csv` 中 `is_relocated_keyframe=True` 的帧应与 `keyframes_meta.json` 对齐。
