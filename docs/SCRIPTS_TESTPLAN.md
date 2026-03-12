@@ -26,8 +26,6 @@ python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_T
 - `sks_v1`
 - `motion_energy_v1`
 
-`semantic_guarded_v1 / semantic_guarded_v2` 仍保留在代码库中，但不再作为本轮正式 analyze 叙事与冒烟验收主对象。
-
 ### 3.1 `sks_v1` 单步验证
 ```bash
 python -m exphub \
@@ -89,10 +87,9 @@ python -m exphub \
 - `num_uniform_base`
 - `num_final_keyframes`
 - `extra_kf_ratio`
-- `num_boundary_relocated`
-- `num_boundary_inserted`
-- `num_support_inserted`
-- `num_promoted_support_inserted`
+- `comparison.observers.sks_v1.observer_summary`
+- `comparison.observers.motion_energy_v1.observer_summary`
+- `comparison.observer_pair_alignment`
 
 ### 3.4 `uniform / sks_v1 / motion_energy_v1` 对比
 ```bash

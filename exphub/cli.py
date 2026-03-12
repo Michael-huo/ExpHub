@@ -337,7 +337,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        choices=["uniform", "sks_v1", "motion_energy_v1", "semantic_guarded_v1", "semantic_guarded_v2"],
+        choices=["uniform", "sks_v1", "motion_energy_v1"],
         help="segment keyframe policy",
     )
     ap.add_argument("--base_idx", type=int, default=0)

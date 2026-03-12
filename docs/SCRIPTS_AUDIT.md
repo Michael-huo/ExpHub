@@ -27,8 +27,7 @@
   - `segment/keyframes/` 与 `segment/keyframes/keyframes_meta.json`：正式关键帧集合及元信息。当前正式 analyze 与方法叙事聚焦 `--segment_policy uniform / sks_v1 / motion_energy_v1`：
     - `uniform` 输出 legacy uniform 锚帧；
     - `sks_v1` 输出 “uniform 骨架 + fixed-budget allocation + semantic kinematics” 的正式硬关键帧；
-    - `motion_energy_v1` 输出 “uniform 骨架 + fixed-budget allocation + motion energy kinematics” 的正式硬关键帧；
-    - `semantic_guarded_v1 / semantic_guarded_v2` 仍保留为历史遗留 guarded refinements。
+    - `motion_energy_v1` 输出 “uniform 骨架 + fixed-budget allocation + motion energy kinematics” 的正式硬关键帧。
   - `segment/timestamps.txt`：相对时间网格。
   - `segment/calib.txt`：与 `frames/` 尺寸对齐的内参。
   - `segment/preprocess_meta.json`：裁剪、缩放与内参变换元数据。
@@ -48,24 +47,14 @@
     - 首尾关键帧固定；
     - 最终关键帧数严格等于 uniform；
     - 中间关键帧仅允许在 `uniform_base_indices` 对应邻域内移动。
-  - `semantic_guarded_v1`：先生成 uniform 骨架，再在 `segment_make.py` 进程内复用研究旁路同源逻辑，直接计算 `boundary_candidate / support_candidate / semantic_only_candidate / suppressed` 与 `rerank_score`，其中：
-    - `boundary_candidate` 可做吸附/替换/插入；
-    - `support_candidate` 只做局部补点；
-    - `semantic_only_candidate` 第一版仅保留为 soft observation，不进入硬关键帧；
-    - `suppressed` 不进入硬关键帧。
-  - `semantic_guarded_v2`：保留 v1 的 boundary 优先级与 observe-only 语义策略，并新增：
-    - 原生 `support_candidate` 按 `rerank_score / nonsemantic_support / local_prominence` 排序参与插点；
-    - 仅对 `low_prominence` 型 `suppressed` 候选开放二次晋升，晋升后统一标记为 `promoted_support_candidate`；
-    - 轻量 `burst/window` 规则可在高活动且覆盖偏稀疏的窗口内额外放行 1 个 suppressed-high；
-    - `semantic_only_candidate` 仍不进入硬关键帧集合。
 - **`keyframes_meta.json` 向后兼容扩展字段**：
   - 保留旧字段：`kf_gap`、`frame_count_total`、`frame_count_used`、`tail_drop`、`keyframe_count`、`keyframe_indices`、`keyframe_bytes_sum`。
   - 新增 `policy_name`、`uniform_base_indices`、`summary`、`keyframes`、`policy_meta`。
-  - `summary` 至少包含 `num_uniform_base / num_boundary_selected / num_support_selected / num_boundary_relocated / num_boundary_inserted / num_support_inserted / num_promoted_support_inserted / num_burst_windows_triggered / num_final_keyframes / extra_kf_ratio`；若 `policy_name=sks_v1`，还应包含 `uniform_count / final_keyframe_count / fixed_budget / relocated_count / avg_abs_shift / max_abs_shift / semantic_displacement_* / semantic_velocity_* / semantic_acceleration_* / semantic_density_* / semantic_action_total`；若 `policy_name=motion_energy_v1`，则输出完全平行的 `motion_displacement_* / motion_velocity_* / motion_acceleration_* / motion_density_* / motion_action_total`。
-  - `keyframes[*]` 额外包含 `source_type / source_role / promotion_source / promotion_reason / window_id / rerank_score / semantic_relation / is_inserted / is_relocated / replaced_uniform_index`。
+  - `summary` 至少包含 `num_uniform_base / num_final_keyframes / extra_kf_ratio`；若 `policy_name=sks_v1`，还应包含 `uniform_count / final_keyframe_count / fixed_budget / relocated_count / avg_abs_shift / max_abs_shift / semantic_displacement_* / semantic_velocity_* / semantic_acceleration_* / semantic_density_* / semantic_action_total`；若 `policy_name=motion_energy_v1`，则输出完全平行的 `motion_displacement_* / motion_velocity_* / motion_acceleration_* / motion_density_* / motion_action_total`。
+  - `keyframes[*]` 额外包含 `source_type / source_role / rerank_score / semantic_relation / is_inserted / is_relocated / replaced_uniform_index`；历史字段如 `promotion_source / promotion_reason / window_id` 若存在，仅用于被动读取旧实验产物。
 
 ### 2.2 `scripts/segment_analyze.py` (研究分析旁路)
-- **职责**：不改变主链路关键帧决策，只读取已存在的 `segment/` 结果，为正式三策略 `uniform / sks_v1 / motion_energy_v1` 提供逐帧 kinematics/allocation 分析；同时内建 active policy + passive observer compare 旁路：`sks_v1` 默认观测 `motion_energy_v1`，`motion_energy_v1` 默认观测 `sks_v1`，`uniform` 同时观测两者；observer 只写 analyze 产物，不写正式 keyframes；`semantic_guarded_v1 / semantic_guarded_v2` 仅保留历史 fallback，不再作为 analyze 主路径继续扩展。
+- **职责**：不改变主链路关键帧决策，只读取已存在的 `segment/` 结果，为正式三策略 `uniform / sks_v1 / motion_energy_v1` 提供逐帧 kinematics/allocation 分析；同时内建 active policy + passive observer compare 旁路：`sks_v1` 默认观测 `motion_energy_v1`，`motion_energy_v1` 默认观测 `sks_v1`，`uniform` 同时观测两者；observer 只写 analyze 产物，不写正式 keyframes；已移除的早期启发式策略不会再进入 analyze 主路径。
 - **调度契约**：
   - `python -m exphub --mode segment ...` 在 `segment` 成功后默认自动触发 `segment_analyze.py --exp_dir <EXP_DIR>`。
   - 若显式传入 `--skip_analyze`，则跳过该后处理。
@@ -82,7 +71,7 @@
 - **关键帧集合解释**：
   - 若 `keyframes_meta.json` 中存在 `uniform_base_indices`，研究旁路将其视为 `is_uniform_keyframe` 的基准集合。
   - `keyframe_indices` 仍表示当前 policy 输出的正式硬关键帧集合，可用于可视化最终布局。
-  - `keyframes_meta.json` 中的 `keyframes[*].source_role / promotion_source` 可用于区分 `boundary_candidate / support_candidate / promoted_support_candidate` 的最终来源。
+  - `keyframes_meta.json` 中的 `keyframes[*]` 会保留最终来源与重定位标记，供 allocation/observer 可视化复用。
 - **Outputs (写入)**：
   - `segment/analysis/analysis_summary.json`：唯一核心汇总 json。对 `uniform` 保留基础关键帧摘要，并追加 dual observer compare block；对 `sks_v1 / motion_energy_v1` 主字段明确收敛为 fixed-budget relocation 与 `semantic_*` 或 `motion_*` kinematics 统计，并追加 `comparison.{observer_policy,signal_alignment,allocation_alignment,observer_summary}`。
   - `segment/analysis/frame_scores.csv`：正式离线分析表。通用列至少包含 `frame_idx / is_uniform_anchor / is_selected_keyframe / is_relocated_keyframe`，并按 policy 追加 active density/action、observer density/action 与 observer final keyframe 标记；`uniform` 下允许同时输出 `sks_v1_*` 与 `motion_energy_v1_*` 对比列。
