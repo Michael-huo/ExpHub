@@ -28,7 +28,7 @@ ExpHub 的核心设计理念是**“调度外壳与算法核心的分离”**。
   - **子进程继承**：底层脚本（如 `infer_i2v.py`）若需拉起更底层的多卡任务（如 `torchrun`），必须使用 `sys.executable`，以确保继承当前被激活的绝对路径，彻底免疫系统的 `PATH` 环境变量污染。
 
 ## 2. 主链路生命周期 (Main Pipeline)
-ExpHub 支持通过 `--mode all` 一键贯穿，或通过具体 mode 单步执行。主链路严格遵循以下 7 大阶段的单向数据流转：
+ExpHub 支持通过 `--mode all` 一键贯穿，或通过具体 mode 单步执行。`segment` 阶段完成后，系统会在主链路外默认立即尝试一次 warn-only 的 `segment_analyze.py` 后处理；这一步不会改写 raw schedule，也不会阻断后续 `prompt / infer / merge / slam`。主链路本身仍严格遵循以下 7 大阶段的单向数据流转：
 
 1. **`segment` (切片锚定)**：读取原始数据集，按时间戳抽取关键帧，构建时间网格。
 2. **`prompt` (提示词生成)**：调用 VLM (如 Qwen2-VL) 对关键帧进行场景理解，生成基础与增量 Prompt。

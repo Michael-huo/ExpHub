@@ -24,10 +24,10 @@
 - **Inputs (读取)**：外部原始数据集。
 - **Outputs (写入)**：
   - `segment/frames/`：按规范命名（如 `000000.png`）的抽帧图像。
-  - `segment/keyframes/` 与 `segment/keyframes/keyframes_meta.json`：正式关键帧集合及元信息。当前正式 analyze 与方法叙事聚焦 `--segment_policy uniform / sks_v1 / motion_energy_v1`：
+  - `segment/keyframes/` 与 `segment/keyframes/keyframes_meta.json`：正式关键帧集合及元信息。当前正式 analyze 与方法叙事聚焦 `--segment_policy uniform / motion / semantic`：
     - `uniform` 输出 legacy uniform 锚帧；
-    - `sks_v1` 输出 “uniform 骨架 + fixed-budget allocation + semantic kinematics” 的正式硬关键帧；
-    - `motion_energy_v1` 输出 “uniform 骨架 + fixed-budget allocation + motion energy kinematics” 的正式硬关键帧。
+    - `semantic` 输出 “uniform 骨架 + fixed-budget allocation + semantic kinematics” 的正式硬关键帧；
+    - `motion` 输出 “uniform 骨架 + fixed-budget allocation + motion energy kinematics” 的正式硬关键帧。
   - `segment/timestamps.txt`：相对时间网格。
   - `segment/calib.txt`：与 `frames/` 尺寸对齐的内参。
   - `segment/preprocess_meta.json`：裁剪、缩放与内参变换元数据。
@@ -43,13 +43,13 @@
   - 当前 `wan_r4` 规则要求：首尾固定、段数不变、总跨度不变、每段 deploy gap 为 4 的倍数；若无解则 fail-fast。
 - **关键帧策略契约**：
   - `uniform`：保持旧行为，每隔 `kf_gap` 采样一个锚点。
-  - `sks_v1`：先生成 uniform 骨架，再在 `segment_make.py` 进程内复用 OpenCLIP image embedding 旁路，计算 `semantic displacement / velocity / acceleration / density / cumulative action`，并在不改变预算的前提下做局部受限重定位：
+  - `semantic`：先生成 uniform 骨架，再在 `segment_make.py` 进程内复用 OpenCLIP image embedding 旁路，计算 `semantic displacement / velocity / acceleration / density / cumulative action`，并在不改变预算的前提下做局部受限重定位：
     - 首尾关键帧固定；
     - 最终关键帧数严格等于 uniform；
     - 中间关键帧仅允许在 `uniform_base_indices` 对应邻域内移动；
     - 通过 local density peak snap 向局部语义高值吸附；
     - 不接入旧的非语义 score 作为主公式。
-  - `motion_energy_v1`：与 `sks_v1` 共用完全相同的 fixed-budget allocation 骨架，但把输入信号替换为统一尺寸帧序列上的轻量 motion energy kinematics：
+  - `motion`：与 `semantic` 共用完全相同的 fixed-budget allocation 骨架，但把输入信号替换为统一尺寸帧序列上的轻量 motion energy kinematics：
     - 先对灰度帧做 `5x5` 高斯模糊；
     - 使用相邻帧差分定义 `motion displacement`；
     - 再计算 `motion velocity / acceleration / density / cumulative action`；
@@ -59,15 +59,15 @@
 - **`keyframes_meta.json` 向后兼容扩展字段**：
   - 保留旧字段：`kf_gap`、`frame_count_total`、`frame_count_used`、`tail_drop`、`keyframe_count`、`keyframe_indices`、`keyframe_bytes_sum`。
   - 新增 `policy_name`、`uniform_base_indices`、`summary`、`keyframes`、`policy_meta`。
-  - `summary` 至少包含 `num_uniform_base / num_final_keyframes / extra_kf_ratio`；若 `policy_name=sks_v1`，还应包含 `uniform_count / final_keyframe_count / fixed_budget / relocated_count / avg_abs_shift / max_abs_shift / semantic_displacement_* / semantic_velocity_* / semantic_acceleration_* / semantic_density_* / semantic_action_total`；若 `policy_name=motion_energy_v1`，则输出完全平行的 `motion_displacement_* / motion_velocity_* / motion_acceleration_* / motion_density_* / motion_action_total`。
+  - `summary` 至少包含 `num_uniform_base / num_final_keyframes / extra_kf_ratio`；若 `policy_name=semantic`，还应包含 `uniform_count / final_keyframe_count / fixed_budget / relocated_count / avg_abs_shift / max_abs_shift / semantic_displacement_* / semantic_velocity_* / semantic_acceleration_* / semantic_density_* / semantic_action_total`；若 `policy_name=motion`，则输出完全平行的 `motion_displacement_* / motion_velocity_* / motion_acceleration_* / motion_density_* / motion_action_total`。
   - `keyframes[*]` 额外包含 `source_type / source_role / rerank_score / semantic_relation / is_inserted / is_relocated / replaced_uniform_index`；历史字段如 `promotion_source / promotion_reason / window_id` 若存在，仅用于被动读取旧实验产物。
 
 ### 2.2 `scripts/segment_analyze.py` (研究分析旁路)
-- **职责**：不改变主链路关键帧决策，只读取已存在的 `segment/` 结果，为正式三策略 `uniform / sks_v1 / motion_energy_v1` 提供逐帧 kinematics/allocation 分析；同时内建 active policy + passive observer compare 旁路：`sks_v1` 默认观测 `motion_energy_v1`，`motion_energy_v1` 默认观测 `sks_v1`，`uniform` 同时观测两者；observer 只写 analyze 产物，不写正式 keyframes；已移除的早期启发式策略不会再进入 analyze 主路径。
+- **职责**：不改变主链路关键帧决策，只读取已存在的 `segment/` 结果，为正式三策略 `uniform / motion / semantic` 提供逐帧 kinematics / allocation / projection 分析；同时内建 active policy + passive observer compare 旁路：`semantic` 默认观测 `motion`，`motion` 默认观测 `semantic`，`uniform` 同时观测两者；observer 只写 analyze 产物，不写正式 keyframes；已移除的早期启发式策略不会再进入 analyze 主路径。
 - **调度契约**：
-  - `python -m exphub --mode segment ...` 在 `segment` 成功后默认自动触发 `segment_analyze.py --exp_dir <EXP_DIR>`。
+  - `python -m exphub --mode segment ...` 与 `python -m exphub --mode all ...` 都会在 `segment` 成功后默认自动触发 `segment_analyze.py --exp_dir <EXP_DIR>`。
   - 若显式传入 `--skip_analyze`，则跳过该后处理。
-  - `--mode all` 与 `--mode doctor` 不自动触发分析旁路。
+  - `--mode doctor` 不触发分析旁路。
   - 由 `cli.py` 自动触发时，默认复用与 `segment_make.py` 相同的 `segment` phase interpreter。
   - analyze 失败只能以 WARN 形式报告，不得让 `segment` 主流程失败。
 - **配置依赖**：优先复用 `exphub/context.py` 的实验路径规则；不读取 `platform.yaml`。
@@ -82,12 +82,13 @@
   - `keyframe_indices` 仍表示当前 policy 输出的正式硬关键帧集合，可用于可视化最终布局。
   - `keyframes_meta.json` 中的 `keyframes[*]` 会保留最终来源与重定位标记，供 allocation/observer 可视化复用。
 - **Outputs (写入)**：
-  - `segment/analysis/analysis_summary.json`：唯一核心汇总 json。对 `uniform` 保留基础关键帧摘要，并追加 dual observer compare block；对 `sks_v1 / motion_energy_v1` 主字段明确收敛为 fixed-budget relocation 与 `semantic_*` 或 `motion_*` kinematics 统计，并追加 `comparison.{observer_policy,signal_alignment,allocation_alignment,observer_summary}`。
-  - `segment/analysis/frame_scores.csv`：正式离线分析表。通用列至少包含 `frame_idx / is_uniform_anchor / is_selected_keyframe / is_relocated_keyframe`，并按 policy 追加 active density/action、observer density/action 与 observer final keyframe 标记；`uniform` 下允许同时输出 `sks_v1_*` 与 `motion_energy_v1_*` 对比列。
-  - `segment/analysis/score_overview.png`：正式 compare overview，主用于表达 active vs observer（或 `uniform` 下 observer vs observer）的 density / action / allocation 横向对比。
-  - `segment/analysis/roles_overview.png`：文件名保留，但对正式策略实际表达 allocation overview，不再围绕 legacy role 讲 `boundary/support/promoted` 叙事。
-  - `segment/analysis/semantic_overview.png`：文件名保留，作为正式主图按 policy 自适应展示 semantic 或 motion kinematics，并叠加 uniform anchors / relocated keyframes / final keyframes。
-  - `segment/.segment_cache/<policy>/semantic_embeddings.npz`：当 active 或 observer 需要 `sks_v1` 语义信号时，analyze 复用/写入对应的 policy cache；不会再写入 `analysis/`。
+  - `segment/analysis/segment_summary.json`：正式摘要文件。至少组织 `allocation / alignment / projection / signals` 四类叙事；对 `uniform` 保留双 observer compare block，对 `motion / semantic` 追加 active-vs-observer alignment。
+  - `segment/analysis/segment_timeseries.csv`：正式离线分析表。通用列至少包含 `frame_idx / is_uniform_anchor / is_selected_keyframe / is_relocated_keyframe`，并按 policy 追加 active density/action、observer density/action，以及 raw/deploy boundary 的最小 projection 列。
+  - `segment/analysis/comparison_overview.png`：正式 compare overview，主用于表达 active vs observer（或 `uniform` 下 observer vs observer）的 density / action / allocation 横向对比。
+  - `segment/analysis/allocation_overview.png`：正式 allocation overview，回答 fixed-budget relocation 如何把 uniform anchors 迁移到最终关键帧。
+  - `segment/analysis/kinematics_overview.png`：正式主图，按 policy 自适应展示 semantic 或 motion kinematics，并叠加 uniform anchors / relocated keyframes / final keyframes。
+  - `segment/analysis/projection_overview.png`：正式 projection 图，回答 raw schedule -> deploy schedule 的投影位移与 gap 误差。
+  - `segment/.segment_cache/<policy>/semantic_embeddings.npz`：当 active 或 observer 需要 `semantic` 语义信号时，analyze 复用/写入对应的 policy cache；不会再写入 `analysis/`。
 
 ### 2.3 `scripts/prompt_gen.py` (提示词生成)
 - **职责**：调用 VLM 模型，对 `segment` 提取的关键帧进行理解，生成用于下游视频生成的提示词清单。
