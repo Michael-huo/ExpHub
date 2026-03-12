@@ -21,10 +21,17 @@ ExpHub 严格定义了不可逆的 7 大单向数据流转阶段：
 - **命名规则**：`{tag}_{w}x{h}_t{start}s_dur{dur}s_fps{fps}_gap{kf_gap}`
 - **不可妥协的核心产物（必须存在）**：
   - `segment/frames/` (抽取的基础关键帧)
+  - `segment/keyframes/keyframes_meta.json` (raw schedule，研究层 canonical source-of-truth)
+  - `segment/deploy_schedule.json` (Wan r4 deploy schedule，backend-specific 时间网投影)
   - `prompt/manifest.json` (驱动生成的提示词清单)
   - `merge/frames/` (最终用于 SLAM 的长序列图像)
   - `slam/<track>/traj_est.tum` (输出的位姿估计轨迹)
   - `stats/report.json` (最终的全局性能评估与耗时统计)
+
+当前 `segment -> prompt -> infer -> merge` 的时间计划已区分为三层：
+- `raw schedule`：仅由 `segment/keyframes/keyframes_meta.json` 表达，保留正式关键帧的研究事实。
+- `deploy schedule`：由 `segment/deploy_schedule.json` 表达，当前第一版只实现 `wan_r4`，要求首尾固定、段数不变、每段 gap 为 4 的倍数、总跨度守恒。
+- `execution manifest`：复用 `prompt/manifest.json` 的 `segments[*]`，下游 `prompt / infer / merge` 直接消费其中的 `start_idx / end_idx / num_frames`，不再自行按全局固定 `kf_gap` 重算边界。
 
 ## 4. 常用调度指令
 ExpHub 将所有的执行与调度收口于 `cli.py`。

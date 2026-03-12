@@ -37,6 +37,7 @@ from pathlib import Path
 import ctypes
 import ctypes.util
 from _common import get_platform_config
+from _schedule import extract_execution_segments_from_manifest
 
 
 # NOTE: ExpHub version relies on PYTHONPATH pointing to VideoX-Fun repo root for importing `videox_fun`.
@@ -309,7 +310,14 @@ def _load_prompt_manifest(path: str) -> dict:
             dp = str(it.get("delta_prompt", "") or "").strip()
             dn = str(it.get("delta_neg_prompt", "") or "").strip()
             seg_map[seg] = {"delta_prompt": dp, "delta_neg_prompt": dn}
-    return {"version": 1, "base_prompt": base, "base_neg_prompt": base_neg, "segments": seg_map, "_raw": m}
+    return {
+        "version": 1,
+        "base_prompt": base,
+        "base_neg_prompt": base_neg,
+        "segments": seg_map,
+        "execution_segments": extract_execution_segments_from_manifest(m),
+        "_raw": m,
+    }
 
 def _resolve_prompts(manifest: dict, nseg: int) -> list:
     base = manifest["base_prompt"]
@@ -340,6 +348,31 @@ def _resolve_prompts(manifest: dict, nseg: int) -> list:
             "final_neg_prompt": final_n,
             "prompt_hash8": ph,
             "has_delta": bool(dp or dn),
+        })
+    return out
+
+
+def _legacy_batch_execution_segments(base_idx: int, stride: int, num_segments: int) -> list:
+    if stride <= 0:
+        raise ValueError("legacy batch stride must be > 0")
+    out = []
+    for seg in range(int(num_segments)):
+        start_idx = int(base_idx + seg * stride)
+        end_idx = int(start_idx + stride)
+        out.append({
+            "seg": int(seg),
+            "segment_id": int(seg),
+            "schedule_source": "legacy_kf_gap",
+            "execution_backend": "legacy_uniform",
+            "raw_start_idx": int(start_idx),
+            "raw_end_idx": int(end_idx),
+            "deploy_start_idx": int(start_idx),
+            "deploy_end_idx": int(end_idx),
+            "start_idx": int(start_idx),
+            "end_idx": int(end_idx),
+            "raw_gap": int(stride),
+            "deploy_gap": int(stride),
+            "num_frames": int(stride + 1),
         })
     return out
 
@@ -381,9 +414,10 @@ else:
 # - batch mode (ExpHub keyframe interpolation): video_length is driven by keyframe gap,
 #   to keep the time-grid/indices well-defined and avoid "fps" semantic ambiguity.
 if args.batch:
-    if int(args.kf_gap) <= 0:
-        raise SystemExit('[ERR] --kf_gap is required in --batch mode (keyframe interpolation)')
-    video_length = int(args.kf_gap) + 1
+    if int(args.kf_gap) > 0:
+        video_length = int(args.kf_gap) + 1
+    else:
+        video_length = max(1, int(round(float(fps) * float(args.segment_seconds))))
 else:
     video_length = max(1, int(round(float(fps) * float(args.segment_seconds))))
 
@@ -488,9 +522,32 @@ manifest_canon = _canonical_json(_manifest_loaded["_raw"])
 manifest_digest8 = _sha1_hex(manifest_canon)[:8]
 _write_text_atomic(str(PROMPTS_DIR / "digest.txt"), manifest_digest8 + "\n")
 
-# resolve per segment (batch: num_segments; single: 1)
-_resolve_nseg = int(args.num_segments) if args.batch else 1
+# resolve execution segments first so prompts and run plan use the same segment list
+batch_execution_segments = []
+execution_schedule_source = str(_manifest_loaded.get("_raw", {}).get("schedule_source", "") or "")
+execution_backend = str(_manifest_loaded.get("_raw", {}).get("execution_backend", "") or "")
+if args.batch:
+    batch_execution_segments = list(_manifest_loaded.get("execution_segments") or [])
+    if batch_execution_segments:
+        if execution_schedule_source == "":
+            execution_schedule_source = "prompt_manifest"
+        if execution_backend == "":
+            execution_backend = "wan_r4"
+    else:
+        if int(args.kf_gap) <= 0:
+            raise SystemExit('[ERR] --kf_gap is required in --batch mode when prompt manifest has no execution segments')
+        if int(args.num_segments) <= 0:
+            raise SystemExit('[ERR] --num_segments must be > 0 in batch mode when prompt manifest has no execution segments')
+        batch_execution_segments = _legacy_batch_execution_segments(int(args.base_idx), int(args.kf_gap), int(args.num_segments))
+        execution_schedule_source = "legacy_kf_gap"
+        execution_backend = "legacy_uniform"
+
+# resolve per segment (batch: execution plan length; single: 1)
+_resolve_nseg = int(len(batch_execution_segments)) if args.batch else 1
 resolved_prompts = _resolve_prompts(_manifest_loaded, _resolve_nseg)
+
+if args.batch and batch_execution_segments:
+    video_length = max([int(seg.get("num_frames", 1)) for seg in batch_execution_segments])
 
 # save resolved for reproducibility (rank0 only)
 if os.environ.get("RANK", "0") == "0":
@@ -754,6 +811,15 @@ r = int(getattr(vae.config, "temporal_compression_ratio", 1))
 video_length = int((video_length - 1) // r * r) + 1 if video_length != 1 else 1
 video_length_run = video_length
 latent_frames = (video_length - 1) // r + 1
+current_video_length_desired = int(video_length_desired)
+current_video_length_run = int(video_length_run)
+
+
+def _align_video_length_for_segment(desired_length: int):
+    desired = max(1, int(desired_length))
+    run = int((desired - 1) // r * r) + 1 if desired != 1 else 1
+    latent = (run - 1) // r + 1
+    return int(desired), int(run), int(latent)
 
 if enable_riflex:
     with torch.no_grad():
@@ -772,14 +838,20 @@ def _frame_path(frames_dir: str, idx: int) -> str:
     return os.path.join(frames_dir, f"{idx:06d}.png")
 
 
-def run_one_segment(start_path: str, end_path: str, seg_seed: int) -> float:
+def run_one_segment(start_path: str, end_path: str, seg_seed: int, desired_num_frames: int = None) -> float:
     """Run one i2v segment in the current process (no re-init / no re-quant)."""
     global validation_image_start, validation_image_end, generator, sample, start_time, end_time, seed
+    global current_video_length_desired, current_video_length_run
 
     validation_image_start = start_path
     validation_image_end = end_path
     seed = int(seg_seed)
     generator = torch.Generator(device=device).manual_seed(seed)
+    if desired_num_frames is None:
+        current_video_length_desired = int(video_length_desired if "video_length_desired" in globals() else video_length)
+        current_video_length_run = int(video_length_run if "video_length_run" in globals() else video_length)
+    else:
+        current_video_length_desired, current_video_length_run, _latent = _align_video_length_for_segment(int(desired_num_frames))
 
     with torch.no_grad():
         start_img = Image.open(validation_image_start).convert("RGB")
@@ -787,20 +859,20 @@ def run_one_segment(start_path: str, end_path: str, seg_seed: int) -> float:
         input_video, input_video_mask, _clip_image = get_image_to_video_latent(
             [start_img],
             [end_img],
-            video_length=video_length,
+            video_length=current_video_length_run,
             sample_size=sample_size,
         )
 
         rprint(
             f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [INFERENCE] Start seg "
             f"s={os.path.basename(validation_image_start)} e={os.path.basename(validation_image_end)} "
-            f"seed={seed} ({video_length} frames, {sample_size[1]}×{sample_size[0]})..."
+            f"seed={seed} ({current_video_length_run} frames, {sample_size[1]}×{sample_size[0]})..."
         )
         start_time = time.time()
 
         _out = pipeline(
             prompt,
-            num_frames=video_length,
+            num_frames=current_video_length_run,
             negative_prompt=negative_prompt,
             height=sample_size[0],
             width=sample_size[1],
@@ -879,7 +951,7 @@ def save_results():
     # video_length_run / r / video_length_desired 在上面 with torch.no_grad() 里生成
     run_name = _make_run_name(
         TASK_NAME, width, height, fps,
-        int(video_length_desired if "video_length_desired" in globals() else video_length),
+        int(current_video_length_desired if "current_video_length_desired" in globals() else video_length),
         s_idx, e_idx, seed
     )
     run_dir = os.path.join(RUNS_ROOT, run_name)
@@ -911,8 +983,8 @@ def save_results():
         "width": int(width),
         "height": int(height),
 
-        "video_length_desired": int(video_length_desired) if "video_length_desired" in globals() else int(video_length),
-        "video_length_run": int(video_length_run) if "video_length_run" in globals() else int(video_length),
+        "video_length_desired": int(current_video_length_desired) if "current_video_length_desired" in globals() else int(video_length),
+        "video_length_run": int(current_video_length_run) if "current_video_length_run" in globals() else int(video_length),
         "vae_temporal_compression_ratio": int(r) if "r" in globals() else None,
 
         "start_idx": s_idx,
@@ -922,9 +994,14 @@ def save_results():
 
         "batch": bool(args.batch),
         "source_frames_dir": args.frames_dir if args.batch else None,
-        "base_idx": int(args.base_idx) if args.batch else None,
-        "num_segments": int(args.num_segments) if args.batch else None,
-        "segment_seconds": float(args.segment_seconds) if args.batch else None,
+        "base_idx": int(batch_execution_segments[0]["start_idx"]) if args.batch and batch_execution_segments else (int(args.base_idx) if args.batch else None),
+        "num_segments": int(len(batch_execution_segments)) if args.batch else None,
+        "segment_seconds": (
+            float(max(0, int(current_video_length_desired) - 1)) / float(max(int(args.dataset_fps), 1))
+            if args.batch else None
+        ),
+        "schedule_source": str(execution_schedule_source) if args.batch else None,
+        "execution_backend": str(execution_backend) if args.batch else None,
 
         "num_inference_steps": int(num_inference_steps),
         "guidance_scale": float(guidance_scale),
@@ -965,36 +1042,48 @@ def _rank0_save():
 # =========================
 infer_sum = 0.0
 segments_ran = 0
+total_generated_frames = 0
 
 
 if args.batch:
-    # Keyframe interpolation mode:
-    # - stride = kf_gap (shared anchor between adjacent segments)
-    # - step   = stride + 1 (output frames per segment, includes both anchors)
-    stride = int(args.kf_gap)
-    if stride <= 0:
-        raise ValueError(f"invalid kf_gap={stride}, must be > 0")
-    step = stride + 1
-
-    rprint(f"[PROG] batch: segments={int(args.num_segments)} base_idx={int(args.base_idx)} step={int(step)} stride={int(stride)} fps={int(fps)}")
+    total = int(len(batch_execution_segments))
+    if total <= 0:
+        raise ValueError("batch execution segments resolved to 0")
+    base_idx_exec = int(batch_execution_segments[0]["start_idx"])
+    mean_gap_exec = sum([int(seg.get("deploy_gap", 0)) for seg in batch_execution_segments]) / float(total)
+    rprint(
+        f"[PROG] batch: segments={total} base_idx={base_idx_exec} "
+        f"schedule_source={execution_schedule_source} backend={execution_backend} "
+        f"mean_gap={mean_gap_exec:.2f} fps={int(fps)}"
+    )
     # ---- write plan (rank0) so merger only consumes THIS run set ----
     if os.environ.get("RANK", "0") == "0":
         try:
             width, height = int(sample_size[1]), int(sample_size[0])
         except Exception:
             width, height = 0, 0
-        L_desired = int(step)
         plan_path = os.path.join(RUNS_PARENT, "runs_plan.json")
         segs = []
-        for seg in range(int(args.num_segments)):
-            s = int(args.base_idx + seg * stride)
-            e = int(s + stride)
+        for seg, seg_spec in enumerate(batch_execution_segments):
+            s = int(seg_spec["start_idx"])
+            e = int(seg_spec["end_idx"])
+            L_desired = int(seg_spec.get("num_frames", e - s + 1))
             seg_seed = int(args.seed_base) + int(seg)
             run_name = _make_run_name(TASK_NAME, width, height, int(fps), L_desired, s, e, seg_seed)
             segs.append({
                 "seg": int(seg),
+                "segment_id": int(seg_spec.get("segment_id", seg)),
+                "schedule_source": str(seg_spec.get("schedule_source", execution_schedule_source)),
+                "execution_backend": str(seg_spec.get("execution_backend", execution_backend)),
                 "start_idx": int(s),
                 "end_idx": int(e),
+                "raw_start_idx": int(seg_spec.get("raw_start_idx", s)),
+                "raw_end_idx": int(seg_spec.get("raw_end_idx", e)),
+                "deploy_start_idx": int(seg_spec.get("deploy_start_idx", s)),
+                "deploy_end_idx": int(seg_spec.get("deploy_end_idx", e)),
+                "raw_gap": int(seg_spec.get("raw_gap", e - s)),
+                "deploy_gap": int(seg_spec.get("deploy_gap", e - s)),
+                "num_frames": int(L_desired),
                 "seed": int(seg_seed),
                 "run_name": run_name,
                 "prompt_hash8": resolved_prompts[int(seg)]["prompt_hash8"] if int(seg) < len(resolved_prompts) else None,
@@ -1011,12 +1100,15 @@ if args.batch:
             "height": int(height),
             "fps": int(fps),
             "dataset_fps": int(args.dataset_fps),
+            "schedule_source": str(execution_schedule_source),
+            "execution_backend": str(execution_backend),
             "segment_seconds": float(args.segment_seconds),
-            "kf_gap": int(stride),
-            "step": int(step),
-            "stride": int(stride),
-            "base_idx": int(args.base_idx),
-            "num_segments": int(args.num_segments),
+            "segment_seconds_mean": float(mean_gap_exec) / float(max(int(fps), 1)),
+            "kf_gap": int(args.kf_gap),
+            "step": None,
+            "stride": None,
+            "base_idx": int(base_idx_exec),
+            "num_segments": int(total),
             "seed_base": int(args.seed_base),
             "prompt_manifest": os.path.abspath(manifest_path),
             "prompt_manifest_digest8": manifest_digest8,
@@ -1028,20 +1120,29 @@ if args.batch:
         os.replace(tmp, plan_path)
     t_batch0 = time.time()
 
-    for seg in range(int(args.num_segments)):
-        s = int(args.base_idx + seg * stride)
-        e = int(s + stride)
+    for seg, seg_spec in enumerate(batch_execution_segments):
+        s = int(seg_spec["start_idx"])
+        e = int(seg_spec["end_idx"])
+        desired_num_frames = int(seg_spec.get("num_frames", e - s + 1))
         start_path = _frame_path(args.frames_dir, s)
         end_path = _frame_path(args.frames_dir, e)
         seg_seed = int(args.seed_base) + int(seg)
 
         seg_i = int(seg) + 1
-        total = int(args.num_segments)
         hash_str = ""
         if "resolved_prompts" in globals() and int(seg) < len(resolved_prompts):
             _rp = resolved_prompts[int(seg)]
             hash_str = f" hash={_rp['prompt_hash8']}"
-        rprint(f"[PROG] seg {seg_i}/{total}: idx {s}->{e} seed={seg_seed}{hash_str}")
+        _desired_check, _aligned_check, _latent_check = _align_video_length_for_segment(desired_num_frames)
+        if _aligned_check != desired_num_frames:
+            rprint(
+                f"[WARN] seg {seg_i}/{total}: desired_num_frames={desired_num_frames} aligned_to={_aligned_check} "
+                f"(r={int(r)} latent={_latent_check})"
+            )
+        rprint(
+            f"[PROG] seg {seg_i}/{total}: idx {s}->{e} "
+            f"deploy_gap={int(seg_spec.get('deploy_gap', e - s))} frames={desired_num_frames} seed={seg_seed}{hash_str}"
+        )
         # prompt per segment (base + optional delta)
         if "resolved_prompts" in globals() and int(seg) < len(resolved_prompts):
             _rp = resolved_prompts[int(seg)]
@@ -1055,9 +1156,10 @@ if args.batch:
                 rprint(f"[PROMPT] seg {seg_i}/{total} delta={_escape_one_line(_rp.get('delta_prompt',''))}")
             if negative_prompt:
                 rprint(f"[PROMPT] seg {seg_i}/{total} neg={_escape_one_line(negative_prompt)}")
-        dt = run_one_segment(start_path, end_path, seg_seed)
+        dt = run_one_segment(start_path, end_path, seg_seed, desired_num_frames=desired_num_frames)
         infer_sum += dt
         segments_ran += 1
+        total_generated_frames += int(current_video_length_run)
 
         t_save0 = time.time()
         _rank0_save()
@@ -1100,6 +1202,7 @@ else:
             rprint(f"[PROMPT] single neg={_escape_one_line(negative_prompt)}")
     infer_sum = run_one_segment(validation_image_start, validation_image_end, seed)
     segments_ran = 1
+    total_generated_frames = int(current_video_length_run)
     _rank0_save()
 
 
@@ -1121,8 +1224,7 @@ if lora_path is not None:
 total_time = time.time() - T_ALL_START
 init_time = T_INIT_END - T_INIT_START
 avg_infer = (infer_sum / segments_ran) if segments_ran > 0 else 0.0
-frames_per_seg = int(video_length_run if "video_length_run" in globals() else video_length)
-total_frames = int(segments_ran) * int(frames_per_seg)
+total_frames = int(total_generated_frames)
 avg_infer_per_frame = (infer_sum / total_frames) if total_frames > 0 else 0.0
 rprint(
     f"[INFO] done: segments={segments_ran} frames={total_frames} "

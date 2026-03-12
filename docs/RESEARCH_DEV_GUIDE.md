@@ -75,6 +75,10 @@ segment → prompt → infer → merge → slam → eval → stats
 
 该阶段决定哪些帧被保留为关键帧，哪些帧被视为冗余帧。当前实现仍以等距采样为主，功能上属于“基础版关键帧选择器”。从研究目标看，该阶段未来应升级为**语义驱动或信息增量驱动的关键帧选择模块**，并与既有 IROS 工作中的关键帧方法接轨。
 
+当前主链路已进一步把 `segment` 的时间计划拆成两层：
+- `keyframes_meta.json` 继续只表达 raw schedule，作为研究层事实源；
+- `deploy_schedule.json` 则是面向当前 Wan r4 后端的执行投影，不覆盖 raw schedule 本身。
+
 ### 3.2 `prompt`：图像到语义表征的编码
 
 **科研角色**：编码端的 I2T（Image-to-Text）或更广义语义编码模块。
@@ -88,6 +92,8 @@ segment → prompt → infer → merge → slam → eval → stats
 **科研角色**：解码端的 I&T2V（Image-and-Text-to-Video）模块。
 
 该阶段当前基于 Wan2.2，利用关键帧与文本条件恢复视频或图像序列。它是当前工作流中最接近“世界模型”角色的部分，也是整个语义传输框架中的解码核心。
+
+当前第一版 Wan 接入已不再使用单一全局 `kf_gap` 等距调度，而是改为消费 deploy-derived execution segments：每段都有自己的 `start_idx / end_idx / deploy_gap / num_frames`。这使得 `infer` 日志、`runs_plan.json` 与 `merge` 的时间对齐都能反映真实的非等距关键帧布局。
 
 ### 3.4 `merge`：序列整理与产物收口
 

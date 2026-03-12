@@ -16,6 +16,11 @@ from tqdm import tqdm
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 from _common import ensure_dir, get_platform_config, list_frames_sorted, log_info, log_prog, log_warn, write_json_atomic
+from _schedule import (
+    build_execution_segments_from_deploy_schedule,
+    build_legacy_execution_segments,
+    load_deploy_schedule,
+)
 
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 IDX_RE = re.compile(r"(\d+)")
@@ -79,6 +84,24 @@ def _compute_num_clips(frames_avail: int, base_idx: int, kf_gap: int, num_segmen
     if max_segments <= 0:
         return 0
     return min(max_segments, num_segments) if num_segments > 0 else max_segments
+
+
+def _find_deploy_schedule(frames_dir: Path, exp_dir: Optional[Path]) -> Optional[Path]:
+    candidates = []
+    if exp_dir is not None:
+        candidates.append((exp_dir / "segment" / "deploy_schedule.json").resolve())
+    if frames_dir.name == "frames":
+        candidates.append((frames_dir.parent / "deploy_schedule.json").resolve())
+
+    seen = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.is_file():
+            return path
+    return None
 
 
 def _rep_indices_for_clip(start_idx: int, end_idx: int) -> List[int]:
@@ -221,11 +244,32 @@ def main():
     if base_idx >= frames_avail:
         raise SystemExit(f"[ERR] base_idx={base_idx} out of range (frames_avail={frames_avail})")
 
-    nclips = _compute_num_clips(frames_avail, base_idx, kf_gap, int(args.num_segments))
-    if nclips <= 0:
-        raise SystemExit(
-            f"[ERR] not enough frames for 1 clip: frames_avail={frames_avail} base_idx={base_idx} kf_gap={kf_gap}"
-        )
+    deploy_schedule_path = _find_deploy_schedule(frames_dir, exp_dir)
+    deploy_schedule = None
+    execution_segments = []
+    execution_source = "legacy_kf_gap"
+    execution_backend = "legacy_uniform"
+    if deploy_schedule_path is not None:
+        deploy_schedule = load_deploy_schedule(deploy_schedule_path)
+        if deploy_schedule:
+            execution_segments = build_execution_segments_from_deploy_schedule(deploy_schedule)
+            execution_source = "deploy_schedule"
+            execution_backend = str(deploy_schedule.get("backend", "") or "wan_r4")
+            log_info(
+                "execution schedule resolved from deploy_schedule: backend={} segments={}".format(
+                    execution_backend, len(execution_segments)
+                )
+            )
+
+    if not execution_segments:
+        nclips = _compute_num_clips(frames_avail, base_idx, kf_gap, int(args.num_segments))
+        if nclips <= 0:
+            raise SystemExit(
+                f"[ERR] not enough frames for 1 clip: frames_avail={frames_avail} base_idx={base_idx} kf_gap={kf_gap}"
+            )
+        execution_segments = build_legacy_execution_segments(frames_avail, base_idx, kf_gap, nclips)
+        log_warn("execution schedule fallback: deploy_schedule.json missing, using legacy kf_gap slicing")
+    nclips = int(len(execution_segments))
 
     # Load model once
     log_info("Initializing Qwen2-VL pipeline (IO bound process, please wait...)")
@@ -263,8 +307,8 @@ def main():
 
     t_total = time.time() - t0
     log_info(
-        "Initialization completed in {:.2f}s | frames_avail={} | clips={} | kf_gap={}".format(
-            t_total, frames_avail, nclips, kf_gap
+        "Initialization completed in {:.2f}s | frames_avail={} | clips={} | schedule_source={}".format(
+            t_total, frames_avail, nclips, execution_source
         )
     )
 
@@ -277,8 +321,9 @@ def main():
             desc="Prompt Gen",
             bar_format="[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         ):
-            start_idx = base_idx + clip_id * kf_gap
-            end_idx = start_idx + kf_gap
+            seg_spec = dict(execution_segments[int(clip_id)])
+            start_idx = int(seg_spec["start_idx"])
+            end_idx = int(seg_spec["end_idx"])
             clip_seconds = float(end_idx - start_idx) / float(fps)
 
             rep_idx = _rep_indices_for_clip(start_idx, end_idx)
@@ -298,8 +343,18 @@ def main():
                 clips.append(
                     {
                         "clip_id": int(clip_id),
+                        "segment_id": int(seg_spec.get("segment_id", clip_id)),
                         "start_idx": int(start_idx),
                         "end_idx": int(end_idx),
+                        "raw_start_idx": int(seg_spec.get("raw_start_idx", start_idx)),
+                        "raw_end_idx": int(seg_spec.get("raw_end_idx", end_idx)),
+                        "deploy_start_idx": int(seg_spec.get("deploy_start_idx", start_idx)),
+                        "deploy_end_idx": int(seg_spec.get("deploy_end_idx", end_idx)),
+                        "raw_gap": int(seg_spec.get("raw_gap", end_idx - start_idx)),
+                        "deploy_gap": int(seg_spec.get("deploy_gap", end_idx - start_idx)),
+                        "num_frames": int(seg_spec.get("num_frames", end_idx - start_idx + 1)),
+                        "schedule_source": str(seg_spec.get("schedule_source", execution_source)),
+                        "execution_backend": str(seg_spec.get("execution_backend", execution_backend)),
                         "clip_seconds": clip_seconds,
                         "rep_frames": [f"{i:06d}" for i in rep_idx],
                         "prompt": "",
@@ -339,8 +394,18 @@ def main():
             clips.append(
                 {
                     "clip_id": int(clip_id),
+                    "segment_id": int(seg_spec.get("segment_id", clip_id)),
                     "start_idx": int(start_idx),
                     "end_idx": int(end_idx),
+                    "raw_start_idx": int(seg_spec.get("raw_start_idx", start_idx)),
+                    "raw_end_idx": int(seg_spec.get("raw_end_idx", end_idx)),
+                    "deploy_start_idx": int(seg_spec.get("deploy_start_idx", start_idx)),
+                    "deploy_end_idx": int(seg_spec.get("deploy_end_idx", end_idx)),
+                    "raw_gap": int(seg_spec.get("raw_gap", end_idx - start_idx)),
+                    "deploy_gap": int(seg_spec.get("deploy_gap", end_idx - start_idx)),
+                    "num_frames": int(seg_spec.get("num_frames", end_idx - start_idx + 1)),
+                    "schedule_source": str(seg_spec.get("schedule_source", execution_source)),
+                    "execution_backend": str(seg_spec.get("execution_backend", execution_backend)),
                     "clip_seconds": clip_seconds,
                     "rep_frames": [p.name for p in rep_paths],
                     "prompt": prompt,
@@ -356,6 +421,9 @@ def main():
         "kf_gap": int(kf_gap),
         "base_idx": int(base_idx),
         "num_clips": int(nclips),
+        "schedule_source": str(execution_source),
+        "execution_backend": str(execution_backend),
+        "deploy_schedule_path": str(deploy_schedule_path) if deploy_schedule_path is not None else "",
         "rep_policy": "start+quartiles+end",
         "max_new_tokens": int(args.max_new_tokens),
         "use_fast": bool(args.use_fast),
@@ -371,6 +439,18 @@ def main():
             {
                 "seg": int(it["clip_id"]),
                 "clip_id": int(it["clip_id"]),  # redundant alias
+                "segment_id": int(it.get("segment_id", it["clip_id"])),
+                "schedule_source": str(it.get("schedule_source", execution_source)),
+                "execution_backend": str(it.get("execution_backend", execution_backend)),
+                "start_idx": int(it["start_idx"]),
+                "end_idx": int(it["end_idx"]),
+                "raw_start_idx": int(it.get("raw_start_idx", it["start_idx"])),
+                "raw_end_idx": int(it.get("raw_end_idx", it["end_idx"])),
+                "deploy_start_idx": int(it.get("deploy_start_idx", it["start_idx"])),
+                "deploy_end_idx": int(it.get("deploy_end_idx", it["end_idx"])),
+                "raw_gap": int(it.get("raw_gap", it["end_idx"] - it["start_idx"])),
+                "deploy_gap": int(it.get("deploy_gap", it["end_idx"] - it["start_idx"])),
+                "num_frames": int(it.get("num_frames", it["end_idx"] - it["start_idx"] + 1)),
                 "delta_prompt": str(it.get("prompt", "") or "").strip(),
             }
         )
@@ -379,6 +459,9 @@ def main():
         "version": 1,
         "base_prompt": (str(args.base_prompt).strip() or DEFAULT_BASE_PROMPT),
         "base_neg_prompt": str(args.base_neg_prompt).strip(),
+        "schedule_source": str(execution_source),
+        "execution_backend": str(execution_backend),
+        "deploy_schedule_path": str(deploy_schedule_path) if deploy_schedule_path is not None else "",
         "segments": seg_items,
     }
     write_json_atomic(out_manifest, manifest, indent=2)
@@ -401,6 +484,9 @@ def main():
         "prompt_style": "qwen2vl_delta",
         "frames_count": int(len(frame_files)),
         "clips_count": int(nclips),
+        "schedule_source": str(execution_source),
+        "execution_backend": str(execution_backend),
+        "deploy_schedule_path": str(deploy_schedule_path) if deploy_schedule_path is not None else "",
         "manifest_path": str(out_manifest),
         "manifest_size": int(manifest_size),
         "manifest_sha1": hashlib.sha1(manifest_bytes).hexdigest(),

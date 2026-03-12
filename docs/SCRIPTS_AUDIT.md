@@ -31,7 +31,16 @@
   - `segment/timestamps.txt`：相对时间网格。
   - `segment/calib.txt`：与 `frames/` 尺寸对齐的内参。
   - `segment/preprocess_meta.json`：裁剪、缩放与内参变换元数据。
+  - `segment/deploy_schedule.json`：当前第一版 `wan_r4` backend-specific deploy schedule。它保留：
+    - `raw_keyframe_indices`：raw schedule 的引用；
+    - `deploy_keyframe_indices`：Wan 合法时间网格上的执行边界；
+    - `segments[*]`：每段 `raw_start/end_idx`、`deploy_start/end_idx`、`raw_gap`、`deploy_gap`、`num_frames`；
+    - `projection_stats`：boundary/gap 误差统计。
   - `segment/step_meta.json`：包含基础元信息（如分辨率、fps、帧数）。
+- **raw / deploy 契约**：
+  - `keyframes_meta.json` 仍然只表达 raw schedule，保持 canonical/source-of-truth 地位；
+  - `deploy_schedule.json` 只服务当前 Wan 执行，不回写覆盖 raw keyframes；
+  - 当前 `wan_r4` 规则要求：首尾固定、段数不变、总跨度不变、每段 deploy gap 为 4 的倍数；若无解则 fail-fast。
 - **关键帧策略契约**：
   - `uniform`：保持旧行为，每隔 `kf_gap` 采样一个锚点。
   - `sks_v1`：先生成 uniform 骨架，再在 `segment_make.py` 进程内复用 OpenCLIP image embedding 旁路，计算 `semantic displacement / velocity / acceleration / density / cumulative action`，并在不改变预算的前提下做局部受限重定位：
@@ -85,7 +94,10 @@
 - **配置依赖**：从 `platform.yaml` 读取 `models.qwen2_vl.path`。
 - **Inputs (读取)**：`segment/frames/`。
 - **Outputs (写入)**：
-  - `prompt/manifest.json`：标准的提示词清单文件（包含 base_prompt 和各段 delta_prompt）。
+  - `prompt/manifest.json`：标准的提示词清单文件（包含 base_prompt 和各段 delta_prompt），并复用 `segments[*]` 作为 downstream execution manifest：
+    - `segments[*].start_idx / end_idx / num_frames` 是 `infer / merge` 真正消费的运行计划；
+    - 若 `segment/deploy_schedule.json` 存在，则这些边界来自 deploy schedule；
+    - 否则为历史实验回退到 legacy `kf_gap` 切段。
   - `prompt/step_meta.json`。
 
 ### 2.4 `scripts/infer_i2v.py` & `scripts/_infer_i2v_impl.py` (视频生成推理)
@@ -95,10 +107,10 @@
 - **配置依赖**：从 `platform.yaml` 读取 `repos.videox_fun` 以及 `models.wan2_2` 的路径与配置。
 - **Inputs (读取)**：
   - `segment/frames/`（读取首尾关键帧作为生成锚点）。
-  - `prompt/manifest.json`。
+  - `prompt/manifest.json`（优先读取其中的 execution segments；旧 manifest 则回退到 `segment/deploy_schedule.json` 或 legacy `kf_gap`）。
 - **Outputs (写入)**：
   - `infer/runs/`：包含各个分段生成的视频片段。
-  - `infer/runs_plan.json`：运行计划与参数记录。
+  - `infer/runs_plan.json`：运行计划与参数记录。`segments[*]` 会显式保存每段真实的 `start_idx / end_idx / raw_* / deploy_* / num_frames`。
   - `infer/step_meta.json`。
 
 ### 2.5 `scripts/merge_seq.py` (序列合并)
@@ -109,6 +121,10 @@
   - `merge/frames/`：全局对齐后的最终连续图像序列。
   - `merge/timestamps.txt`：供 SLAM 系统使用的时间戳对齐文件。
   - `merge/step_meta.json`。
+- **合并契约**：
+  - `merge_seq.py` 以 `runs_plan.json` 的真实 `start_idx / end_idx` 为唯一时间轴依据；
+  - 不再假设所有 segment 共用固定 `kf_gap`/`stride`；
+  - 只要相邻 segments 在 plan 中共享 boundary，merge 就按 boundary overlap 去重并恢复原时间轴长度。
 
 ### 2.6 `scripts/slam_droid.py` (位姿估计)
 - **职责**：在特定图像轨道（如 `ori` 原始轨道或 `gen` 生成轨道）上运行 DROID-SLAM 算法提取相机轨迹。
