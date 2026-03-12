@@ -46,7 +46,7 @@ def load_semantic_signal_bundle(context, smooth_window):
         missing_name = str(getattr(e, "name", "") or "")
         if missing_name in ("torch", "open_clip"):
             raise RuntimeError(
-                "sks_v1 requires torch/open_clip in the segment python environment. "
+                "semantic policy requires torch/open_clip in the segment python environment. "
                 "Configure environments.phases.segment.python with an interpreter that already has these dependencies, or keep --segment_policy uniform."
             )
         raise
@@ -54,7 +54,7 @@ def load_semantic_signal_bundle(context, smooth_window):
     frame_paths = context["frame_paths"]
     timestamps = context["timestamps"]
     cache_dir = context["policy_cache_dir"]
-    log_info("sks_v1 semantic observe start: frames={}".format(len(frame_paths)))
+    log_info("semantic observe start: frames={}".format(len(frame_paths)))
     try:
         rows, meta = compute_semantic_rows(
             frame_paths,
@@ -65,7 +65,7 @@ def load_semantic_signal_bundle(context, smooth_window):
     except RuntimeError as e:
         if "open_clip" in str(e):
             raise RuntimeError(
-                "sks_v1 failed to initialize OpenCLIP in the segment python environment. "
+                "semantic policy failed to initialize OpenCLIP in the segment python environment. "
                 "Configure environments.phases.segment.python with an interpreter that already has torch/open_clip, or keep --segment_policy uniform."
             )
         raise

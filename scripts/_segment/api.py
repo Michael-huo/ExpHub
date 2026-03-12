@@ -8,6 +8,7 @@ from pathlib import Path
 from _common import list_frames_sorted, log_info, write_json_atomic
 
 from .materialize import materialize_keyframes
+from .policies.naming import normalize_policy_name
 from .policies import get_policy_builder
 from .policies.uniform import compute_uniform_base
 
@@ -132,6 +133,7 @@ def build_keyframe_plan(root_dir, frames_dir, timestamps_path, kf_gap, policy_na
     if not frame_paths:
         raise ValueError("no frames found under {}".format(frames_dir))
 
+    canonical_policy_name = normalize_policy_name(policy_name)
     uniform_base = compute_uniform_base(len(frame_paths), int(kf_gap))
     context = {
         "root_dir": root_dir,
@@ -145,14 +147,19 @@ def build_keyframe_plan(root_dir, frames_dir, timestamps_path, kf_gap, policy_na
         "frame_count_used": int(uniform_base["used_count"]),
         "tail_drop": int(uniform_base["tail_drop"]),
         "uniform_base_indices": list(uniform_base["indices"]),
-        "policy_name": str(policy_name),
-        "policy_cache_dir": (root_dir / ".segment_cache" / str(policy_name)).resolve(),
+        "policy_name": str(canonical_policy_name),
+        "policy_cache_dir": (root_dir / ".segment_cache" / str(canonical_policy_name)).resolve(),
         "build_item": _build_keyframe_item_factory(frame_paths, timestamps),
     }
     os.makedirs(str(context["policy_cache_dir"]), exist_ok=True)
 
-    builder = get_policy_builder(policy_name)
-    log_info("segment policy start: name={} uniform_base={}".format(policy_name, len(context["uniform_base_indices"])))
+    builder = get_policy_builder(canonical_policy_name)
+    log_info(
+        "segment policy start: name={} uniform_base={}".format(
+            canonical_policy_name,
+            len(context["uniform_base_indices"]),
+        )
+    )
     plan = builder(context)
     return _normalize_plan(context, plan)
 
@@ -192,7 +199,7 @@ def materialize_keyframe_plan(root_dir, frames_dir, timestamps_path, kf_gap, key
         "keyframes": list(plan["keyframe_items"]),
         "summary": dict(plan["summary"]),
         "policy_meta": dict(plan.get("policy_meta") or {}),
-        "note": "Keyframes remain backward compatible with the legacy uniform layout fields. sks_v1 and motion_energy_v1 use shared fixed-budget bounded relocation on top of the uniform skeleton.",
+        "note": "Keyframes remain backward compatible with the legacy uniform layout fields. semantic and motion use shared fixed-budget bounded relocation on top of the uniform skeleton.",
     }
 
     write_json_atomic(keyframes_dir / "keyframes_meta.json", keyframes_meta, indent=2)
