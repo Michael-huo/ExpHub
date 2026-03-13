@@ -7,12 +7,19 @@ environments:
   phases:
     segment:
       python: "/home/hx/anaconda3/envs/segmentclip/bin/python"
+      conda: "segmentclip"
     prompt:
       python: "/home/hx/anaconda3/envs/vlm_prompt/bin/python"
+      conda: "vlm_prompt"
+    prompt_smol:
+      python: "/home/hx/anaconda3/envs/prompt_smol/bin/python"
+      conda: "prompt_smol"
     infer:
       python: "/home/hx/anaconda3/envs/videox/bin/python"
+      conda: "videox"
     slam:
       python: "/home/hx/anaconda3/envs/droid/bin/python"
+      conda: "droid"
 
 repos:
   videox_fun: "/data/hx/VideoX-Fun"

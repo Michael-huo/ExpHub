@@ -24,7 +24,8 @@
 | `scripts/segment_make.py` | `segment` | `segment` 稳定入口，负责生成标准 segment 产物，并在 raw keyframes 之外额外写出 Wan `deploy_schedule.json` |
 | `scripts/segment_analyze.py` | `segment` 研究旁路 | 读取既有 `segment/` 产物，输出正式三策略（`uniform / motion / semantic`）的逐帧 kinematics/allocation/projection 分析图表，并内建 active policy + passive observer 横向对比（summary + compare 图，不改正式 keyframes） |
 | `scripts/_segment/` | `segment` (内部实现) | `api/extract/materialize/policies/research` 内聚 `segment` 的主链路与研究旁路逻辑；当前 `policies/` 只承载正式策略 `uniform / motion / semantic`，并由 `uniform.py / motion.py / semantic.py` 三个正式实现入口对外服务；研究侧 `research/` 负责共享信号与可视化支撑 |
-| `scripts/prompt_gen.py` | `prompt` | 调用 VLM 生成 `manifest.json`，并将 deploy-derived execution segments 写入 `segments[*]` |
+| `scripts/prompt_gen.py` | `prompt` | `prompt` 前端入口；负责解析 CLI、按 clip 采样图像、调用具体 backend 生成 prompt，并写回 `clip_prompts.json / manifest.json / step_meta.json` |
+| `scripts/_prompt/` | `prompt` (内部实现) | 内聚 prompt backend 抽象、采样策略与具体 VLM 实现；当前包含 `qwen` 与 `smolvlm2` 两个 backend |
 | `scripts/infer_i2v.py` | `infer` (外壳) | 读取 execution manifest / deploy schedule，生成逐段运行计划并分发 Wan 推理 |
 | `scripts/_infer_i2v_impl.py`| `infer` (内核) | Wan2.2 实际的 float8 量化与张量推理逻辑；按逐段 `start_idx / end_idx / num_frames` 执行 |
 | `scripts/merge_seq.py` | `merge` | 基于 `runs_plan.json` 的真实逐段边界做时间轴对齐、冗余去重与合并 |
@@ -36,7 +37,7 @@
 
 | 文件路径 | 核心职责 | 备注 |
 |---|---|---|
-| `config/platform.yaml` | **外部依赖注册表** | 配置各跨域 Python 解释器（通过 `environments.phases.<phase>.python` 组织）、模型路径、算法源码路径 |
+| `config/platform.yaml` | **外部依赖注册表** | 配置各跨域 Python 解释器（通过 `environments.phases.<phase>.python` 组织；`prompt` 可额外声明 `prompt_smol`）、模型路径、算法源码路径 |
 | `config/datasets.json` | **数据源注册表** | 定义实验可用的数据集 (如 ROS bag 路径、内参矩阵) |
 | `config/prompt_manifest.json`| **提示词模板库** | 提供基础 prompt 与负向 prompt 的预设配置 |
 
@@ -46,7 +47,7 @@
 | 模式 (Mode) | 调度链条 (Call Chain) |
 |---|---|
 | `segment` | `cli.py` -> resolve phase `segment` -> `runner.ros_exec` -> `segment_make.py` |
-| `prompt` | `cli.py` -> resolve phase `prompt` -> `runner.run_env_python` -> `prompt_gen.py` |
+| `prompt` | `cli.py` -> resolve phase `prompt` or `prompt_smol` -> `runner.run_env_python` -> `prompt_gen.py` -> `_prompt.api` -> selected backend |
 | `infer` | `cli.py` -> resolve phase `infer` -> `runner.run_env_python` -> `infer_i2v.py` -> `sys.executable` -> `_infer_i2v_impl.py` |
 | `merge` | `cli.py` -> resolve phase `infer` -> `runner.run_env_python` -> `merge_seq.py` |
 | `slam` | `cli.py` -> resolve phase `slam` -> `runner.run_env_python` -> `slam_droid.py` |

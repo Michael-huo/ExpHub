@@ -5,7 +5,7 @@
 ## 1. 项目愿景与平台定位
 ExpHub 是一个**高度平台化、配置驱动**的视频流与 VSLAM（视觉同步定位与建图）实验自动化中枢。
 
-它通过极致的环境解耦架构（读取 `platform.yaml` 穿透 Conda 环境隔离），将上游的视觉大模型（VLM）、视频生成模型（I2V）与下游的 C++ SLAM 算法无缝串联。
+它通过极致的环境解耦架构（读取 `platform.yaml` 穿透 Conda 环境隔离），将上游可切换的视觉大模型（VLM）、视频生成模型（I2V）与下游的 C++ SLAM 算法无缝串联。
 
 **当前主攻的科研课题：**
 1. **Prompt 消融实验**：探索不同结构的提示词设计（Base/Delta）对下游 SLAM 轨迹精度的影响。
@@ -48,9 +48,9 @@ ExpHub 将所有的执行与调度收口于 `cli.py`。
   `python -m exphub --mode all --dataset <ds> --sequence <seq> --tag <tag> ...`
   `all` 会在 `segment` 完成后默认尝试生成 6 个 analyze 正式产物：`segment_summary.json / segment_timeseries.csv / kinematics_overview.png / allocation_overview.png / comparison_overview.png / projection_overview.png`。
 - **统一 phase 环境配置**：
-  `segment / prompt / infer / slam` 的解释器现在统一从 `config/platform.yaml -> environments.phases.<phase>.python` 读取，不再使用 `--sys_py`。
+  `segment / prompt / infer / slam` 的解释器现在统一从 `config/platform.yaml -> environments.phases.<phase>.python` 读取；当前默认 prompt backend 已收敛为 `smolvlm2`，因此不传 `--prompt_backend` 时会默认走 `prompt_smol` phase；如需回退，可显式传 `--prompt_backend qwen`。
 - **Doctor 观测点**：
-  `--mode doctor` 现在只展示各个 core phase 的 python 路径与 `exists=True/False` 检查结果。
+  `--mode doctor` 现在展示各个 core phase 的 python 路径与 `exists=True/False` 检查结果；默认口径下会把 `prompt_smol` 一并纳入检查。
 
 ---
 
