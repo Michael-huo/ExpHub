@@ -383,6 +383,40 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=_def_qwen,
         help="Qwen2-VL model dir used by prompt generator",
     )
+    ap.add_argument(
+        "--prompt_backend",
+        default="smolvlm2",
+        choices=["qwen", "smolvlm2"],
+        help="prompt backend used by scripts/prompt_gen.py",
+    )
+    ap.add_argument(
+        "--prompt_model_dir",
+        default="",
+        help="override prompt backend model dir or model id; qwen falls back to --qwen_model_dir when empty",
+    )
+    ap.add_argument(
+        "--prompt_dtype",
+        default="bfloat16",
+        choices=["bfloat16", "float16"],
+        help="prompt backend torch dtype hint",
+    )
+    ap.add_argument(
+        "--prompt_sample_mode",
+        default="even",
+        choices=["quartiles", "even", "first", "last", "all"],
+        help="frame sampling strategy inside each prompt clip",
+    )
+    ap.add_argument(
+        "--prompt_num_images",
+        type=int,
+        default=5,
+        help="number of representative images passed into the prompt backend",
+    )
+    ap.add_argument(
+        "--prompt_structured",
+        action="store_true",
+        help="request structured one-line prompt output from the prompt backend",
+    )
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
     ap.add_argument(
@@ -536,10 +570,25 @@ def main(argv: Optional[List[str]] = None) -> None:
                 _die(str(e))
         return phase_python_cache[phase_key]
 
+    def _prompt_phase_name() -> str:
+        backend = str(args.prompt_backend or "smolvlm2").strip().lower()
+        if backend == "smolvlm2":
+            return "prompt_smol"
+        return "prompt"
+
+    def _prompt_model_ref() -> str:
+        if str(args.prompt_model_dir or "").strip():
+            return str(args.prompt_model_dir).strip()
+        if str(args.prompt_backend or "smolvlm2").strip().lower() == "qwen":
+            return str(args.qwen_model_dir or "").strip()
+        return ""
+
     def step_doctor() -> int:
         _info("STEP doctor: begin")
         has_critical_missing = False
         phase_names = ["segment", "prompt", "infer", "slam"]
+        if str(args.prompt_backend or "smolvlm2").strip().lower() == "smolvlm2":
+            phase_names.append("prompt_smol")
         for phase_name in phase_names:
             python_bin = get_phase_python_config(phase_name)
             exists = False
@@ -651,6 +700,11 @@ def main(argv: Optional[List[str]] = None) -> None:
                 "base_idx": args.base_idx,
                 "seed_base": args.seed_base,
                 "gpus": args.gpus,
+                "prompt_backend": args.prompt_backend,
+                "prompt_model_dir": args.prompt_model_dir,
+                "prompt_sample_mode": args.prompt_sample_mode,
+                "prompt_num_images": args.prompt_num_images,
+                "prompt_structured": bool(args.prompt_structured),
                 "droid_seq": args.droid_seq,
                 "viz_enable": viz_enable,
                 "keep_level": args.keep_level,
@@ -730,6 +784,15 @@ def main(argv: Optional[List[str]] = None) -> None:
         exp_dir.mkdir(parents=True, exist_ok=True)
         prompt_dir.mkdir(parents=True, exist_ok=True)
         num_segments = ctx.segment_count(base_idx=args.base_idx, requested_segments=0)
+        prompt_phase = _prompt_phase_name()
+        prompt_python = get_phase_python_config(prompt_phase)
+        if not prompt_python:
+            if prompt_phase == "prompt_smol":
+                _die(
+                    "missing prompt_smol phase config in config/platform.yaml. "
+                    "Please set environments.phases.prompt_smol.python (and optional conda metadata) before using --prompt_backend smolvlm2."
+                )
+            _die("missing prompt phase config in config/platform.yaml")
 
         cmd = [
             "python",
@@ -746,15 +809,27 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(args.base_idx),
             "--num_segments",
             str(num_segments),
+            "--backend",
+            str(args.prompt_backend),
             "--model_dir",
-            str(args.qwen_model_dir),
+            str(_prompt_model_ref()),
+            "--dtype",
+            str(args.prompt_dtype),
+            "--sample_mode",
+            str(args.prompt_sample_mode),
+            "--num_images",
+            str(args.prompt_num_images),
             "--out_json",
             str(ctx.segment_clip_prompts_path),
             "--out_manifest",
             str(ctx.prompt_manifest_path),
+            "--backend_python_phase",
+            str(prompt_phase),
         ]
+        if args.prompt_structured:
+            cmd.append("--structured")
 
-        step_runner.run_env_python(cmd, phase_name="prompt", log_name="prompt.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd, phase_name=prompt_phase, log_name="prompt.log", cwd=exphub_root)
         _ensure(ctx.prompt_manifest_path, "file")
 
     def step_stats() -> None:
