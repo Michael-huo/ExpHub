@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `segment` | `scripts/segment_make.py` | phase `segment` | `segment/` |
 | `prompt` | `scripts/prompt_gen.py` | phase `prompt` | `prompt/` |
-| `infer` | `scripts/infer_i2v.py` <br> `_infer_i2v_impl.py` | phase `infer` | `infer/` |
+| `infer` | `scripts/infer_i2v.py` <br> `scripts/_infer/` <br> `_infer_i2v_impl.py` | phase `infer` or `infer_fun_5b` | `infer/` |
 | `merge` | `scripts/merge_seq.py` | 主环境 | `merge/` |
 | `slam` | `scripts/slam_droid.py` | phase `slam` | `slam/<track>/` |
 | `eval` | `exphub/cli.py` (调用 evo) | phase `slam` | `eval/<track>/` |
@@ -108,16 +108,22 @@
 
 ### 2.4 `scripts/infer_i2v.py` & `scripts/_infer_i2v_impl.py` (视频生成推理)
 - **职责**：
-  - `infer_i2v.py`：外壳编排器，负责规划分段任务，并使用 `sys.executable` 跨环境拉起底层推理引擎（支持多卡 `torchrun`）。
-  - `_infer_i2v_impl.py`：底层执行器（Wan2.2 Backend），执行 float8 量化与核心生成逻辑。
-- **配置依赖**：从 `platform.yaml` 读取 `repos.videox_fun` 以及 `models.wan2_2` 的路径与配置。
+  - `infer_i2v.py`：infer 前端入口；负责解析 CLI、读取 schedule / prompt manifest / frames、构造统一 request、选择 backend，并写回 `infer/runs_plan.json` 与 `infer/step_meta.json`。
+  - `scripts/_infer/`：infer backend 抽象层；当前内置 `wan_fun_a14b_inp` 与 `wan_fun_5b_inp` 两个标准 backend，统一暴露 `load() / run(request) / meta()`；多卡时 backend 会在内部自行启动 `torchrun` worker。
+  - `wan_fun_a14b_inp_backend.py`：当前 Wan2.2-Fun-A14B-InP 的真实实现所在位置；承接模型加载、推理执行、runs_plan 写出等核心逻辑。当前同段多卡模式下，所有 rank 走相同的 segment 推理路径，仅 rank0 保留保存视频/帧/params.json 的单写者副作用。
+  - `_infer_i2v_impl.py`：deprecated compatibility shim，仅用于兼容旧启动路径，内部直接调用新的 A14B backend。
+- **配置依赖**：
+  - phase：默认 backend 读取 `platform.yaml -> environments.phases.infer.python`；`wan_fun_5b_inp` 读取 `environments.phases.infer_fun_5b.python`。
+  - 模型：A14B 默认读取 `models.wan2_2_fun_a14b_inp`（兼容回退到旧 `models.wan2_2`）；5B 读取 `models.wan2_2_fun_5b_inp`。
+  - Repo：两者都读取 `repos.videox_fun`。
 - **Inputs (读取)**：
   - `segment/frames/`（读取首尾关键帧作为生成锚点）。
   - `prompt/manifest.json`（优先读取其中的 execution segments；旧 manifest 则回退到 `segment/deploy_schedule.json` 或 legacy `kf_gap`）。
 - **Outputs (写入)**：
   - `infer/runs/`：包含各个分段生成的视频片段。
   - `infer/runs_plan.json`：运行计划与参数记录。`segments[*]` 会显式保存每段真实的 `start_idx / end_idx / raw_* / deploy_* / num_frames`。
-  - `infer/step_meta.json`。
+  - `infer/step_meta.json`：在保留原有统计字段的同时，额外记录 `infer_backend / infer_model_dir|infer_model_id / backend_python_phase / backend_entry_type / frames_avail / schedule_source / execution_backend / runs_plan_*` 等前端编排信息；当前 `backend_entry_type` 会按实际执行方式区分为 `direct_backend` 或 `torchrun_backend_worker`。
+  - worker 生命周期：backend worker 会在结束或异常退出时做 best-effort barrier 与 `destroy_process_group()` 清理，以减少 `ProcessGroupNCCL` 警告噪音。
 
 ### 2.5 `scripts/merge_seq.py` (序列合并)
 - **职责**：将 `infer` 生成的分散视频片段在时间轴上对齐、去重边界关键帧，并融合成最终的长序列图像。

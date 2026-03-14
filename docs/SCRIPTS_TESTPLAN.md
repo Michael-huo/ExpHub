@@ -17,6 +17,7 @@ python -m exphub --mode doctor --dataset scand --sequence A_Jackal_AHG_Library_T
 **最小验收：**
 - 输出中能看到 `DOCTOR phase=segment python=... exists=...`。
 - 输出中能看到 `DOCTOR phase=prompt python=... exists=...`、`DOCTOR phase=infer ...`、`DOCTOR phase=slam ...`。
+- 若执行 `python -m exphub ... --mode doctor --infer_backend wan_fun_5b_inp`，输出中的 infer phase 应切换为 `DOCTOR phase=infer_fun_5b ...`。
 - 若 `environments.phases.<phase>.python` 未配置或路径不存在，doctor 应直接报 `FAIL`。
 
 ## 3. `segment` 正式关键帧策略冒烟测试
@@ -133,6 +134,7 @@ python -m exphub \
 - `prompt/step_meta.json` 应记录 `backend / attn_impl / sample_mode / num_images / backend_python_phase / prompt_gen_total_sec`。
 - `infer.log` 不应再只出现固定 stride 的 `0->24 / 24->48 / ...`；应体现真实 deploy 边界，例如 `0->28 / 28->60 / 60->92`。
 - `infer/runs_plan.json` 应保存真实执行边界；`merge/frames/` 数量必须等于 `runs_plan` 推导出的 `merged_end_idx - merged_start_idx + 1`。
+- `infer/step_meta.json` 应显示 `infer_backend / backend_python_phase / backend_entry_type / runs_plan_sha1` 等编排字段；默认命令下 `infer_backend=wan_fun_a14b_inp`，多卡口径下 `backend_entry_type` 应为 `torchrun_backend_worker`。
 - 若 `all` 全链路耗时过长，至少应人工确认新链路对旧实验产物仍保留 legacy fallback（manifest/deploy schedule 缺失时退回旧 `kf_gap` 切段）。
 
 ### 3.6 Prompt backend 切换冒烟测试
@@ -147,6 +149,19 @@ python -m exphub --mode prompt --dataset <ds> --sequence <seq> --tag <tag> --w <
 - `--prompt_backend smolvlm2` 时，日志与 `prompt/step_meta.json` 应显示 `backend_python_phase=prompt_smol`。
 - `--prompt_backend qwen` 时，应回退到原有 `prompt` phase，并继续兼容 `--qwen_model_dir`。
 - `prompt/manifest.json` 与 `segment/clip_prompts.json` 的既有消费 schema 不变，只允许 `prompt/step_meta.json` 出现增量统计字段。
+
+### 3.7 Infer backend 切换冒烟测试
+```bash
+python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec>
+python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --infer_backend wan_fun_5b_inp
+python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --infer_backend wan_fun_5b_inp --infer_extra "-- --num_inference_steps 20"
+```
+
+**重点观察：**
+- 不传 `--infer_backend` 时，仍应走 `wan_fun_a14b_inp`，并继续使用既有 `infer/` 目录结构与 `runs_plan.json` schema。
+- `--infer_backend wan_fun_5b_inp` 时，日志与 `infer/step_meta.json` 应显示 `backend_python_phase=infer_fun_5b`。
+- `infer/runs_plan.json`、`infer/step_meta.json`、`merge/frames/` 的产物路径不应因 backend 切换而变化。
+- `--infer_model_dir` 为空时，应从 `config/platform.yaml` 自动解析对应 backend 的默认模型条目。
 
 ## 4. `segment` 研究旁路冒烟测试
 `segment_analyze.py` 现在既会在 `--mode segment` 成功后默认自动触发，也会在 `--mode all` 中于 `segment` 后、`prompt` 前自动触发；也可在已有 `segment/` 产物基础上单独运行。

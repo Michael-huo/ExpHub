@@ -17,6 +17,9 @@ environments:
     infer:
       python: "/home/hx/anaconda3/envs/videox/bin/python"
       conda: "videox"
+    infer_fun_5b:
+      python: "/home/hx/anaconda3/envs/videox/bin/python"
+      conda: "videox"
     slam:
       python: "/home/hx/anaconda3/envs/droid/bin/python"
       conda: "droid"
@@ -32,6 +35,12 @@ models:
   wan2_2:
     path: "/data/hx/VideoX-Fun/models/Diffusion_Transformer/Wan2.2-Fun-A14B-InP"
     config: "/data/hx/VideoX-Fun/config/wan2.2/wan_civitai_i2v.yaml"
-    
+  wan2_2_fun_a14b_inp:
+    path: "/data/hx/VideoX-Fun/models/Diffusion_Transformer/Wan2.2-Fun-A14B-InP"
+    config: "/data/hx/VideoX-Fun/config/wan2.2/wan_civitai_i2v.yaml"
+  wan2_2_fun_5b_inp:
+    path: "/data/hx/VideoX-Fun/models/Diffusion_Transformer/Wan2.2-Fun-5B-InP"
+    config: "/data/hx/VideoX-Fun/config/wan2.2/wan_civitai_i2v.yaml"
+
   droid:
     path: "/data/hx/DROID-SLAM/droid.pth"
