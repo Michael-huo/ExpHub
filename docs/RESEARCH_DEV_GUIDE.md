@@ -144,7 +144,7 @@ segment → prompt → infer → merge → slam → eval → stats
 - `segment` 正式关键帧层当前聚焦三种策略：`uniform / motion / semantic`；其中 `semantic` 与 `motion` 共用“uniform 骨架 + fixed-budget allocation”的正式主框架，只在输入信号上分别使用 semantic kinematics 与 motion energy kinematics；
 - `segment / prompt / infer / slam` 的解释器现已统一由 `config/platform.yaml -> environments.phases.<phase>.python` 管理，日常 `--mode segment / --mode all` 不再依赖 CLI override；doctor 仅暴露 phase python 路径与 exists 状态；
 - `prompt` 已接入可切换的图像到文本流程：当前默认收敛为 SmolVLM2（`prompt_smol` phase、`sdpa`、`even` 采样、5 图），同时保留 Qwen 作为显式回退/对照 backend；
-- `infer` 已接入基于 Wan2.2 的图像与文本到视频流程；
+- `infer` 已接入基于 Wan2.2 的图像与文本到视频流程，并完成“前端入口 + 可切换 backend”重构：当前默认保持 `wan_fun_a14b_inp`，同时新增 `wan_fun_5b_inp` 作为更小模型的首个可验证替代 backend；其中 A14B 真实实现已下沉到标准 backend，旧 `_infer_i2v_impl.py` 仅保留兼容壳；
 - 下游 `slam / eval / stats` 已可用于验证几何一致性、统计压缩率与汇总实验信息；
 - 已新增 `segment_analyze.py` 研究旁路，可对既有 `segment/` 产物输出正式三策略的逐帧 kinematics / allocation / projection 分析；当前 `--mode segment` 与 `--mode all` 都会在 `segment` 成功后默认立即自动触发该分析旁路（可用 `--skip_analyze` 关闭），并将研究输出收敛为 `segment_summary.json / segment_timeseries.csv / kinematics_overview.png / allocation_overview.png / comparison_overview.png / projection_overview.png` 六个正式产物；其中 `projection_overview.png` 专门回答 raw schedule -> deploy schedule 的投影偏移。正式 analyze 仍内建 active policy + passive observer 横向对比：`semantic ↔ motion` 默认互为 observer，`uniform` 同时观测两者；对比结果仅写 analyze 产物，不进入 prompt / infer / merge / slam 主链路；
 - 各阶段与全流程耗时统计已纳入实验平台。

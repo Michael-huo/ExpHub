@@ -349,6 +349,17 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--gpus", type=int, default=2)
 
     ap.add_argument("--infer_extra", default="", help="extra args passed to infer_i2v.py (quoted string)")
+    ap.add_argument(
+        "--infer_backend",
+        default="wan_fun_a14b_inp",
+        choices=["wan_fun_a14b_inp", "wan_fun_5b_inp"],
+        help="infer backend used by scripts/infer_i2v.py",
+    )
+    ap.add_argument(
+        "--infer_model_dir",
+        default="",
+        help="override infer backend model dir or model id",
+    )
 
     ap.add_argument("--datasets_cfg", default="", help="datasets.json path (default: <exphub>/config/datasets.json)")
     ap.add_argument("--exp_root", default="", help="override experiments root (default: <exphub>/experiments/<dataset>/<sequence>)")
@@ -583,10 +594,16 @@ def main(argv: Optional[List[str]] = None) -> None:
             return str(args.qwen_model_dir or "").strip()
         return ""
 
+    def _infer_phase_name() -> str:
+        backend = str(args.infer_backend or "wan_fun_a14b_inp").strip().lower()
+        if backend == "wan_fun_5b_inp":
+            return "infer_fun_5b"
+        return "infer"
+
     def step_doctor() -> int:
         _info("STEP doctor: begin")
         has_critical_missing = False
-        phase_names = ["segment", "prompt", "infer", "slam"]
+        phase_names = ["segment", "prompt", _infer_phase_name(), "slam"]
         if str(args.prompt_backend or "smolvlm2").strip().lower() == "smolvlm2":
             phase_names.append("prompt_smol")
         for phase_name in phase_names:
@@ -702,6 +719,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                 "gpus": args.gpus,
                 "prompt_backend": args.prompt_backend,
                 "prompt_model_dir": args.prompt_model_dir,
+                "infer_backend": args.infer_backend,
+                "infer_model_dir": args.infer_model_dir,
                 "prompt_sample_mode": args.prompt_sample_mode,
                 "prompt_num_images": args.prompt_num_images,
                 "prompt_structured": bool(args.prompt_structured),
@@ -851,6 +870,14 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         exp_dir.mkdir(parents=True, exist_ok=True)
         _rm_in_exp(infer_dir)
+        infer_phase = _infer_phase_name()
+        if not get_phase_python_config(infer_phase):
+            if infer_phase == "infer_fun_5b":
+                _die(
+                    "missing infer_fun_5b phase config in config/platform.yaml. "
+                    "Please set environments.phases.infer_fun_5b.python before using --infer_backend wan_fun_5b_inp."
+                )
+            _die("missing infer phase config in config/platform.yaml")
 
         cmd_infer = [
             "python",
@@ -873,11 +900,17 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(args.seed_base),
             "--prompt_manifest",
             str(manifest),
+            "--infer_backend",
+            str(args.infer_backend),
+            "--infer_model_dir",
+            str(args.infer_model_dir),
+            "--backend_python_phase",
+            str(infer_phase),
         ]
         if args.infer_extra:
             import shlex as _sh
             cmd_infer.extend(_sh.split(args.infer_extra))
-        step_runner.run_env_python(cmd_infer, phase_name="infer", log_name="infer.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd_infer, phase_name=infer_phase, log_name="infer.log", cwd=exphub_root)
         _ensure(ctx.infer_runs_dir, "dir")
         _ensure(ctx.infer_runs_plan_path, "file")
 
@@ -887,6 +920,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         _ensure(ctx.infer_runs_plan_path, "file")
 
         _rm_in_exp(merge_dir)
+        infer_phase = _infer_phase_name()
 
         cmd_merge = [
             "python",
@@ -902,7 +936,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "--out_dir",
             str(merge_dir),
         ]
-        step_runner.run_env_python(cmd_merge, phase_name="infer", log_name="merge.log", cwd=exphub_root)
+        step_runner.run_env_python(cmd_merge, phase_name=infer_phase, log_name="merge.log", cwd=exphub_root)
 
         _ensure(ctx.merge_frames_dir, "dir")
         _ensure(ctx.merge_calib_path, "file")
