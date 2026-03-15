@@ -134,7 +134,7 @@ python -m exphub \
 - `prompt/step_meta.json` 应记录 `backend / attn_impl / sample_mode / num_images / backend_python_phase / prompt_gen_total_sec`。
 - `infer.log` 不应再只出现固定 stride 的 `0->24 / 24->48 / ...`；应体现真实 deploy 边界，例如 `0->28 / 28->60 / 60->92`。
 - `infer/runs_plan.json` 应保存真实执行边界；`merge/frames/` 数量必须等于 `runs_plan` 推导出的 `merged_end_idx - merged_start_idx + 1`。
-- `infer/step_meta.json` 应显示 `infer_backend / backend_python_phase / backend_entry_type / runs_plan_sha1` 等编排字段；默认命令下 `infer_backend=wan_fun_a14b_inp`，多卡口径下 `backend_entry_type` 应为 `torchrun_backend_worker`。
+- `infer/step_meta.json` 应显示 `infer_backend / backend_python_phase / backend_entry_type / runs_plan_sha1` 等编排字段；默认命令下 `infer_backend=wan_fun_5b_inp`，多卡口径下 `backend_entry_type` 应为 `torchrun_backend_worker`。
 - 若 `all` 全链路耗时过长，至少应人工确认新链路对旧实验产物仍保留 legacy fallback（manifest/deploy schedule 缺失时退回旧 `kf_gap` 切段）。
 
 ### 3.6 Prompt backend 切换冒烟测试
@@ -153,13 +153,14 @@ python -m exphub --mode prompt --dataset <ds> --sequence <seq> --tag <tag> --w <
 ### 3.7 Infer backend 切换冒烟测试
 ```bash
 python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec>
-python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --infer_backend wan_fun_5b_inp
 python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --infer_backend wan_fun_5b_inp --infer_extra "-- --num_inference_steps 20"
+python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --infer_backend wan_fun_a14b_inp
 ```
 
 **重点观察：**
-- 不传 `--infer_backend` 时，仍应走 `wan_fun_a14b_inp`，并继续使用既有 `infer/` 目录结构与 `runs_plan.json` schema。
-- `--infer_backend wan_fun_5b_inp` 时，日志与 `infer/step_meta.json` 应显示 `backend_python_phase=infer_fun_5b`。
+- 不传 `--infer_backend` 时，应默认走 `wan_fun_5b_inp`，并继续使用既有 `infer/` 目录结构与 `runs_plan.json` schema。
+- `--infer_backend wan_fun_a14b_inp` 时，应回退到 A14B 路线，并显示 `backend_python_phase=infer`。
+- `--infer_backend wan_fun_5b_inp` 或默认命令时，日志与 `infer/step_meta.json` 应显示 `backend_python_phase=infer_fun_5b`。
 - `infer/runs_plan.json`、`infer/step_meta.json`、`merge/frames/` 的产物路径不应因 backend 切换而变化。
 - `--infer_model_dir` 为空时，应从 `config/platform.yaml` 自动解析对应 backend 的默认模型条目。
 

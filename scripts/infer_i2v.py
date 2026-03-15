@@ -99,7 +99,7 @@ def main():
     )
     ap.add_argument(
         "--infer_backend",
-        default="wan_fun_a14b_inp",
+        default="wan_fun_5b_inp",
         choices=["wan_fun_a14b_inp", "wan_fun_5b_inp"],
         help="infer backend name",
     )

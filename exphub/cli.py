@@ -351,7 +351,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--infer_extra", default="", help="extra args passed to infer_i2v.py (quoted string)")
     ap.add_argument(
         "--infer_backend",
-        default="wan_fun_a14b_inp",
+        default="wan_fun_5b_inp",
         choices=["wan_fun_a14b_inp", "wan_fun_5b_inp"],
         help="infer backend used by scripts/infer_i2v.py",
     )
@@ -595,7 +595,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         return ""
 
     def _infer_phase_name() -> str:
-        backend = str(args.infer_backend or "wan_fun_a14b_inp").strip().lower()
+        backend = str(args.infer_backend or "wan_fun_5b_inp").strip().lower()
         if backend == "wan_fun_5b_inp":
             return "infer_fun_5b"
         return "infer"

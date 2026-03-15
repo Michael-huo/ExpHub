@@ -48,13 +48,13 @@ ExpHub 将所有的执行与调度收口于 `cli.py`。
   `python -m exphub --mode all --dataset <ds> --sequence <seq> --tag <tag> ...`
   `all` 会在 `segment` 完成后默认尝试生成 6 个 analyze 正式产物：`segment_summary.json / segment_timeseries.csv / kinematics_overview.png / allocation_overview.png / comparison_overview.png / projection_overview.png`。
 - **统一 phase 环境配置**：
-  `segment / prompt / infer / slam` 的解释器现在统一从 `config/platform.yaml -> environments.phases.<phase>.python` 读取；当前默认 prompt backend 已收敛为 `smolvlm2`，因此不传 `--prompt_backend` 时会默认走 `prompt_smol` phase；infer 侧默认 backend 为 `wan_fun_a14b_inp`，显式传 `--infer_backend wan_fun_5b_inp` 时会切到 `infer_fun_5b` phase；如需回退，可显式传 `--prompt_backend qwen`。
+  `segment / prompt / infer / slam` 的解释器现在统一从 `config/platform.yaml -> environments.phases.<phase>.python` 读取；当前默认 prompt backend 已收敛为 `smolvlm2`，因此不传 `--prompt_backend` 时会默认走 `prompt_smol` phase；infer 侧默认 backend 现为 `wan_fun_5b_inp`，默认会切到 `infer_fun_5b` phase；如需回退到 14B，可显式传 `--infer_backend wan_fun_a14b_inp`，如需回退 prompt，可显式传 `--prompt_backend qwen`。
 - **Doctor 观测点**：
   `--mode doctor` 现在展示各个 core phase 的 python 路径与 `exists=True/False` 检查结果；默认口径下会把 `prompt_smol` 一并纳入检查；若显式切到 `--infer_backend wan_fun_5b_inp`，doctor 也会同步检查 `infer_fun_5b` phase。
 - **Infer backend 示例**：
   `python -m exphub ... --mode infer`
-  `python -m exphub ... --mode infer --infer_backend wan_fun_5b_inp`
   `python -m exphub ... --mode infer --infer_backend wan_fun_5b_inp --infer_extra "-- --num_inference_steps 20"`
+  `python -m exphub ... --mode infer --infer_backend wan_fun_a14b_inp`
 - **Infer 入口约束**：
   `scripts/infer_i2v.py` 现在是唯一外部 infer 入口；旧 `scripts/_infer_i2v_impl.py` 仅保留为兼容壳，不再承载主要实现。
 - **多卡执行约束**：
