@@ -14,6 +14,15 @@ from tqdm import tqdm
 from _common import ensure_dir, get_platform_config, log_info, log_prog, log_warn, write_json_atomic
 from _prompt.api import create_backend
 from _prompt.backends.smolvlm2_backend import DEFAULT_SMOLVLM2_MODEL_ID
+from _prompt.manifest_v2 import (
+    MANIFEST_SCHEMA,
+    MANIFEST_VERSION,
+    build_global_invariants,
+    build_intent_instruction,
+    build_manifest_v2,
+    compile_legacy_prompts,
+    parse_intent_response,
+)
 from _prompt.sampling import list_images, sample_images
 from _schedule import (
     build_execution_segments_from_deploy_schedule,
@@ -111,11 +120,10 @@ DEFAULT_BASE_NEG = (
 )
 DEFAULT_INSTR = (
     "You will be given multiple frames sampled from a short video segment.\n"
-    "Write a concise prompt for image generation in 1-2 sentences, <= 60 tokens.\n"
-    "Focus on scene type, main structures, main objects, lighting.\n"
-    "Do NOT describe camera motion (no turning, accelerating, shaking, panning).\n"
-    "Do NOT list too many details.\n"
-    "Output ONLY the prompt text."
+    "Extract a structured intent card for video generation.\n"
+    "Capture stable scene identity, motion intent, geometry constraints, appearance constraints, and suppressions.\n"
+    "Keep the result conservative and compact.\n"
+    "Output JSON only."
 )
 
 
@@ -166,20 +174,7 @@ def _rep_policy_name(sample_mode: str, num_images: int) -> str:
 
 
 def _build_instruction(base_instruction: str, backend_name: str, structured: bool) -> str:
-    instruction = str(base_instruction or DEFAULT_INSTR).strip() or DEFAULT_INSTR
-    backend = str(backend_name or "smolvlm2").strip().lower()
-    if backend == "smolvlm2":
-        instruction += (
-            "\nKeep the description compact and stable."
-            "\nPrioritize scene, stable structures, notable objects, and lighting."
-            "\nDo NOT describe viewpoint change, frame transition, or camera motion."
-        )
-    if structured:
-        instruction += (
-            "\nReturn ONE line only using this format:"
-            " scene=<scene>; structures=<structures>; objects=<objects>; lighting=<lighting>."
-        )
-    return instruction
+    return build_intent_instruction(base_instruction or DEFAULT_INSTR, backend_name, strict_json=bool(structured))
 
 
 def _collect_clip_files(idx2path, start_idx, end_idx):  # type: (Dict[int, Path], int, int) -> List[str]
@@ -189,6 +184,19 @@ def _collect_clip_files(idx2path, start_idx, end_idx):  # type: (Dict[int, Path]
         if path_obj is None:
             continue
         out.append(str(path_obj.resolve()))
+    return out
+
+
+def _extract_rep_indices(selected_paths):  # type: (List[str]) -> List[int]
+    out = []  # type: List[int]
+    for path_text in selected_paths:
+        stem = Path(path_text).stem
+        if stem.isdigit():
+            out.append(int(stem))
+            continue
+        match = IDX_RE.search(stem)
+        if match:
+            out.append(int(match.group(1)))
     return out
 
 
@@ -310,6 +318,9 @@ def main():
     model_ref = _resolve_model_ref(args, default_qwen_model)
     max_new_tokens = _resolve_max_new_tokens(args)
     instruction = _build_instruction(args.instr, args.backend, bool(args.structured))
+    base_prompt_text = str(args.base_prompt).strip() or DEFAULT_BASE_PROMPT
+    base_neg_prompt_text = str(args.base_neg_prompt).strip()
+    global_invariants = build_global_invariants(base_prompt_text, base_neg_prompt_text)
 
     backend = create_backend(
         backend_name=args.backend,
@@ -339,6 +350,9 @@ def main():
     clips = []  # type: List[dict]
     errors = []  # type: List[str]
     prompt_times = []  # type: List[float]
+    parse_mode_counts = {}  # type: Dict[str, int]
+    structured_ok_count = 0
+    fallback_parse_count = 0
 
     for clip_id in tqdm(
         range(nclips),
@@ -386,10 +400,30 @@ def main():
             continue
 
         prompt_t0 = time.time()
-        prompt = backend.generate(selected_paths, instruction)
+        prompt_raw = backend.generate(selected_paths, instruction)
         prompt_sec = float(time.time() - prompt_t0)
         prompt_times.append(prompt_sec)
-        prompt = _clean_prompt(prompt)
+        prompt_raw = _clean_prompt(prompt_raw)
+        parsed_prompt = parse_intent_response(prompt_raw)
+        parse_mode = str(parsed_prompt.get("parse_mode", "") or "unknown")
+        parse_mode_counts[parse_mode] = int(parse_mode_counts.get(parse_mode, 0)) + 1
+        if bool(parsed_prompt.get("structured_ok")):
+            structured_ok_count += 1
+        else:
+            fallback_parse_count += 1
+
+        compiled_prompt = compile_legacy_prompts(
+            base_prompt=base_prompt_text,
+            base_neg_prompt=base_neg_prompt_text,
+            global_invariants=global_invariants,
+            intent_card=parsed_prompt.get("intent_card", {}),
+            control_hints=parsed_prompt.get("control_hints", {}),
+        )
+        if not prompt_raw:
+            compiled_prompt["delta_prompt"] = ""
+            compiled_prompt["delta_neg_prompt"] = ""
+            compiled_prompt["final_prompt_preview"] = base_prompt_text
+            compiled_prompt["final_neg_prompt_preview"] = base_neg_prompt_text
 
         clips.append(
             {
@@ -408,7 +442,17 @@ def main():
                 "execution_backend": str(seg_spec.get("execution_backend", execution_backend)),
                 "clip_seconds": clip_seconds,
                 "rep_frames": [Path(path_text).name for path_text in selected_paths],
-                "prompt": prompt,
+                "rep_indices": _extract_rep_indices(selected_paths),
+                "prompt": str(compiled_prompt.get("delta_prompt", "") or "").strip(),
+                "prompt_raw": prompt_raw,
+                "delta_neg_prompt": str(compiled_prompt.get("delta_neg_prompt", "") or "").strip(),
+                "prompt_parse_mode": parse_mode,
+                "intent_card": dict(parsed_prompt.get("intent_card", {}) or {}),
+                "control_hints": dict(parsed_prompt.get("control_hints", {}) or {}),
+                "compiled": {
+                    "final_prompt_preview": str(compiled_prompt.get("final_prompt_preview", "") or "").strip(),
+                    "final_neg_prompt_preview": str(compiled_prompt.get("final_neg_prompt_preview", "") or "").strip(),
+                },
             }
         )
 
@@ -435,9 +479,14 @@ def main():
 
     seg_items = []
     for it in clips:
+        intent_card = dict(it.get("intent_card", {}) or {})
+        control_hints = dict(it.get("control_hints", {}) or {})
+        compiled = dict(it.get("compiled", {}) or {})
+        raw_prompt = str(it.get("prompt_raw", "") or "").strip()
         seg_items.append(
             {
                 "seg": int(it["clip_id"]),
+                "seg_id": int(it["clip_id"]),
                 "clip_id": int(it["clip_id"]),
                 "segment_id": int(it.get("segment_id", it["clip_id"])),
                 "schedule_source": str(it.get("schedule_source", execution_source)),
@@ -451,19 +500,87 @@ def main():
                 "raw_gap": int(it.get("raw_gap", it["end_idx"] - it["start_idx"])),
                 "deploy_gap": int(it.get("deploy_gap", it["end_idx"] - it["start_idx"])),
                 "num_frames": int(it.get("num_frames", it["end_idx"] - it["start_idx"] + 1)),
+                "rep_indices": list(it.get("rep_indices", []) or []),
+                "boundary_meta": {
+                    "raw_start_idx": int(it.get("raw_start_idx", it["start_idx"])),
+                    "raw_end_idx": int(it.get("raw_end_idx", it["end_idx"])),
+                    "deploy_start_idx": int(it.get("deploy_start_idx", it["start_idx"])),
+                    "deploy_end_idx": int(it.get("deploy_end_idx", it["end_idx"])),
+                    "boundary_shift": int(it.get("boundary_shift", 0)),
+                    "gap_error": int(it.get("gap_error", 0)),
+                },
+                "intent_card": {
+                    "scene_anchor": str(intent_card.get("scene_anchor", "") or ""),
+                    "motion_intent": str(intent_card.get("motion_intent", "") or ""),
+                    "geometry_constraints": list(intent_card.get("geometry_constraints", []) or []),
+                    "appearance_constraints": list(intent_card.get("appearance_constraints", []) or []),
+                    "suppressions": list(intent_card.get("suppressions", []) or []),
+                },
+                "control_hints": {
+                    "motion_intensity": str(control_hints.get("motion_intensity", "low") or "low"),
+                    "geometry_priority": str(control_hints.get("geometry_priority", "high") or "high"),
+                    "risk_level": str(control_hints.get("risk_level", "low") or "low"),
+                },
+                "legacy": {
+                    "raw_response": raw_prompt,
+                    "parse_mode": str(it.get("prompt_parse_mode", "") or ""),
+                    "delta_prompt": str(it.get("prompt", "") or "").strip(),
+                    "delta_neg_prompt": str(it.get("delta_neg_prompt", "") or "").strip(),
+                },
+                "compiled": {
+                    "final_prompt_preview": str(compiled.get("final_prompt_preview", "") or "").strip(),
+                    "final_neg_prompt_preview": str(compiled.get("final_neg_prompt_preview", "") or "").strip(),
+                },
                 "delta_prompt": str(it.get("prompt", "") or "").strip(),
+                "delta_neg_prompt": str(it.get("delta_neg_prompt", "") or "").strip(),
             }
         )
 
-    manifest = {
-        "version": 1,
-        "base_prompt": str(args.base_prompt).strip() or DEFAULT_BASE_PROMPT,
-        "base_neg_prompt": str(args.base_neg_prompt).strip(),
+    sequence_meta = {
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "model": model_record,
+        "frames_dir": str(frames_dir),
+        "fps": int(fps),
+        "kf_gap": int(kf_gap),
+        "base_idx": int(base_idx),
+        "num_clips": int(nclips),
+        "rep_policy": _rep_policy_name(str(args.sample_mode), int(args.num_images)),
+        "sample_mode": str(args.sample_mode),
+        "num_images": int(args.num_images),
+        "backend": str(args.backend),
         "schedule_source": str(execution_source),
         "execution_backend": str(execution_backend),
         "deploy_schedule_path": str(deploy_schedule_path) if deploy_schedule_path is not None else "",
-        "segments": seg_items,
     }
+    compiler_meta = {
+        "name": "legacy_prompt_compiler",
+        "version": 1,
+        "compat_mode": "delta_prompt_legacy_fields",
+        "parse_strategy": [
+            "json",
+            "json_repaired",
+            "kv_pairs",
+            "fallback_from_json",
+            "fallback_from_json_repaired",
+            "fallback_from_kv_pairs",
+            "raw_text_fallback",
+        ],
+        "strict_json_requested": bool(args.structured),
+        "structured_ok_segments": int(structured_ok_count),
+        "fallback_segments": int(fallback_parse_count),
+        "parse_mode_counts": parse_mode_counts,
+    }
+    manifest = build_manifest_v2(
+        base_prompt=base_prompt_text,
+        base_neg_prompt=base_neg_prompt_text,
+        sequence_meta=sequence_meta,
+        global_invariants=global_invariants,
+        compiler=compiler_meta,
+        segments=seg_items,
+    )
+    manifest["schedule_source"] = str(execution_source)
+    manifest["execution_backend"] = str(execution_backend)
+    manifest["deploy_schedule_path"] = str(deploy_schedule_path) if deploy_schedule_path is not None else ""
     write_json_atomic(out_manifest, manifest, indent=2)
 
     manifest_bytes = out_manifest.read_bytes()
@@ -476,7 +593,7 @@ def main():
             clip_prompts_size = 0
     outputs_bytes_sum = int(manifest_size + clip_prompts_size)
     avg_prompt_sec = float(sum(prompt_times) / float(len(prompt_times))) if prompt_times else 0.0
-    prompt_style = "qwen2vl_delta" if str(args.backend) == "qwen" else "smolvlm2_delta"
+    prompt_style = "intent_card_v2_legacy_delta"
 
     step_meta = {
         "step": "prompt",
@@ -488,7 +605,9 @@ def main():
         "dtype": str(backend_meta.get("dtype", "") or ""),
         "sample_mode": str(args.sample_mode),
         "num_images": int(args.num_images),
-        "structured": bool(args.structured),
+        "structured": True,
+        "manifest_version": int(MANIFEST_VERSION),
+        "manifest_schema": MANIFEST_SCHEMA,
         "processor_load_sec": float(backend_meta.get("processor_load_sec", 0.0) or 0.0),
         "model_load_sec": float(backend_meta.get("model_load_sec", 0.0) or 0.0),
         "prompt_gen_total_sec": float(time.time() - total_t0),
@@ -496,6 +615,10 @@ def main():
         "selected_rep_policy": str(args.sample_mode),
         "backend_python_phase": str(args.backend_python_phase or ""),
         "prompt_style": prompt_style,
+        "compiler_name": str(compiler_meta.get("name", "")),
+        "structured_ok_segments": int(structured_ok_count),
+        "fallback_segments": int(fallback_parse_count),
+        "parse_mode_counts": parse_mode_counts,
         "frames_count": int(len(frame_files)),
         "clips_count": int(nclips),
         "schedule_source": str(execution_source),
@@ -520,6 +643,8 @@ def main():
     log_info("wrote: {}".format(out_manifest.parent / "step_meta.json"))
     if errors:
         log_warn("{} clips had sampling/input issues; see errors in clip_prompts.json".format(len(errors)))
+    if fallback_parse_count > 0:
+        log_warn("{} clips used raw-text fallback while compiling prompt manifest v2".format(int(fallback_parse_count)))
 
 
 if __name__ == "__main__":

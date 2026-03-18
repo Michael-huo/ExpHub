@@ -129,9 +129,9 @@ python -m exphub \
 - `segment` step 不因新 policy 崩溃。
 - `segment` 完成后、进入 `prompt` 前，日志中应出现 `post analyze start` 与 `post analyze done`；若 analyze 失败，也只应 WARN，不应阻断后续主链路。
 - `segment/frames/`、`segment/keyframes/`、`segment/keyframes/keyframes_meta.json`、`segment/deploy_schedule.json`、`segment/timestamps.txt`、`segment/calib.txt`、`segment/preprocess_meta.json`、`segment/step_meta.json` 全部存在。
-- `prompt/manifest.json` 中 `segments[*]` 应包含 `start_idx / end_idx / num_frames / deploy_gap`。
+- `prompt/manifest.json` 应为 `version=2`、`schema=prompt_manifest_v2`，且 `segments[*]` 至少包含 `start_idx / end_idx / num_frames / deploy_gap / intent_card / control_hints / legacy / compiled / delta_prompt / delta_neg_prompt`。
 - `segment/clip_prompts.json` 与 `prompt/manifest.json` 的字段结构不应因 prompt backend 切换而变化。
-- `prompt/step_meta.json` 应记录 `backend / attn_impl / sample_mode / num_images / backend_python_phase / prompt_gen_total_sec`。
+- `prompt/step_meta.json` 应记录 `backend / attn_impl / sample_mode / num_images / backend_python_phase / prompt_gen_total_sec / manifest_version / manifest_schema / fallback_segments`。
 - `infer.log` 不应再只出现固定 stride 的 `0->24 / 24->48 / ...`；应体现真实 deploy 边界，例如 `0->28 / 28->60 / 60->92`。
 - `infer/runs_plan.json` 应保存真实执行边界；`merge/frames/` 数量必须等于 `runs_plan` 推导出的 `merged_end_idx - merged_start_idx + 1`。
 - `infer/step_meta.json` 应显示 `infer_backend / backend_python_phase / backend_entry_type / runs_plan_sha1` 等编排字段；默认命令下 `infer_backend=wan_fun_5b_inp`，多卡口径下 `backend_entry_type` 应为 `torchrun_backend_worker`。
@@ -148,7 +148,7 @@ python -m exphub --mode prompt --dataset <ds> --sequence <seq> --tag <tag> --w <
 - 默认命令现在以 `smolvlm2 + sdpa + 5 图` 为主口径；不传 `--prompt_backend` 时也应走 `prompt_smol` phase。
 - `--prompt_backend smolvlm2` 时，日志与 `prompt/step_meta.json` 应显示 `backend_python_phase=prompt_smol`。
 - `--prompt_backend qwen` 时，应回退到原有 `prompt` phase，并继续兼容 `--qwen_model_dir`。
-- `prompt/manifest.json` 与 `segment/clip_prompts.json` 的既有消费 schema 不变，只允许 `prompt/step_meta.json` 出现增量统计字段。
+- `prompt/manifest.json` 的 infer 兼容字段必须保持可读：顶层 `base_prompt / base_neg_prompt` 与段内 `delta_prompt / delta_neg_prompt` 不能缺失；`segment/clip_prompts.json` 仍应保留可直接检查的 `prompt` 字段。
 
 ### 3.7 Infer backend 切换冒烟测试
 ```bash

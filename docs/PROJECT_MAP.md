@@ -24,8 +24,8 @@
 | `scripts/segment_make.py` | `segment` | `segment` 稳定入口，负责生成标准 segment 产物，并在 raw keyframes 之外额外写出 Wan `deploy_schedule.json` |
 | `scripts/segment_analyze.py` | `segment` 研究旁路 | 读取既有 `segment/` 产物，输出正式三策略（`uniform / motion / semantic`）的逐帧 kinematics/allocation/projection 分析图表，并内建 active policy + passive observer 横向对比（summary + compare 图，不改正式 keyframes） |
 | `scripts/_segment/` | `segment` (内部实现) | `api/extract/materialize/policies/research` 内聚 `segment` 的主链路与研究旁路逻辑；当前 `policies/` 只承载正式策略 `uniform / motion / semantic`，并由 `uniform.py / motion.py / semantic.py` 三个正式实现入口对外服务；研究侧 `research/` 负责共享信号与可视化支撑 |
-| `scripts/prompt_gen.py` | `prompt` | `prompt` 前端入口；负责解析 CLI、按 clip 采样图像、调用具体 backend 生成 prompt，并写回 `clip_prompts.json / manifest.json / step_meta.json` |
-| `scripts/_prompt/` | `prompt` (内部实现) | 内聚 prompt backend 抽象、采样策略与具体 VLM 实现；当前包含 `qwen` 与 `smolvlm2` 两个 backend |
+| `scripts/prompt_gen.py` | `prompt` | `prompt` 前端入口；负责解析 CLI、按 clip 采样图像、调用具体 backend 提取 segment intent，并写回 `clip_prompts.json / manifest.json / step_meta.json` |
+| `scripts/_prompt/` | `prompt` (内部实现) | 内聚 prompt backend 抽象、采样策略、`manifest_v2` schema / intent parser / legacy compiler，以及具体 VLM 实现；当前包含 `qwen` 与 `smolvlm2` 两个 backend |
 | `scripts/infer_i2v.py` | `infer` (外壳) | infer 前端入口；负责读取 frames / schedule / prompt manifest，构造统一 request，按 backend 路由并写回 `runs_plan.json / step_meta.json` |
 | `scripts/_infer/` | `infer` (内部实现) | infer backend 抽象层；当前包含 `wan_fun_runtime.py` 公共 runtime、`wan_fun_a14b_inp` / `wan_fun_5b_inp` 两个平级 backend，以及统一 request / factory |
 | `scripts/_infer_i2v_impl.py`| `infer` (兼容壳) | 旧 A14B 启动脚本的兼容入口；真实实现已下沉到 `scripts/_infer/backends/wan_fun_a14b_inp_backend.py` |
@@ -40,7 +40,7 @@
 |---|---|---|
 | `config/platform.yaml` | **外部依赖注册表** | 配置各跨域 Python 解释器（通过 `environments.phases.<phase>.python` 组织；`prompt` 可额外声明 `prompt_smol`，`infer` 可额外声明 `infer_fun_5b`）、模型路径、算法源码路径 |
 | `config/datasets.json` | **数据源注册表** | 定义实验可用的数据集 (如 ROS bag 路径、内参矩阵) |
-| `config/prompt_manifest.json`| **提示词模板库** | 提供基础 prompt 与负向 prompt 的预设配置 |
+| `config/prompt_manifest.json`| **提示词模板库** | 提供 `prompt_manifest_v2` 的基础 prompt、负向 prompt 与 compiler 模板 |
 
 ## 4. 动态调用映射网格 (Invocation Map)
 展示 `python -m exphub --mode <X>` 是如何一步步穿透到最底层的算法内核的：
