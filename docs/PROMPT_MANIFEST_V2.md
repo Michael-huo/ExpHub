@@ -57,13 +57,12 @@
 - 顶层 `base_prompt / base_neg_prompt`
 - 段内 `delta_prompt / delta_neg_prompt`
 
-## 5. 为什么本轮不改 infer
-当前目标只是把 prompt manifest 升级成更稳定的语义接口，并为后续更细粒度的控制留好位置。infer 仍按原逻辑拼接：
+## 5. infer v1 的消费方式
+当前 infer 已进入第一阶段接入：
 
-- `final_prompt = base_prompt + delta_prompt`
-- `final_neg_prompt = base_neg_prompt + delta_neg_prompt`
+- 若 manifest 满足 `version=2` 且 `schema=prompt_manifest_v2`，infer 会优先消费 `global_invariants / intent_card / control_hints`，在 infer 侧重新编译每段 `final_prompt / final_neg_prompt`；
+- 同时会把 `motion_intensity / geometry_priority / risk_level` 保守映射到 segment-level `num_inference_steps / guidance_scale / negative prompt boost`；
+- 若不是 v2，或某段缺少可用结构化字段，则 infer 会退回 legacy `delta_prompt / delta_neg_prompt`；
+- 再不行时，仍可回退到纯 `base_prompt / base_neg_prompt`。
 
-这样可以保证：
-- `prompt/manifest.json` 路径不变；
-- 现有实验目录与旧调用链不需要迁移；
-- 后续即使继续演进 prompt compiler，也不会立刻冲击 infer 主链路。
+也就是说，manifest v2 现在不再只是 prompt 阶段的中间语义接口，而是 infer 侧实际会消费的稳定结构化输入；但整条主链路、CLI 与产物路径都保持不变。

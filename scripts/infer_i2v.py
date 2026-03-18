@@ -70,6 +70,17 @@ def _normalize_extra(extra_args):
     return extra
 
 
+def _count_by_key(items, key):
+    # type: (list, str) -> dict
+    counts = {}
+    for item in list(items or []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get(key, "") or "").strip() or "unknown"
+        counts[name] = int(counts.get(name, 0)) + 1
+    return counts
+
+
 def main():
     cfg = get_platform_config()
     default_videox_repo = cfg.get("repos", {}).get("videox_fun", "")
@@ -275,7 +286,8 @@ def main():
         raise SystemExit("[ERR] invalid runs_plan.json: {}".format(runs_plan))
     write_json_atomic(runs_plan, plan_obj, indent=2)
     plan_bytes = runs_plan.read_bytes()
-    plan_segments = int(len(plan_obj.get("segments", []) or []))
+    plan_segment_items = list(plan_obj.get("segments", []) or [])
+    plan_segments = int(len(plan_segment_items))
 
     step_meta = {
         "step": "infer_i2v",
@@ -294,6 +306,12 @@ def main():
         "runs_plan_path": str(runs_plan),
         "runs_plan_size": int(len(plan_bytes)),
         "runs_plan_sha1": hashlib.sha1(plan_bytes).hexdigest(),
+        "prompt_manifest_version": int(plan_obj.get("prompt_manifest_version", manifest_obj.get("version", 1) or 1)),
+        "prompt_manifest_schema": str(plan_obj.get("prompt_manifest_schema", manifest_obj.get("schema", "") or "")),
+        "manifest_consumer_mode": str(plan_obj.get("manifest_consumer_mode", "legacy")),
+        "policy_debug_path": str(plan_obj.get("policy_debug_path", infer_dir / "policy_debug.json")),
+        "policy_source_counts": _count_by_key(plan_segment_items, "policy_source"),
+        "prompt_source_counts": _count_by_key(plan_segment_items, "prompt_source"),
     }
     step_meta.update(backend_meta)
     step_meta.update(backend_result)

@@ -13,11 +13,13 @@ from typing import Dict, Optional, Tuple
 
 try:
     from .base import DirectInferBackend, _run_filtered
+    from ..manifest_v2_consumer import load_prompt_manifest_for_infer, resolve_segment_overrides
 except Exception:
     _SCRIPTS_DIR = Path(__file__).resolve().parents[2]
     if str(_SCRIPTS_DIR) not in sys.path:
         sys.path.insert(0, str(_SCRIPTS_DIR))
     from _infer.backends.base import DirectInferBackend, _run_filtered
+    from _infer.manifest_v2_consumer import load_prompt_manifest_for_infer, resolve_segment_overrides
 
 
 WAN_GPU_MEMORY_MODES = (
@@ -78,6 +80,11 @@ class SegmentRunResult(object):
     run_frames: int
     prompt: str
     negative_prompt: str
+    prompt_source: str
+    policy_source: str
+    control_hints: Dict[str, object]
+    num_inference_steps: int
+    guidance_scale: float
     prompt_hash8: str
 
 
@@ -327,8 +334,6 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
     from PIL import Image
 
     from _common import get_platform_config
-    from _schedule import extract_execution_segments_from_manifest
-
     from videox_fun.dist import set_multi_gpus_devices, shard_model
     from videox_fun.models import (
         AutoTokenizer,
@@ -594,78 +599,6 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         except Exception:
             return src_s == dst_s
 
-    def _load_prompt_manifest(path):
-        # type: (str) -> dict
-        with open(path, "r", encoding="utf-8") as fobj:
-            manifest = json.load(fobj)
-        if not isinstance(manifest, dict):
-            raise ValueError("manifest must be a JSON object")
-        ver = manifest.get("version", 1)
-        if int(ver) not in (1, 2):
-            raise ValueError("unsupported manifest version: {}".format(ver))
-        base_prompt = str(manifest.get("base_prompt", "")).strip()
-        if not base_prompt:
-            raise ValueError("manifest.base_prompt is required and cannot be empty")
-        base_neg_prompt = str(manifest.get("base_neg_prompt", "")).strip()
-        seg_items = manifest.get("segments", [])
-        seg_map = {}
-        if seg_items is not None:
-            if not isinstance(seg_items, list):
-                raise ValueError("manifest.segments must be a list")
-            for item in seg_items:
-                if not isinstance(item, dict):
-                    continue
-                if "seg" not in item:
-                    continue
-                seg = int(item["seg"])
-                seg_map[seg] = {
-                    "delta_prompt": str(item.get("delta_prompt", "") or "").strip(),
-                    "delta_neg_prompt": str(item.get("delta_neg_prompt", "") or "").strip(),
-                }
-        return {
-            "version": int(ver),
-            "base_prompt": base_prompt,
-            "base_neg_prompt": base_neg_prompt,
-            "segments": seg_map,
-            "execution_segments": extract_execution_segments_from_manifest(manifest),
-            "_raw": manifest,
-        }
-
-    def _resolve_prompts(manifest, nseg):
-        # type: (dict, int) -> list
-        base_prompt = manifest["base_prompt"]
-        base_neg_prompt = manifest.get("base_neg_prompt", "") or ""
-        seg_map = manifest.get("segments", {}) or {}
-        out = []
-        for seg in range(int(nseg)):
-            delta_prompt = ""
-            delta_neg_prompt = ""
-            if seg in seg_map:
-                delta_prompt = seg_map[seg].get("delta_prompt", "") or ""
-                delta_neg_prompt = seg_map[seg].get("delta_neg_prompt", "") or ""
-            final_prompt = base_prompt if not delta_prompt else base_prompt + "\n" + delta_prompt
-            if base_neg_prompt and delta_neg_prompt:
-                final_neg_prompt = base_neg_prompt + "\n" + delta_neg_prompt
-            elif base_neg_prompt:
-                final_neg_prompt = base_neg_prompt
-            else:
-                final_neg_prompt = delta_neg_prompt
-            prompt_hash8 = _sha1_hex(final_prompt + "\n||NEG||\n" + final_neg_prompt)[:8]
-            out.append(
-                {
-                    "seg": seg,
-                    "base_prompt": base_prompt,
-                    "delta_prompt": delta_prompt,
-                    "final_prompt": final_prompt,
-                    "base_neg_prompt": base_neg_prompt,
-                    "delta_neg_prompt": delta_neg_prompt,
-                    "final_neg_prompt": final_neg_prompt,
-                    "prompt_hash8": prompt_hash8,
-                    "has_delta": bool(delta_prompt or delta_neg_prompt),
-                }
-            )
-        return out
-
     def _legacy_batch_execution_segments(base_idx, stride, num_segments):
         # type: (int, int, int) -> list
         if stride <= 0:
@@ -792,7 +725,11 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         )
 
     manifest_path = str(manifest_dst)
-    manifest_loaded = _load_prompt_manifest(manifest_path)
+    manifest_loaded = load_prompt_manifest_for_infer(
+        manifest_path,
+        default_prompt=prompt,
+        default_negative_prompt=negative_prompt,
+    )
     manifest_digest8 = _sha1_hex(_canonical_json(manifest_loaded["_raw"]))[:8]
     _write_text_atomic(str(prompt_dir / "digest.txt"), manifest_digest8 + "\n")
 
@@ -816,7 +753,18 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             execution_backend = "legacy_uniform"
 
     resolved_prompt_count = int(len(batch_execution_segments)) if args.batch else 1
-    resolved_prompts = _resolve_prompts(manifest_loaded, resolved_prompt_count)
+    resolved_segments = resolve_segment_overrides(
+        manifest_loaded,
+        resolved_prompt_count,
+        default_prompt=prompt,
+        default_negative_prompt=negative_prompt,
+        default_num_inference_steps=num_inference_steps,
+        default_guidance_scale=guidance_scale,
+    )
+    for item in resolved_segments:
+        item["prompt_hash8"] = _sha1_hex(item["final_prompt"] + "\n||NEG||\n" + item["final_neg_prompt"])[:8]
+
+    policy_debug_path = os.path.join(runs_parent, "policy_debug.json")
 
     if args.batch and batch_execution_segments:
         video_length = max([int(seg.get("num_frames", 1)) for seg in batch_execution_segments])
@@ -829,8 +777,30 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 "created_at": datetime.now().isoformat(),
                 "manifest_path": manifest_path,
                 "manifest_digest8": manifest_digest8,
+                "manifest_version": int(manifest_loaded.get("version", 1)),
+                "manifest_schema": str(manifest_loaded.get("schema", "") or ""),
+                "consumer_mode": str(manifest_loaded.get("consumer_mode", "")),
                 "num_segments": resolved_prompt_count,
-                "items": resolved_prompts,
+                "items": resolved_segments,
+            },
+        )
+        _write_json_atomic(
+            str(policy_debug_path),
+            {
+                "version": 1,
+                "created_at": datetime.now().isoformat(),
+                "manifest_path": manifest_path,
+                "manifest_digest8": manifest_digest8,
+                "manifest_version": int(manifest_loaded.get("version", 1)),
+                "manifest_schema": str(manifest_loaded.get("schema", "") or ""),
+                "consumer_mode": str(manifest_loaded.get("consumer_mode", "")),
+                "default_runtime": {
+                    "prompt": str(prompt),
+                    "negative_prompt": str(negative_prompt),
+                    "num_inference_steps": int(num_inference_steps),
+                    "guidance_scale": float(guidance_scale),
+                },
+                "segments": resolved_segments,
             },
         )
 
@@ -1096,6 +1066,24 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         if transformer_2 is not None:
             pipeline.transformer_2.share_cfg_skip(transformer=pipeline.transformer)
 
+    def _apply_segment_runtime_policy(current_num_inference_steps):
+        # type: (int) -> None
+        seg_steps = max(1, int(current_num_inference_steps))
+        if coefficients is not None:
+            pipeline.transformer.enable_teacache(
+                coefficients,
+                seg_steps,
+                teacache_threshold,
+                num_skip_start_steps=num_skip_start_steps,
+                offload=teacache_offload,
+            )
+            if transformer_2 is not None:
+                pipeline.transformer_2.share_teacache(transformer=pipeline.transformer)
+        if cfg_skip_ratio is not None:
+            pipeline.transformer.enable_cfg_skip(cfg_skip_ratio, seg_steps)
+            if transformer_2 is not None:
+                pipeline.transformer_2.share_cfg_skip(transformer=pipeline.transformer)
+
     if lora_path is not None:
         pipeline = merge_lora(pipeline, lora_path, lora_weight, device=device, dtype=weight_dtype)
         if transformer_2 is not None:
@@ -1165,17 +1153,33 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         "execution_backend": str(execution_backend) if args.batch else None,
         "manifest_path": os.path.abspath(manifest_path),
         "manifest_digest8": manifest_digest8,
+        "manifest_version": int(manifest_loaded.get("version", 1)),
+        "manifest_schema": str(manifest_loaded.get("schema", "") or ""),
+        "manifest_consumer_mode": str(manifest_loaded.get("consumer_mode", "")),
+        "policy_debug_path": os.path.abspath(policy_debug_path),
         "save_frames": bool(save_frames),
         "frame_ext": frame_ext,
         "is_batch": bool(args.batch),
         "source_frames_dir": str(args.frames_dir) if args.batch else None,
-        "num_inference_steps": int(num_inference_steps),
-        "guidance_scale": float(guidance_scale),
+        "default_num_inference_steps": int(num_inference_steps),
+        "default_guidance_scale": float(guidance_scale),
         "vae_temporal_compression_ratio": int(vae_temporal_ratio),
     }
 
-    def run_one_segment(start_path, end_path, seg_seed, segment_prompt, segment_negative_prompt, desired_num_frames=None):
-        # type: (str, str, int, str, str, Optional[int]) -> SegmentRunResult
+    def run_one_segment(
+        start_path,
+        end_path,
+        seg_seed,
+        segment_prompt,
+        segment_negative_prompt,
+        segment_prompt_source,
+        segment_policy_source,
+        segment_control_hints,
+        segment_num_inference_steps,
+        segment_guidance_scale,
+        desired_num_frames=None,
+    ):
+        # type: (str, str, int, str, str, str, str, Dict[str, object], int, float, Optional[int]) -> SegmentRunResult
         current_seed = int(seg_seed)
         segment_generator = torch.Generator(device=device).manual_seed(current_seed)
         if desired_num_frames is None:
@@ -1185,6 +1189,12 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             current_video_length_desired, current_video_length_run, _latent = _align_video_length_for_segment(int(desired_num_frames))
         segment_prompt = str(segment_prompt)
         segment_negative_prompt = str(segment_negative_prompt)
+        segment_prompt_source = str(segment_prompt_source or "")
+        segment_policy_source = str(segment_policy_source or "")
+        segment_control_hints = dict(segment_control_hints or {})
+        segment_num_inference_steps = max(1, int(segment_num_inference_steps))
+        segment_guidance_scale = float(segment_guidance_scale)
+        _apply_segment_runtime_policy(segment_num_inference_steps)
         with torch.no_grad():
             start_img = Image.open(start_path).convert("RGB")
             end_img = Image.open(end_path).convert("RGB")
@@ -1202,8 +1212,8 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 height=sample_size[0],
                 width=sample_size[1],
                 generator=segment_generator,
-                guidance_scale=guidance_scale,
-                num_inference_steps=num_inference_steps,
+                guidance_scale=segment_guidance_scale,
+                num_inference_steps=segment_num_inference_steps,
                 boundary=boundary,
                 video=input_video,
                 mask_video=input_video_mask,
@@ -1230,6 +1240,11 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 run_frames=int(current_video_length_run),
                 prompt=segment_prompt,
                 negative_prompt=segment_negative_prompt,
+                prompt_source=segment_prompt_source,
+                policy_source=segment_policy_source,
+                control_hints=segment_control_hints,
+                num_inference_steps=int(segment_num_inference_steps),
+                guidance_scale=float(segment_guidance_scale),
                 prompt_hash8=_sha1_hex(segment_prompt + "\n||NEG||\n" + segment_negative_prompt)[:8],
             )
 
@@ -1328,14 +1343,23 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             ),
             "schedule_source": save_context["schedule_source"],
             "execution_backend": save_context["execution_backend"],
-            "num_inference_steps": int(save_context["num_inference_steps"]),
-            "guidance_scale": float(save_context["guidance_scale"]),
+            "num_inference_steps": int(result.num_inference_steps),
+            "guidance_scale": float(result.guidance_scale),
+            "default_num_inference_steps": int(save_context["default_num_inference_steps"]),
+            "default_guidance_scale": float(save_context["default_guidance_scale"]),
             "seed": int(result.seed),
             "prompt": result.prompt,
             "negative_prompt": result.negative_prompt,
+            "prompt_source": result.prompt_source,
+            "policy_source": result.policy_source,
+            "control_hints": dict(result.control_hints or {}),
             "prompt_hash8": result.prompt_hash8,
             "prompt_manifest": save_context["manifest_path"],
             "prompt_manifest_digest8": save_context["manifest_digest8"],
+            "prompt_manifest_version": int(save_context["manifest_version"]),
+            "prompt_manifest_schema": save_context["manifest_schema"],
+            "manifest_consumer_mode": save_context["manifest_consumer_mode"],
+            "policy_debug_path": save_context["policy_debug_path"],
             "output_dir": run_dir,
             "output_video": "preview.mp4",
             "frames_dir": "frames" if save_context["save_frames"] else None,
@@ -1378,6 +1402,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 desired_frames = int(seg_spec.get("num_frames", end_idx - start_idx + 1))
                 seg_seed = int(args.seed_base) + int(seg)
                 run_name = _make_run_name(task_name, width, height, int(fps), desired_frames, start_idx, end_idx, seg_seed)
+                resolved_info = resolved_segments[int(seg)] if int(seg) < len(resolved_segments) else {}
                 segs.append(
                     {
                         "seg": int(seg),
@@ -1395,8 +1420,17 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                         "num_frames": int(desired_frames),
                         "seed": int(seg_seed),
                         "run_name": run_name,
-                        "prompt_hash8": resolved_prompts[int(seg)]["prompt_hash8"] if int(seg) < len(resolved_prompts) else None,
-                        "has_delta": resolved_prompts[int(seg)]["has_delta"] if int(seg) < len(resolved_prompts) else False,
+                        "prompt": str(resolved_info.get("final_prompt", "") or ""),
+                        "negative_prompt": str(resolved_info.get("final_neg_prompt", "") or ""),
+                        "delta_prompt": str(resolved_info.get("delta_prompt", "") or ""),
+                        "delta_neg_prompt": str(resolved_info.get("delta_neg_prompt", "") or ""),
+                        "prompt_hash8": resolved_info.get("prompt_hash8"),
+                        "has_delta": bool(resolved_info.get("has_delta", False)),
+                        "prompt_source": str(resolved_info.get("prompt_source", "")),
+                        "policy_source": str(resolved_info.get("policy_source", "")),
+                        "control_hints": dict(resolved_info.get("control_hints", {}) or {}),
+                        "num_inference_steps": int(resolved_info.get("num_inference_steps", num_inference_steps)),
+                        "guidance_scale": float(resolved_info.get("guidance_scale", guidance_scale)),
                     }
                 )
             plan = {
@@ -1422,6 +1456,12 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 "seed_base": int(args.seed_base),
                 "prompt_manifest": os.path.abspath(manifest_path),
                 "prompt_manifest_digest8": manifest_digest8,
+                "prompt_manifest_version": int(manifest_loaded.get("version", 1)),
+                "prompt_manifest_schema": str(manifest_loaded.get("schema", "") or ""),
+                "manifest_consumer_mode": str(manifest_loaded.get("consumer_mode", "")),
+                "policy_debug_path": os.path.abspath(policy_debug_path),
+                "default_num_inference_steps": int(num_inference_steps),
+                "default_guidance_scale": float(guidance_scale),
                 "segments": segs,
             }
             tmp_path = plan_path + ".tmp"
@@ -1438,10 +1478,15 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             seg_seed = int(args.seed_base) + int(seg)
             segment_prompt = prompt
             segment_negative_prompt = negative_prompt
+            segment_prompt_source = str(manifest_loaded.get("consumer_mode", "") or "fallback")
+            segment_policy_source = "fallback"
+            segment_control_hints = {}
+            segment_num_inference_steps = int(num_inference_steps)
+            segment_guidance_scale = float(guidance_scale)
             seg_i = int(seg) + 1
             hash_str = ""
-            if int(seg) < len(resolved_prompts):
-                prompt_info = resolved_prompts[int(seg)]
+            if int(seg) < len(resolved_segments):
+                prompt_info = resolved_segments[int(seg)]
                 hash_str = " hash={}".format(prompt_info["prompt_hash8"])
             desired_check, aligned_check, latent_check = _align_video_length_for_segment(desired_num_frames)
             if aligned_check != desired_num_frames:
@@ -1467,21 +1512,43 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                     hash_str,
                 )
             )
-            if int(seg) < len(resolved_prompts):
-                prompt_info = resolved_prompts[int(seg)]
+            if int(seg) < len(resolved_segments):
+                prompt_info = resolved_segments[int(seg)]
                 segment_prompt = prompt_info["final_prompt"]
                 segment_negative_prompt = prompt_info["final_neg_prompt"]
+                segment_prompt_source = str(prompt_info.get("prompt_source", "") or segment_prompt_source)
+                segment_policy_source = str(prompt_info.get("policy_source", "") or segment_policy_source)
+                segment_control_hints = dict(prompt_info.get("control_hints", {}) or {})
+                segment_num_inference_steps = int(prompt_info.get("num_inference_steps", num_inference_steps))
+                segment_guidance_scale = float(prompt_info.get("guidance_scale", guidance_scale))
                 rprint("[PROMPT] seg {}/{} base={}".format(seg_i, total, _escape_one_line(prompt_info.get("base_prompt", ""))))
                 if prompt_info.get("delta_prompt"):
                     rprint("[PROMPT] seg {}/{} delta={}".format(seg_i, total, _escape_one_line(prompt_info.get("delta_prompt", ""))))
                 if segment_negative_prompt:
                     rprint("[PROMPT] seg {}/{} neg={}".format(seg_i, total, _escape_one_line(segment_negative_prompt)))
+            rprint(
+                "[PROMPT] seg {}/{} policy_source={} steps={} guidance={} motion={} geometry={} risk={}".format(
+                    seg_i,
+                    total,
+                    segment_policy_source,
+                    segment_num_inference_steps,
+                    "{:.3f}".format(segment_guidance_scale),
+                    str(segment_control_hints.get("motion_intensity", "") or ""),
+                    str(segment_control_hints.get("geometry_priority", "") or ""),
+                    str(segment_control_hints.get("risk_level", "") or ""),
+                )
+            )
             segment_result = run_one_segment(
                 start_path,
                 end_path,
                 seg_seed,
                 segment_prompt,
                 segment_negative_prompt,
+                segment_prompt_source,
+                segment_policy_source,
+                segment_control_hints,
+                segment_num_inference_steps,
+                segment_guidance_scale,
                 desired_num_frames=desired_num_frames,
             )
             infer_sum += segment_result.infer_sec
@@ -1516,21 +1583,46 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
     else:
         segment_prompt = prompt
         segment_negative_prompt = negative_prompt
-        prompt_info = resolved_prompts[0] if len(resolved_prompts) > 0 else None
+        segment_prompt_source = str(manifest_loaded.get("consumer_mode", "") or "fallback")
+        segment_policy_source = "fallback"
+        segment_control_hints = {}
+        segment_num_inference_steps = int(num_inference_steps)
+        segment_guidance_scale = float(guidance_scale)
+        prompt_info = resolved_segments[0] if len(resolved_segments) > 0 else None
         if prompt_info is not None:
             segment_prompt = prompt_info["final_prompt"]
             segment_negative_prompt = prompt_info["final_neg_prompt"]
+            segment_prompt_source = str(prompt_info.get("prompt_source", "") or segment_prompt_source)
+            segment_policy_source = str(prompt_info.get("policy_source", "") or segment_policy_source)
+            segment_control_hints = dict(prompt_info.get("control_hints", {}) or {})
+            segment_num_inference_steps = int(prompt_info.get("num_inference_steps", num_inference_steps))
+            segment_guidance_scale = float(prompt_info.get("guidance_scale", guidance_scale))
             rprint("[PROMPT] single base={}".format(_escape_one_line(prompt_info.get("base_prompt", ""))))
             if prompt_info.get("delta_prompt"):
                 rprint("[PROMPT] single delta={}".format(_escape_one_line(prompt_info.get("delta_prompt", ""))))
             if segment_negative_prompt:
                 rprint("[PROMPT] single neg={}".format(_escape_one_line(segment_negative_prompt)))
+        rprint(
+            "[PROMPT] single policy_source={} steps={} guidance={} motion={} geometry={} risk={}".format(
+                segment_policy_source,
+                segment_num_inference_steps,
+                "{:.3f}".format(segment_guidance_scale),
+                str(segment_control_hints.get("motion_intensity", "") or ""),
+                str(segment_control_hints.get("geometry_priority", "") or ""),
+                str(segment_control_hints.get("risk_level", "") or ""),
+            )
+        )
         segment_result = run_one_segment(
             validation_image_start,
             validation_image_end,
             seed,
             segment_prompt,
             segment_negative_prompt,
+            segment_prompt_source,
+            segment_policy_source,
+            segment_control_hints,
+            segment_num_inference_steps,
+            segment_guidance_scale,
         )
         infer_sum = segment_result.infer_sec
         segments_ran = 1

@@ -27,7 +27,7 @@
 | `scripts/prompt_gen.py` | `prompt` | `prompt` 前端入口；负责解析 CLI、按 clip 采样图像、调用具体 backend 提取 segment intent，并写回 `clip_prompts.json / manifest.json / step_meta.json` |
 | `scripts/_prompt/` | `prompt` (内部实现) | 内聚 prompt backend 抽象、采样策略、`manifest_v2` schema / intent parser / legacy compiler，以及具体 VLM 实现；当前包含 `qwen` 与 `smolvlm2` 两个 backend |
 | `scripts/infer_i2v.py` | `infer` (外壳) | infer 前端入口；负责读取 frames / schedule / prompt manifest，构造统一 request，按 backend 路由并写回 `runs_plan.json / step_meta.json` |
-| `scripts/_infer/` | `infer` (内部实现) | infer backend 抽象层；当前包含 `wan_fun_runtime.py` 公共 runtime、`wan_fun_a14b_inp` / `wan_fun_5b_inp` 两个平级 backend，以及统一 request / factory |
+| `scripts/_infer/` | `infer` (内部实现) | infer backend 抽象层；当前包含 `manifest_v2_consumer.py` 轻量策略层、`wan_fun_runtime.py` 公共 runtime、`wan_fun_a14b_inp` / `wan_fun_5b_inp` 两个平级 backend，以及统一 request / factory |
 | `scripts/_infer_i2v_impl.py`| `infer` (兼容壳) | 旧 A14B 启动脚本的兼容入口；真实实现已下沉到 `scripts/_infer/backends/wan_fun_a14b_inp_backend.py` |
 | `scripts/merge_seq.py` | `merge` | 基于 `runs_plan.json` 的真实逐段边界做时间轴对齐、冗余去重与合并 |
 | `scripts/slam_droid.py` | `slam` | 调用 DROID-SLAM 提取生成轨道或原始轨道的位姿 |
