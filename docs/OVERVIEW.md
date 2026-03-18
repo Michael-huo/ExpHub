@@ -8,7 +8,7 @@ ExpHub 是一个**高度平台化、配置驱动**的视频流与 VSLAM（视觉
 它通过极致的环境解耦架构（读取 `platform.yaml` 穿透 Conda 环境隔离），将上游可切换的视觉大模型（VLM）、视频生成模型（I2V）与下游的 C++ SLAM 算法无缝串联。
 
 **当前主攻的科研课题：**
-1. **Prompt 消融实验**：探索不同结构的提示词设计（Base/Delta）对下游 SLAM 轨迹精度的影响。
+1. **Prompt 消融实验**：探索“更短、更稳、更保守”的全局 prompt 设计对下游 SLAM 轨迹精度的影响。
 2. **时空压缩率 vs 精度 Trade-off**：研究通过抽帧与生成式插帧带来的极高视频压缩率下，SLAM 系统的鲁棒性与精度损失边界。
 3. **工作流时间效率优化**：攻坚模型加载、Float8 量化与推理阶段的性能瓶颈，极致缩短实验全链路耗时。
 
@@ -23,7 +23,8 @@ ExpHub 严格定义了不可逆的 7 大单向数据流转阶段：
   - `segment/frames/` (抽取的基础关键帧)
   - `segment/keyframes/keyframes_meta.json` (raw schedule，研究层 canonical source-of-truth)
   - `segment/deploy_schedule.json` (Wan r4 deploy schedule，backend-specific 时间网投影)
-  - `prompt/manifest.json` (驱动生成的提示词清单)
+  - `prompt/profile.json` (`PromptProfile v1` 闭集画像)
+  - `prompt/final_prompt.json` (infer 直接消费的最终提示词)
   - `merge/frames/` (最终用于 SLAM 的长序列图像)
   - `slam/<track>/traj_est.tum` (输出的位姿估计轨迹)
   - `stats/report.json` (最终的全局性能评估与耗时统计)
@@ -31,7 +32,7 @@ ExpHub 严格定义了不可逆的 7 大单向数据流转阶段：
 当前 `segment -> prompt -> infer -> merge` 的时间计划已区分为三层：
 - `raw schedule`：仅由 `segment/keyframes/keyframes_meta.json` 表达，保留正式关键帧的研究事实。
 - `deploy schedule`：由 `segment/deploy_schedule.json` 表达，当前第一版只实现 `wan_r4`，要求首尾固定、段数不变、每段 gap 为 4 的倍数、总跨度守恒。
-- `execution manifest`：复用 `prompt/manifest.json` 的 `segments[*]`，下游 `prompt / infer / merge` 直接消费其中的 `start_idx / end_idx / num_frames`，不再自行按全局固定 `kf_gap` 重算边界。
+- `execution plan`：由 `segment/deploy_schedule.json` 或 `infer/execution_plan.json` 表达，下游 `infer / merge` 直接消费其中的 `start_idx / end_idx / num_frames`，不再让 `prompt` 承载执行边界。
 
 ## 4. 常用调度指令
 ExpHub 将所有的执行与调度收口于 `cli.py`。

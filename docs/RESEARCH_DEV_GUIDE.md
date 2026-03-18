@@ -93,7 +93,7 @@ segment → prompt → infer → merge → slam → eval → stats
 
 该阶段当前基于 Wan2.2，利用关键帧与文本条件恢复视频或图像序列。它是当前工作流中最接近“世界模型”角色的部分，也是整个语义传输框架中的解码核心。
 
-当前第一版 Wan 接入已不再使用单一全局 `kf_gap` 等距调度，而是改为消费 deploy-derived execution segments：每段都有自己的 `start_idx / end_idx / deploy_gap / num_frames`。这使得 `infer` 日志、`runs_plan.json` 与 `merge` 的时间对齐都能反映真实的非等距关键帧布局。当前 infer v1 默认会在运行时显式消费 `prompt_manifest_v2` 的 `global_invariants / intent_card / control_hints`，把结构化语义真正传到每段 prompt 与轻量 runtime policy 上，而不是只依赖 prompt 阶段预编译出的 legacy delta 文本；同时也新增了显式 `base_only` 基线，可完全绕过这些 segment-level 结构化字段，用于验证“复杂 prompt/policy 是否反而有害”。
+当前第一版 Wan 接入已不再使用单一全局 `kf_gap` 等距调度，而是改为消费 deploy-derived execution segments：每段都有自己的 `start_idx / end_idx / deploy_gap / num_frames`。这使得 `infer` 日志、`runs_plan.json` 与 `merge` 的时间对齐都能反映真实的非等距关键帧布局。最新一轮 prompt 重构后，主链路已放弃 `prompt_manifest_v2 / structured / base_only / delta` 这类复杂 prompt policy 体系，改为只保留 clip-level `PromptProfile v1`，并由其稳定生成一组全局 `prompt / negative_prompt` 供 infer 统一消费。
 
 ### 3.4 `merge`：序列整理与产物收口
 
@@ -145,8 +145,8 @@ segment → prompt → infer → merge → slam → eval → stats
 - `segment / prompt / infer / slam` 的解释器现已统一由 `config/platform.yaml -> environments.phases.<phase>.python` 管理，日常 `--mode segment / --mode all` 不再依赖 CLI override；doctor 仅暴露 phase python 路径与 exists 状态；
 - `prompt` 已接入可切换的图像到文本流程：当前默认收敛为 SmolVLM2（`prompt_smol` phase、`sdpa`、`even` 采样、5 图），同时保留 Qwen 作为显式回退/对照 backend；
 - `infer` 已接入基于 Wan2.2 的图像与文本到视频流程，并完成“前端入口 + 可切换 backend”重构：当前默认已切换为 `wan_fun_5b_inp`，`wan_fun_a14b_inp` 保留为显式回退/对照 backend；两者通过 `wan_fun_runtime.py` 共享运行时，但在 backend 结构上保持平级；
-- `infer` 现已进入 manifest v2 消费第一阶段：runtime 内新增薄策略层，会把 `motion_intensity / geometry_priority / risk_level` 映射到保守的 `num_inference_steps / guidance_scale / negative prompt boost`，并把每段最终策略写回 `runs_plan.json` 与 `policy_debug.json`；
-- `infer` 现已支持显式 `--prompt_policy base_only` 基线：只保留顶层 `base_prompt / base_neg_prompt` 与 backend 默认 steps/guidance，便于和默认 `structured` 模式做严格对照；
+- `infer` 当前已收敛为最小 prompt 消费模式：runtime 只读取 `prompt/final_prompt.json` 中的全局 `prompt / negative_prompt`，并把同一组文本广播到所有 execution segments；
+- `prompt` 主链路现只产出 `prompt/profile.json` 与 `prompt/final_prompt.json`，重点目标是“更短、更稳、更接近当前最佳手工 prompt”，而不是更复杂的结构化中间层；
 - 当前默认选择 5B 的原因是：在现有实验口径下，它具备更高推理效率，且已观察到优于 14B 的 RMSE 表现；因此主线默认值切到 5B，而 A14B 保留为显式回退与对照路线；
 - A14B/5B backend 的默认模型目录与 yaml 已统一迁移到 ExpHub 自身平台配置管理：模型通过 `platform.yaml -> models.wan2_2_fun_a14b_inp.path` 与 `models.wan2_2_fun_5b_inp.path` 指向 `/data/hx/models/exphub/infer` 下的统一模型仓，配置通过各自同项 `config` 指向仓内 `config/models/infer/Wan2.2-Fun-A14B-InP.yaml` 与 `config/models/infer/Wan2.2-Fun-5B-InP.yaml`；infer 已与 VideoX-Fun 的模型目录和配置目录解耦，但仍复用 `videox` conda 中的 Python 包；
 - 5B 默认运行策略已不再继承 14B 的 qfloat8 路线：当前 profile 默认走更稳的非量化 `model_cpu_offload`，A14B 则继续保留现有量化路径，以便在同一前端下做稳定对照；

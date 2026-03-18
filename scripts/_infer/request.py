@@ -9,7 +9,8 @@ from typing import Dict, List
 class InferRequest(object):
     frames_dir: Path
     exp_dir: Path
-    prompt_manifest_path: Path
+    prompt_file_path: Path
+    execution_plan_path: Path
     fps: int
     kf_gap: int
     base_idx: int
@@ -18,6 +19,5 @@ class InferRequest(object):
     gpus: int
     schedule_source: str
     execution_backend: str
-    prompt_policy: str = "structured"
     execution_segments: List[Dict[str, object]] = field(default_factory=list)
     infer_extra: List[str] = field(default_factory=list)

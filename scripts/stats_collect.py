@@ -165,7 +165,8 @@ def main():
 
     segment_frames = exp_dir / "segment" / "frames"
     keyframes_dir = exp_dir / "segment" / "keyframes"
-    prompt_manifest = exp_dir / "prompt" / "manifest.json"
+    prompt_profile = exp_dir / "prompt" / "profile.json"
+    prompt_final = exp_dir / "prompt" / "final_prompt.json"
 
     inputs = {
         "segment_step_meta": str(segment_meta_path.resolve()) if segment_meta_path.is_file() else None,
@@ -212,8 +213,14 @@ def main():
             "keyframes_dir": str(keyframes_dir.resolve()),
             "keyframe_count": keyframes_frames,
             "keyframe_bytes_sum": keyframes_bytes,
-            "prompt_files": [str(prompt_manifest.resolve())] if prompt_bytes is not None else [],
-            "prompt_file_count": 1 if prompt_bytes is not None else 0,
+            "prompt_files": [
+                str(path.resolve())
+                for path in [prompt_profile, prompt_final]
+                if prompt_bytes is not None and path.is_file()
+            ],
+            "prompt_file_count": len(
+                [path for path in [prompt_profile, prompt_final] if prompt_bytes is not None and path.is_file()]
+            ),
             "prompt_bytes_sum": prompt_bytes,
             "total_bytes_sum": (keyframes_bytes + prompt_bytes) if (keyframes_bytes is not None and prompt_bytes is not None) else None,
         },
