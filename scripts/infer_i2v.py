@@ -120,6 +120,12 @@ def main():
         help="override infer backend model dir or model id",
     )
     ap.add_argument(
+        "--prompt_policy",
+        default="structured",
+        choices=["structured", "base_only"],
+        help="infer prompt policy; structured consumes manifest v2 fields, base_only uses only base prompts",
+    )
+    ap.add_argument(
         "--backend_python_phase",
         default="infer",
         help="effective python phase selected by cli",
@@ -251,6 +257,7 @@ def main():
         gpus=int(args.gpus),
         schedule_source=str(schedule_source),
         execution_backend=str(schedule_backend),
+        prompt_policy=str(args.prompt_policy),
         execution_segments=list(execution_segments),
         infer_extra=_normalize_extra(args.extra),
     )
@@ -309,6 +316,7 @@ def main():
         "prompt_manifest_version": int(plan_obj.get("prompt_manifest_version", manifest_obj.get("version", 1) or 1)),
         "prompt_manifest_schema": str(plan_obj.get("prompt_manifest_schema", manifest_obj.get("schema", "") or "")),
         "manifest_consumer_mode": str(plan_obj.get("manifest_consumer_mode", "legacy")),
+        "prompt_policy": str(plan_obj.get("prompt_policy", args.prompt_policy)),
         "policy_debug_path": str(plan_obj.get("policy_debug_path", infer_dir / "policy_debug.json")),
         "policy_source_counts": _count_by_key(plan_segment_items, "policy_source"),
         "prompt_source_counts": _count_by_key(plan_segment_items, "prompt_source"),

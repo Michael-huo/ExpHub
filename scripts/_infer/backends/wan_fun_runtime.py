@@ -393,6 +393,13 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
     parser.add_argument("--prompt", type=str, default="", help="Text prompt override")
     parser.add_argument("--negative_prompt", type=str, default="", help="Negative prompt override")
     parser.add_argument("--prompt_manifest", type=str, default="", help="Prompt manifest json")
+    parser.add_argument(
+        "--prompt_policy",
+        type=str,
+        default="structured",
+        choices=["structured", "base_only"],
+        help="Prompt policy: structured consumes manifest v2 segment fields, base_only uses only base prompts",
+    )
     parser.add_argument("--guidance_scale", type=float, default=-1.0, help="CFG guidance scale")
     parser.add_argument("--num_inference_steps", type=int, default=-1, help="Denoising steps")
     parser.add_argument("--config_path", type=str, default="", help="Override YAML config path")
@@ -760,6 +767,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         default_negative_prompt=negative_prompt,
         default_num_inference_steps=num_inference_steps,
         default_guidance_scale=guidance_scale,
+        prompt_policy=str(args.prompt_policy),
     )
     for item in resolved_segments:
         item["prompt_hash8"] = _sha1_hex(item["final_prompt"] + "\n||NEG||\n" + item["final_neg_prompt"])[:8]
@@ -780,6 +788,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 "manifest_version": int(manifest_loaded.get("version", 1)),
                 "manifest_schema": str(manifest_loaded.get("schema", "") or ""),
                 "consumer_mode": str(manifest_loaded.get("consumer_mode", "")),
+                "prompt_policy": str(args.prompt_policy),
                 "num_segments": resolved_prompt_count,
                 "items": resolved_segments,
             },
@@ -794,6 +803,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 "manifest_version": int(manifest_loaded.get("version", 1)),
                 "manifest_schema": str(manifest_loaded.get("schema", "") or ""),
                 "consumer_mode": str(manifest_loaded.get("consumer_mode", "")),
+                "prompt_policy": str(args.prompt_policy),
                 "default_runtime": {
                     "prompt": str(prompt),
                     "negative_prompt": str(negative_prompt),
@@ -1156,6 +1166,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         "manifest_version": int(manifest_loaded.get("version", 1)),
         "manifest_schema": str(manifest_loaded.get("schema", "") or ""),
         "manifest_consumer_mode": str(manifest_loaded.get("consumer_mode", "")),
+        "prompt_policy": str(args.prompt_policy),
         "policy_debug_path": os.path.abspath(policy_debug_path),
         "save_frames": bool(save_frames),
         "frame_ext": frame_ext,
@@ -1359,6 +1370,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             "prompt_manifest_version": int(save_context["manifest_version"]),
             "prompt_manifest_schema": save_context["manifest_schema"],
             "manifest_consumer_mode": save_context["manifest_consumer_mode"],
+            "prompt_policy": save_context["prompt_policy"],
             "policy_debug_path": save_context["policy_debug_path"],
             "output_dir": run_dir,
             "output_video": "preview.mp4",
@@ -1459,6 +1471,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 "prompt_manifest_version": int(manifest_loaded.get("version", 1)),
                 "prompt_manifest_schema": str(manifest_loaded.get("schema", "") or ""),
                 "manifest_consumer_mode": str(manifest_loaded.get("consumer_mode", "")),
+                "prompt_policy": str(args.prompt_policy),
                 "policy_debug_path": os.path.abspath(policy_debug_path),
                 "default_num_inference_steps": int(num_inference_steps),
                 "default_guidance_scale": float(guidance_scale),

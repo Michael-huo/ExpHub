@@ -112,7 +112,7 @@
 - **职责**：
   - `infer_i2v.py`：infer 前端入口；负责解析 CLI、读取 schedule / prompt manifest / frames、构造统一 request、选择 backend，并写回 `infer/runs_plan.json` 与 `infer/step_meta.json`。
   - `scripts/_infer/`：infer backend 抽象层；当前内置 `wan_fun_a14b_inp` 与 `wan_fun_5b_inp` 两个标准 backend，统一暴露 `load() / run(request) / meta()`；多卡时 backend 会在内部自行启动 `torchrun` worker。
-  - `manifest_v2_consumer.py`：infer 侧 manifest 消费器；识别 `prompt_manifest_v2`、重编译 segment prompt，并把 `motion_intensity / geometry_priority / risk_level` 映射到保守的 runtime overrides。
+  - `manifest_v2_consumer.py`：infer 侧 manifest 消费器；默认识别 `prompt_manifest_v2`、重编译 segment prompt，并把 `motion_intensity / geometry_priority / risk_level` 映射到保守的 runtime overrides；显式 `--prompt_policy base_only` 时则退回到只消费顶层 `base_prompt / base_neg_prompt` 的最简基线。
   - `wan_fun_runtime.py`：Wan-Fun 14B/5B 共用 runtime；承载 profile 解析、pipeline 构造骨架、分布式初始化/退出、segment-level override 执行、统一保存逻辑与 worker 主流程。
   - `wan_fun_a14b_inp_backend.py` / `wan_fun_5b_inp_backend.py`：平级 backend wrapper；各自只定义 backend profile、默认 phase 与 worker 入口，不再互相继承业务实现。
   - `_infer_i2v_impl.py`：deprecated compatibility shim，仅用于兼容旧启动路径，内部直接调用新的 A14B backend。
@@ -124,12 +124,12 @@
   - 运行策略：默认 5B profile 走非量化 `model_cpu_offload`；A14B fallback 维持 `model_cpu_offload_and_qfloat8`，并通过 `infer/step_meta.json` 记录 `gpu_memory_mode / quantized_transformer / backend_profile_name`。
 - **Inputs (读取)**：
   - `segment/frames/`（读取首尾关键帧作为生成锚点）。
-  - `prompt/manifest.json`（优先读取其中的 execution segments；旧 manifest 则回退到 `segment/deploy_schedule.json` 或 legacy `kf_gap`；若为 `prompt_manifest_v2`，还会显式消费 `global_invariants / intent_card / control_hints`）。
+  - `prompt/manifest.json`（优先读取其中的 execution segments；旧 manifest 则回退到 `segment/deploy_schedule.json` 或 legacy `kf_gap`；若为 `prompt_manifest_v2`，默认会显式消费 `global_invariants / intent_card / control_hints`；若 `--prompt_policy base_only`，则只使用顶层 `base_prompt / base_neg_prompt`）。
 - **Outputs (写入)**：
   - `infer/runs/`：包含各个分段生成的视频片段。
-  - `infer/runs_plan.json`：运行计划与参数记录。`segments[*]` 会显式保存每段真实的 `start_idx / end_idx / raw_* / deploy_* / num_frames`，以及最终执行使用的 `prompt / negative_prompt / num_inference_steps / guidance_scale / prompt_source / policy_source / control_hints`。
-  - `infer/policy_debug.json`：segment-level policy 调试信息，保存默认 profile 值、manifest consumer 模式与每段 compiled prompt/runtime override。
-  - `infer/step_meta.json`：在保留原有统计字段的同时，额外记录 `infer_backend / infer_model_dir|infer_model_id / infer_config_path / backend_python_phase / backend_entry_type / gpu_memory_mode / quantized_transformer / backend_profile_name / frames_avail / schedule_source / execution_backend / runs_plan_* / manifest_consumer_mode / prompt_source_counts / policy_source_counts` 等前端编排信息；当前 `backend_entry_type` 会按实际执行方式区分为 `direct_backend` 或 `torchrun_backend_worker`。
+  - `infer/runs_plan.json`：运行计划与参数记录。顶层会显式保存 `prompt_policy`；`segments[*]` 会显式保存每段真实的 `start_idx / end_idx / raw_* / deploy_* / num_frames`，以及最终执行使用的 `prompt / negative_prompt / num_inference_steps / guidance_scale / prompt_source / policy_source / control_hints`。
+  - `infer/policy_debug.json`：segment-level policy 调试信息，保存默认 profile 值、manifest consumer 模式、`prompt_policy` 与每段 compiled prompt/runtime override。
+  - `infer/step_meta.json`：在保留原有统计字段的同时，额外记录 `infer_backend / infer_model_dir|infer_model_id / infer_config_path / backend_python_phase / backend_entry_type / gpu_memory_mode / quantized_transformer / backend_profile_name / frames_avail / schedule_source / execution_backend / runs_plan_* / manifest_consumer_mode / prompt_policy / prompt_source_counts / policy_source_counts` 等前端编排信息；当前 `backend_entry_type` 会按实际执行方式区分为 `direct_backend` 或 `torchrun_backend_worker`。
   - worker 生命周期：backend worker 会在结束或异常退出时做 best-effort barrier 与 `destroy_process_group()` 清理，以减少 `ProcessGroupNCCL` 警告噪音。
 
 ### 2.5 `scripts/merge_seq.py` (序列合并)
