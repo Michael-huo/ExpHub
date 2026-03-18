@@ -91,20 +91,22 @@
   - `segment/.segment_cache/<policy>/semantic_embeddings.npz`：当 active 或 observer 需要 `semantic` 语义信号时，analyze 复用/写入对应的 policy cache；不会再写入 `analysis/`。
 
 ### 2.3 `scripts/prompt_gen.py` (提示词生成)
-- **职责**：作为 `prompt` 前端入口，读取 `segment/frames/` 与 execution schedule，按 clip 采样代表帧，调用具体 prompt backend 生成用于下游视频生成的提示词清单。
+- **职责**：作为 `prompt` 前端入口，读取 `segment/frames/` 与 execution schedule，按 clip 采样代表帧，调用具体 prompt backend 提取结构化 `intent_card`，并编译出用于下游视频生成的 legacy prompt 清单。
 - **配置依赖**：
   - `qwen` backend：默认读取 `platform.yaml -> models.qwen2_vl.path`。
   - `smolvlm2` backend：默认使用 `HuggingFaceTB/SmolVLM2-2.2B-Instruct`；其解释器 phase 必须来自 `platform.yaml -> environments.phases.prompt_smol.python`。
 - **默认行为**：当前 prompt 默认 backend 为 `smolvlm2`，attention 实现固定为 `sdpa`，默认 `sample_mode=even`，默认 `num_images=5`；`qwen` 继续保留为显式回退/对照 backend。
 - **Inputs (读取)**：`segment/frames/`。
 - **Outputs (写入)**：
-  - `prompt/manifest.json`：标准的提示词清单文件（包含 base_prompt 和各段 delta_prompt），并复用 `segments[*]` 作为 downstream execution manifest：
+  - `prompt/manifest.json`：标准的提示词清单文件，现为 `prompt_manifest_v2`（包含 `base_prompt / base_neg_prompt / sequence_meta / global_invariants / compiler / segments[*]`），并复用 `segments[*]` 作为 downstream execution manifest：
     - `segments[*].start_idx / end_idx / num_frames` 是 `infer / merge` 真正消费的运行计划；
     - 若 `segment/deploy_schedule.json` 存在，则这些边界来自 deploy schedule；
     - 否则为历史实验回退到 legacy `kf_gap` 切段。
+    - `segments[*].intent_card / control_hints / legacy / compiled` 提供结构化语义接口；
+    - `segments[*].delta_prompt / delta_neg_prompt` 继续保留，供旧 infer 直接消费。
   - `segment/clip_prompts.json`：保存每段选中的代表帧与生成结果；schema 保持不变。
   - `prompt/step_meta.json`。
-  - `prompt/step_meta.json` 现额外记录 `backend / model_dir|model_id / attn_impl / dtype / sample_mode / num_images / structured / *_load_sec / avg_prompt_sec_per_clip / backend_python_phase`。
+  - `prompt/step_meta.json` 现额外记录 `backend / model_dir|model_id / attn_impl / dtype / sample_mode / num_images / structured / manifest_version / manifest_schema / compiler_name / fallback_segments / parse_mode_counts / *_load_sec / avg_prompt_sec_per_clip / backend_python_phase`。
 
 ### 2.4 `scripts/infer_i2v.py` & `scripts/_infer_i2v_impl.py` (视频生成推理)
 - **职责**：

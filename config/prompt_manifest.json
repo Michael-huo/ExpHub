@@ -1,1 +1,55 @@
-{ "version": 1, "base_prompt": "First-person camera moving forward along an outdoor park walkway. Photorealistic. Stable exposure and white balance. Consistent perspective and geometry, level horizon. Sharp, stable textures on pavement, grass, and trees. No flicker, no warping, no artifacts.", "base_neg_prompt": "blurry, flickering, warping, wobble, rolling shutter artifacts, ghosting, double edges, inconsistent geometry, wrong perspective, texture swimming, repeating patterns, oversharpening halos, heavy motion blur, text, watermark, jpeg artifacts, excessive noise, color shift, low quality, crowds, many people, fast moving objects" }
+{
+  "version": 2,
+  "schema": "prompt_manifest_v2",
+  "base_prompt": "First-person camera moving forward along an outdoor park walkway. Photorealistic. Stable exposure and white balance. Consistent perspective and geometry, level horizon. Sharp, stable textures on pavement, grass, and trees. No flicker, no warping, no artifacts.",
+  "base_neg_prompt": "blurry, flickering, warping, wobble, rolling shutter artifacts, ghosting, double edges, inconsistent geometry, wrong perspective, texture swimming, repeating patterns, oversharpening halos, heavy motion blur, text, watermark, jpeg artifacts, excessive noise, color shift, low quality, crowds, many people, fast moving objects",
+  "sequence_meta": {
+    "backend": "smolvlm2",
+    "sample_mode": "even",
+    "num_images": 5
+  },
+  "global_invariants": {
+    "positive_constraints": [
+      "First-person camera moving forward along an outdoor park walkway",
+      "Photorealistic",
+      "Stable exposure and white balance",
+      "Consistent perspective and geometry, level horizon",
+      "Sharp, stable textures on pavement, grass, and trees",
+      "No flicker, no warping, no artifacts"
+    ],
+    "negative_constraints": [
+      "blurry",
+      "flickering",
+      "warping",
+      "wobble",
+      "rolling shutter artifacts",
+      "ghosting",
+      "double edges",
+      "inconsistent geometry",
+      "wrong perspective",
+      "texture swimming",
+      "repeating patterns",
+      "oversharpening halos",
+      "heavy motion blur",
+      "text",
+      "watermark",
+      "jpeg artifacts",
+      "excessive noise",
+      "color shift",
+      "low quality",
+      "crowds",
+      "many people",
+      "fast moving objects"
+    ],
+    "notes": [
+      "Keep sequence-level scene identity stable unless the segment intent explicitly requires a local change.",
+      "Prefer stable geometry and coherent appearance over speculative detail."
+    ]
+  },
+  "compiler": {
+    "name": "legacy_prompt_compiler",
+    "version": 1,
+    "compat_mode": "delta_prompt_legacy_fields"
+  },
+  "segments": []
+}

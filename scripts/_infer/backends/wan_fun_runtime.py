@@ -601,7 +601,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         if not isinstance(manifest, dict):
             raise ValueError("manifest must be a JSON object")
         ver = manifest.get("version", 1)
-        if int(ver) != 1:
+        if int(ver) not in (1, 2):
             raise ValueError("unsupported manifest version: {}".format(ver))
         base_prompt = str(manifest.get("base_prompt", "")).strip()
         if not base_prompt:
@@ -623,7 +623,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                     "delta_neg_prompt": str(item.get("delta_neg_prompt", "") or "").strip(),
                 }
         return {
-            "version": 1,
+            "version": int(ver),
             "base_prompt": base_prompt,
             "base_neg_prompt": base_neg_prompt,
             "segments": seg_map,
