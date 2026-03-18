@@ -129,14 +129,13 @@ python -m exphub \
 - `segment` step 不因新 policy 崩溃。
 - `segment` 完成后、进入 `prompt` 前，日志中应出现 `post analyze start` 与 `post analyze done`；若 analyze 失败，也只应 WARN，不应阻断后续主链路。
 - `segment/frames/`、`segment/keyframes/`、`segment/keyframes/keyframes_meta.json`、`segment/deploy_schedule.json`、`segment/timestamps.txt`、`segment/calib.txt`、`segment/preprocess_meta.json`、`segment/step_meta.json` 全部存在。
-- `prompt/manifest.json` 应为 `version=2`、`schema=prompt_manifest_v2`，且 `segments[*]` 至少包含 `start_idx / end_idx / num_frames / deploy_gap / intent_card / control_hints / legacy / compiled / delta_prompt / delta_neg_prompt`。
-- `segment/clip_prompts.json` 与 `prompt/manifest.json` 的字段结构不应因 prompt backend 切换而变化。
-- `prompt/step_meta.json` 应记录 `backend / attn_impl / sample_mode / num_images / backend_python_phase / prompt_gen_total_sec / manifest_version / manifest_schema / fallback_segments`。
+- `prompt/profile.json` 应存在，且只包含 `PromptProfile v1` 的闭集字段。
+- `prompt/final_prompt.json` 应存在，且包含 `version / prompt / negative_prompt / profile / source`。
+- `prompt/step_meta.json` 应记录 `backend / sample_mode / num_images_used / representative_frames / backend_python_phase / prompt_gen_total_sec / profile_version`。
 - `infer.log` 不应再只出现固定 stride 的 `0->24 / 24->48 / ...`；应体现真实 deploy 边界，例如 `0->28 / 28->60 / 60->92`。
-- `infer/runs_plan.json` 应保存真实执行边界；`segments[*]` 还应能看到 `prompt / negative_prompt / num_inference_steps / guidance_scale / prompt_source / policy_source / control_hints`；`merge/frames/` 数量必须等于 `runs_plan` 推导出的 `merged_end_idx - merged_start_idx + 1`。
-- `infer/step_meta.json` 应显示 `infer_backend / backend_python_phase / backend_entry_type / runs_plan_sha1 / manifest_consumer_mode / policy_source_counts` 等编排字段；默认命令下 `infer_backend=wan_fun_5b_inp`，多卡口径下 `backend_entry_type` 应为 `torchrun_backend_worker`。
-- `infer/policy_debug.json` 应存在，并保存 segment-level compiled prompt 与 runtime policy，便于核对 `manifest_v2_structured / legacy / fallback` 三种来源。
-- 若 `all` 全链路耗时过长，至少应人工确认新链路对旧实验产物仍保留 legacy fallback（manifest/deploy schedule 缺失时退回旧 `kf_gap` 切段）。
+- `infer/runs_plan.json` 应保存真实执行边界；`segments[*]` 至少应能看到 `prompt / negative_prompt / num_inference_steps / guidance_scale / prompt_source`；`merge/frames/` 数量必须等于 `runs_plan` 推导出的 `merged_end_idx - merged_start_idx + 1`。
+- `infer/step_meta.json` 应显示 `infer_backend / backend_python_phase / backend_entry_type / runs_plan_sha1 / execution_plan_path / prompt_source_counts` 等编排字段；默认命令下 `infer_backend=wan_fun_5b_inp`，多卡口径下 `backend_entry_type` 应为 `torchrun_backend_worker`。
+- 若 `all` 全链路耗时过长，至少应人工确认新链路在 deploy schedule 缺失时仍会安全退回 `legacy_kf_gap` 切段。
 
 ### 3.6 Prompt backend 切换冒烟测试
 ```bash
@@ -146,17 +145,16 @@ python -m exphub --mode prompt --dataset <ds> --sequence <seq> --tag <tag> --w <
 ```
 
 **重点观察：**
-- 默认命令现在以 `smolvlm2 + sdpa + 5 图` 为主口径；不传 `--prompt_backend` 时也应走 `prompt_smol` phase。
+- 默认命令现在以 `smolvlm2 + 5 图` 为主口径；不传 `--prompt_backend` 时也应走 `prompt_smol` phase。
 - `--prompt_backend smolvlm2` 时，日志与 `prompt/step_meta.json` 应显示 `backend_python_phase=prompt_smol`。
 - `--prompt_backend qwen` 时，应回退到原有 `prompt` phase，并继续兼容 `--qwen_model_dir`。
-- `prompt/manifest.json` 的 infer 兼容字段必须保持可读：顶层 `base_prompt / base_neg_prompt` 与段内 `delta_prompt / delta_neg_prompt` 不能缺失；`segment/clip_prompts.json` 仍应保留可直接检查的 `prompt` 字段。
+- `prompt/profile.json` 与 `prompt/final_prompt.json` 的 schema 不应因 prompt backend 切换而变化。
 
 ### 3.7 Infer backend 切换冒烟测试
 ```bash
 python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec>
 python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --infer_backend wan_fun_5b_inp --infer_extra "-- --num_inference_steps 20"
 python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --infer_backend wan_fun_a14b_inp
-python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --prompt_policy base_only
 ```
 
 **重点观察：**
@@ -165,9 +163,7 @@ python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w
 - `--infer_backend wan_fun_5b_inp` 或默认命令时，日志与 `infer/step_meta.json` 应显示 `backend_python_phase=infer_fun_5b`。
 - `infer/runs_plan.json`、`infer/step_meta.json`、`merge/frames/` 的产物路径不应因 backend 切换而变化。
 - `--infer_model_dir` 为空时，应从 `config/platform.yaml` 自动解析对应 backend 的默认模型条目。
-- 若 `prompt/manifest.json` 为 `prompt_manifest_v2`，则至少抽查一个 segment，确认 `runs_plan.json` 中的 `prompt / negative_prompt / num_inference_steps / guidance_scale` 已非纯全局固定值，且 `policy_source=manifest_v2_structured`。
-- 若显式传 `--prompt_policy base_only`，则至少抽查一个 segment，确认 `runs_plan.json` 中 `prompt / negative_prompt` 直接等于顶层 `base_prompt / base_neg_prompt`，`num_inference_steps / guidance_scale` 等于 backend 默认值，且 `prompt_source=policy_source=base_only`。
-- 若替换为旧 manifest 或去掉结构化字段，则 infer 仍应完成执行，并在 `runs_plan.json` / `policy_debug.json` 中显示 `policy_source=legacy` 或 `fallback`。
+- 至少抽查一个 segment，确认 `runs_plan.json` 中 `prompt / negative_prompt` 直接来自 `prompt/final_prompt.json`，`num_inference_steps / guidance_scale` 等于 backend 默认值，且 `prompt_source=prompt_profile_v1`（或用户显式提供的 prompt file source）。
 
 ## 4. `segment` 研究旁路冒烟测试
 `segment_analyze.py` 现在既会在 `--mode segment` 成功后默认自动触发，也会在 `--mode all` 中于 `segment` 后、`prompt` 前自动触发；也可在已有 `segment/` 产物基础上单独运行。

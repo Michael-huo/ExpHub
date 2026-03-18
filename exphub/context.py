@@ -164,8 +164,12 @@ class ExperimentContext:
         return self.segment_dir / "clip_prompts.json"
 
     @property
-    def prompt_manifest_path(self):
-        return self.prompt_dir / "manifest.json"
+    def prompt_profile_path(self):
+        return self.prompt_dir / "profile.json"
+
+    @property
+    def prompt_final_path(self):
+        return self.prompt_dir / "final_prompt.json"
 
     @property
     def infer_runs_dir(self):

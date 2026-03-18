@@ -29,9 +29,7 @@ from _infer.request import InferRequest
 from _schedule import (
     build_execution_segments_from_deploy_schedule,
     build_legacy_execution_segments,
-    extract_execution_segments_from_manifest,
     load_deploy_schedule,
-    load_prompt_manifest,
 )
 
 
@@ -104,9 +102,9 @@ def main():
     ap.add_argument("--num_segments", type=int, default=0, help="If >0, cap segments to this value")
     ap.add_argument("--seed_base", type=int, default=43)
     ap.add_argument(
-        "--prompt_manifest",
+        "--prompt_file",
         default="",
-        help="Optional prompt manifest json; archived under <exp_dir>/prompt/manifest.json",
+        help="Optional final_prompt.json; archived under <exp_dir>/prompt/final_prompt.json",
     )
     ap.add_argument(
         "--infer_backend",
@@ -118,12 +116,6 @@ def main():
         "--infer_model_dir",
         default="",
         help="override infer backend model dir or model id",
-    )
-    ap.add_argument(
-        "--prompt_policy",
-        default="structured",
-        choices=["structured", "base_only"],
-        help="infer prompt policy; structured consumes manifest v2 fields, base_only uses only base prompts",
     )
     ap.add_argument(
         "--backend_python_phase",
@@ -165,8 +157,9 @@ def main():
 
     exp_dir = Path(args.exp_dir).resolve()
     prompt_dir = exp_dir / "prompt"
-    prompt_manifest_std = prompt_dir / "manifest.json"
+    prompt_file_std = prompt_dir / "final_prompt.json"
     infer_dir = exp_dir / "infer"
+    execution_plan_path = infer_dir / "execution_plan.json"
     runs_root = infer_dir / "runs"
     runs_root.mkdir(parents=True, exist_ok=True)
 
@@ -177,27 +170,26 @@ def main():
     videox_root = Path(args.videox_root).resolve()
     ensure_dir(videox_root, "videox_root")
 
-    if args.prompt_manifest:
-        src_manifest = Path(args.prompt_manifest).resolve()
-        ensure_file(src_manifest, "prompt_manifest")
+    if args.prompt_file:
+        src_prompt_file = Path(args.prompt_file).resolve()
+        ensure_file(src_prompt_file, "prompt_file")
         prompt_dir.mkdir(parents=True, exist_ok=True)
-        if _samefile_safe(src_manifest, prompt_manifest_std):
-            log_info("prompt_manifest already at standard path, skip copy: {}".format(prompt_manifest_std))
+        if _samefile_safe(src_prompt_file, prompt_file_std):
+            log_info("prompt_file already at standard path, skip copy: {}".format(prompt_file_std))
         else:
-            shutil.copy2(str(src_manifest), str(prompt_manifest_std))
-            log_info("prompt_manifest copied to standard path: {} -> {}".format(src_manifest, prompt_manifest_std))
+            shutil.copy2(str(src_prompt_file), str(prompt_file_std))
+            log_info("prompt_file copied to standard path: {} -> {}".format(src_prompt_file, prompt_file_std))
 
-    if not prompt_manifest_std.is_file():
+    if not prompt_file_std.is_file():
         raise SystemExit(
-            "[ERR] missing prompt manifest: {}. Run prompt step first or provide --prompt_manifest.".format(
-                prompt_manifest_std
+            "[ERR] missing prompt file: {}. Run prompt step first or provide --prompt_file.".format(
+                prompt_file_std
             )
         )
 
-    manifest_obj = load_prompt_manifest(prompt_manifest_std)
-    execution_segments = extract_execution_segments_from_manifest(manifest_obj)
-    schedule_source = str(manifest_obj.get("schedule_source", "") or "")
-    schedule_backend = str(manifest_obj.get("execution_backend", "") or "")
+    execution_segments = []
+    schedule_source = ""
+    schedule_backend = ""
 
     if not execution_segments:
         deploy_schedule = load_deploy_schedule(schedule_dir / "deploy_schedule.json")
@@ -210,7 +202,7 @@ def main():
         execution_segments = build_legacy_execution_segments(frames_avail, base_idx, kf_gap, int(args.num_segments))
         schedule_source = "legacy_kf_gap"
         schedule_backend = "legacy_uniform"
-        log_warn("execution schedule fallback: manifest/deploy schedule missing, using legacy kf_gap slicing")
+        log_warn("execution schedule fallback: deploy_schedule.json missing, using legacy kf_gap slicing")
 
     segments = int(len(execution_segments))
     if segments <= 0:
@@ -221,6 +213,17 @@ def main():
     used_frames = int(used_end_idx - used_start_idx + 1)
     tail_drop = int(max(0, frames_avail - (used_end_idx + 1)))
     mean_deploy_gap = float(_mean([int(seg["deploy_gap"]) for seg in execution_segments]))
+    write_json_atomic(
+        execution_plan_path,
+        {
+            "version": 1,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "schedule_source": str(schedule_source),
+            "execution_backend": str(schedule_backend),
+            "segments": list(execution_segments),
+        },
+        indent=2,
+    )
     if tail_drop > 0:
         log_warn(
             "segment has {} frames (plan {}/{}); uses {} frames [{}->{}], tail_drop={}".format(
@@ -248,7 +251,8 @@ def main():
     request = InferRequest(
         frames_dir=frames_dir,
         exp_dir=exp_dir,
-        prompt_manifest_path=prompt_manifest_std,
+        prompt_file_path=prompt_file_std,
+        execution_plan_path=execution_plan_path,
         fps=int(fps),
         kf_gap=int(kf_gap),
         base_idx=int(used_start_idx),
@@ -257,7 +261,6 @@ def main():
         gpus=int(args.gpus),
         schedule_source=str(schedule_source),
         execution_backend=str(schedule_backend),
-        prompt_policy=str(args.prompt_policy),
         execution_segments=list(execution_segments),
         infer_extra=_normalize_extra(args.extra),
     )
@@ -313,12 +316,10 @@ def main():
         "runs_plan_path": str(runs_plan),
         "runs_plan_size": int(len(plan_bytes)),
         "runs_plan_sha1": hashlib.sha1(plan_bytes).hexdigest(),
-        "prompt_manifest_version": int(plan_obj.get("prompt_manifest_version", manifest_obj.get("version", 1) or 1)),
-        "prompt_manifest_schema": str(plan_obj.get("prompt_manifest_schema", manifest_obj.get("schema", "") or "")),
-        "manifest_consumer_mode": str(plan_obj.get("manifest_consumer_mode", "legacy")),
-        "prompt_policy": str(plan_obj.get("prompt_policy", args.prompt_policy)),
-        "policy_debug_path": str(plan_obj.get("policy_debug_path", infer_dir / "policy_debug.json")),
-        "policy_source_counts": _count_by_key(plan_segment_items, "policy_source"),
+        "execution_plan_path": str(execution_plan_path),
+        "execution_plan_segments": int(len(execution_segments)),
+        "prompt_file_version": int(plan_obj.get("prompt_file_version", 1)),
+        "prompt_file_source": str(plan_obj.get("prompt_file_source", "")),
         "prompt_source_counts": _count_by_key(plan_segment_items, "prompt_source"),
     }
     step_meta.update(backend_meta)

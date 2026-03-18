@@ -101,20 +101,16 @@ def write_compression_stats(ctx: ExperimentContext) -> None:
     frames_dir = ctx.segment_frames_dir
     keyframes_dir = ctx.segment_keyframes_dir
 
-    # Prompt manifest is a stable payload across keep levels.
-    # (segment/clip_prompts.json is optional and may be pruned by cleanup.)
-    manifest = ctx.prompt_manifest_path
+    prompt_files = [ctx.prompt_profile_path, ctx.prompt_final_path]
 
     ori_n, ori_b = _sum_files(frames_dir, "*.png", follow_symlinks=True)
     kf_n, kf_b = _sum_files(keyframes_dir, "*.png", follow_symlinks=True)
 
-    prompt_files = []
-    if manifest.exists() and manifest.is_file():
-        prompt_files.append(manifest)
-
     prompt_n = 0
     prompt_b = 0
     for f in prompt_files:
+        if not f.exists() or not f.is_file():
+            continue
         prompt_n += 1
         try:
             prompt_b += int(f.stat().st_size)
@@ -360,12 +356,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         default="",
         help="override infer backend model dir or model id",
     )
-    ap.add_argument(
-        "--prompt_policy",
-        default="structured",
-        choices=["structured", "base_only"],
-        help="infer prompt policy: structured consumes manifest-v2 segment fields, base_only uses only base prompts",
-    )
 
     ap.add_argument("--datasets_cfg", default="", help="datasets.json path (default: <exphub>/config/datasets.json)")
     ap.add_argument("--exp_root", default="", help="override experiments root (default: <exphub>/experiments/<dataset>/<sequence>)")
@@ -428,11 +418,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         type=int,
         default=5,
         help="number of representative images passed into the prompt backend",
-    )
-    ap.add_argument(
-        "--prompt_structured",
-        action="store_true",
-        help="request structured one-line prompt output from the prompt backend",
     )
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
@@ -727,10 +712,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                 "prompt_model_dir": args.prompt_model_dir,
                 "infer_backend": args.infer_backend,
                 "infer_model_dir": args.infer_model_dir,
-                "prompt_policy": args.prompt_policy,
                 "prompt_sample_mode": args.prompt_sample_mode,
                 "prompt_num_images": args.prompt_num_images,
-                "prompt_structured": bool(args.prompt_structured),
                 "droid_seq": args.droid_seq,
                 "viz_enable": viz_enable,
                 "keep_level": args.keep_level,
@@ -809,7 +792,6 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         exp_dir.mkdir(parents=True, exist_ok=True)
         prompt_dir.mkdir(parents=True, exist_ok=True)
-        num_segments = ctx.segment_count(base_idx=args.base_idx, requested_segments=0)
         prompt_phase = _prompt_phase_name()
         prompt_python = get_phase_python_config(prompt_phase)
         if not prompt_python:
@@ -829,12 +811,6 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(exp_dir),
             "--fps",
             fps_arg,
-            "--kf_gap",
-            str(kf_gap),
-            "--base_idx",
-            str(args.base_idx),
-            "--num_segments",
-            str(num_segments),
             "--backend",
             str(args.prompt_backend),
             "--model_dir",
@@ -845,18 +821,13 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(args.prompt_sample_mode),
             "--num_images",
             str(args.prompt_num_images),
-            "--out_json",
-            str(ctx.segment_clip_prompts_path),
-            "--out_manifest",
-            str(ctx.prompt_manifest_path),
             "--backend_python_phase",
             str(prompt_phase),
         ]
-        if args.prompt_structured:
-            cmd.append("--structured")
 
         step_runner.run_env_python(cmd, phase_name=prompt_phase, log_name="prompt.log", cwd=exphub_root)
-        _ensure(ctx.prompt_manifest_path, "file")
+        _ensure(ctx.prompt_profile_path, "file")
+        _ensure(ctx.prompt_final_path, "file")
 
     def step_stats() -> None:
         cmd = [
@@ -869,10 +840,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         _ensure(ctx.stats_report_path, "file")
 
     def step_infer() -> None:
-        manifest = ctx.prompt_manifest_path
-        if not manifest.is_file():
+        prompt_file = ctx.prompt_final_path
+        if not prompt_file.is_file():
             _die(
-                'missing prompt/manifest.json. Run "--mode prompt" first or provide a valid prompt manifest.'
+                'missing prompt/final_prompt.json. Run "--mode prompt" first or provide a valid prompt file.'
             )
 
         exp_dir.mkdir(parents=True, exist_ok=True)
@@ -905,14 +876,12 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(args.base_idx),
             "--seed_base",
             str(args.seed_base),
-            "--prompt_manifest",
-            str(manifest),
+            "--prompt_file",
+            str(prompt_file),
             "--infer_backend",
             str(args.infer_backend),
             "--infer_model_dir",
             str(args.infer_model_dir),
-            "--prompt_policy",
-            str(args.prompt_policy),
             "--backend_python_phase",
             str(infer_phase),
         ]
@@ -1145,7 +1114,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             _run_step("segment", step_segment, str(segment_dir))
             maybe_run_post_analyze()
         elif args.mode == "prompt":
-            _run_step("prompt", step_prompt, str(ctx.prompt_manifest_path))
+            _run_step("prompt", step_prompt, str(ctx.prompt_final_path))
         elif args.mode == "infer":
             _run_step("infer", step_infer, str(ctx.infer_runs_plan_path))
         elif args.mode == "merge":
@@ -1159,7 +1128,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         else:  # all
             _run_step("segment", step_segment, str(segment_dir))
             maybe_run_post_analyze()
-            _run_step("prompt", step_prompt, str(ctx.prompt_manifest_path))
+            _run_step("prompt", step_prompt, str(ctx.prompt_final_path))
             _run_step("infer", step_infer, str(ctx.infer_runs_plan_path))
             _run_step("merge", step_merge, str(merge_dir))
             _run_step("slam", step_slam, str(slam_root))

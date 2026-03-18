@@ -91,29 +91,24 @@
   - `segment/.segment_cache/<policy>/semantic_embeddings.npz`：当 active 或 observer 需要 `semantic` 语义信号时，analyze 复用/写入对应的 policy cache；不会再写入 `analysis/`。
 
 ### 2.3 `scripts/prompt_gen.py` (提示词生成)
-- **职责**：作为 `prompt` 前端入口，读取 `segment/frames/` 与 execution schedule，按 clip 采样代表帧，调用具体 prompt backend 提取结构化 `intent_card`，并编译出用于下游视频生成的 legacy prompt 清单。
+- **职责**：作为 `prompt` 前端入口，读取 `segment/frames/`，抽取 3 到 5 张代表帧，调用具体 prompt backend 做闭集 `PromptProfile` 分类，多帧投票聚合并生成最终 `prompt / negative_prompt`。
 - **配置依赖**：
   - `qwen` backend：默认读取 `platform.yaml -> models.qwen2_vl.path`。
   - `smolvlm2` backend：默认使用 `HuggingFaceTB/SmolVLM2-2.2B-Instruct`；其解释器 phase 必须来自 `platform.yaml -> environments.phases.prompt_smol.python`。
 - **默认行为**：当前 prompt 默认 backend 为 `smolvlm2`，attention 实现固定为 `sdpa`，默认 `sample_mode=even`，默认 `num_images=5`；`qwen` 继续保留为显式回退/对照 backend。
 - **Inputs (读取)**：`segment/frames/`。
 - **Outputs (写入)**：
-  - `prompt/manifest.json`：标准的提示词清单文件，现为 `prompt_manifest_v2`（包含 `base_prompt / base_neg_prompt / sequence_meta / global_invariants / compiler / segments[*]`），并复用 `segments[*]` 作为 downstream execution manifest：
-    - `segments[*].start_idx / end_idx / num_frames` 是 `infer / merge` 真正消费的运行计划；
-    - 若 `segment/deploy_schedule.json` 存在，则这些边界来自 deploy schedule；
-    - 否则为历史实验回退到 legacy `kf_gap` 切段。
-    - `segments[*].intent_card / control_hints / legacy / compiled` 提供结构化语义接口；
-    - `segments[*].delta_prompt / delta_neg_prompt` 继续保留，供旧 infer 或 infer fallback 直接消费。
-  - `segment/clip_prompts.json`：保存每段选中的代表帧与生成结果；schema 保持不变。
+  - `prompt/profile.json`：clip-level `PromptProfile v1`，只包含 `version / scene_type / surface_type / side_structures / lighting_type / dynamic_risk / repetition_risk / profile_confidence`。
+  - `prompt/final_prompt.json`：infer 直接消费的最小产物，格式为 `{version, prompt, negative_prompt, profile, source}`。
   - `prompt/step_meta.json`。
-  - `prompt/step_meta.json` 现额外记录 `backend / model_dir|model_id / attn_impl / dtype / sample_mode / num_images / structured / manifest_version / manifest_schema / compiler_name / fallback_segments / parse_mode_counts / *_load_sec / avg_prompt_sec_per_clip / backend_python_phase`。
+  - `prompt/step_meta.json` 现额外记录 `backend / model_dir|model_id / dtype / sample_mode / num_images_used / representative_frames / *_load_sec / avg_prompt_sec_per_frame / backend_python_phase / profile_version`。
 
 ### 2.4 `scripts/infer_i2v.py` & `scripts/_infer_i2v_impl.py` (视频生成推理)
 - **职责**：
-  - `infer_i2v.py`：infer 前端入口；负责解析 CLI、读取 schedule / prompt manifest / frames、构造统一 request、选择 backend，并写回 `infer/runs_plan.json` 与 `infer/step_meta.json`。
+  - `infer_i2v.py`：infer 前端入口；负责解析 CLI、读取 schedule / `prompt/final_prompt.json` / frames、构造统一 request、选择 backend，并写回 `infer/runs_plan.json` 与 `infer/step_meta.json`。
   - `scripts/_infer/`：infer backend 抽象层；当前内置 `wan_fun_a14b_inp` 与 `wan_fun_5b_inp` 两个标准 backend，统一暴露 `load() / run(request) / meta()`；多卡时 backend 会在内部自行启动 `torchrun` worker。
-  - `manifest_v2_consumer.py`：infer 侧 manifest 消费器；默认识别 `prompt_manifest_v2`、重编译 segment prompt，并把 `motion_intensity / geometry_priority / risk_level` 映射到保守的 runtime overrides；显式 `--prompt_policy base_only` 时则退回到只消费顶层 `base_prompt / base_neg_prompt` 的最简基线。
-  - `wan_fun_runtime.py`：Wan-Fun 14B/5B 共用 runtime；承载 profile 解析、pipeline 构造骨架、分布式初始化/退出、segment-level override 执行、统一保存逻辑与 worker 主流程。
+  - `manifest_v2_consumer.py`：现为最小 prompt file consumer；只读取 `prompt / negative_prompt`，并把同一组文本广播到所有 execution segments。
+  - `wan_fun_runtime.py`：Wan-Fun 14B/5B 共用 runtime；承载 profile 解析、pipeline 构造骨架、分布式初始化/退出、统一 prompt 注入、统一保存逻辑与 worker 主流程。
   - `wan_fun_a14b_inp_backend.py` / `wan_fun_5b_inp_backend.py`：平级 backend wrapper；各自只定义 backend profile、默认 phase 与 worker 入口，不再互相继承业务实现。
   - `_infer_i2v_impl.py`：deprecated compatibility shim，仅用于兼容旧启动路径，内部直接调用新的 A14B backend。
 - **配置依赖**：
@@ -124,12 +119,12 @@
   - 运行策略：默认 5B profile 走非量化 `model_cpu_offload`；A14B fallback 维持 `model_cpu_offload_and_qfloat8`，并通过 `infer/step_meta.json` 记录 `gpu_memory_mode / quantized_transformer / backend_profile_name`。
 - **Inputs (读取)**：
   - `segment/frames/`（读取首尾关键帧作为生成锚点）。
-  - `prompt/manifest.json`（优先读取其中的 execution segments；旧 manifest 则回退到 `segment/deploy_schedule.json` 或 legacy `kf_gap`；若为 `prompt_manifest_v2`，默认会显式消费 `global_invariants / intent_card / control_hints`；若 `--prompt_policy base_only`，则只使用顶层 `base_prompt / base_neg_prompt`）。
+  - `prompt/final_prompt.json`（读取最终 `prompt / negative_prompt`）。
+  - `segment/deploy_schedule.json` 或 `infer/execution_plan.json`（读取真实执行边界）。
 - **Outputs (写入)**：
   - `infer/runs/`：包含各个分段生成的视频片段。
-  - `infer/runs_plan.json`：运行计划与参数记录。顶层会显式保存 `prompt_policy`；`segments[*]` 会显式保存每段真实的 `start_idx / end_idx / raw_* / deploy_* / num_frames`，以及最终执行使用的 `prompt / negative_prompt / num_inference_steps / guidance_scale / prompt_source / policy_source / control_hints`。
-  - `infer/policy_debug.json`：segment-level policy 调试信息，保存默认 profile 值、manifest consumer 模式、`prompt_policy` 与每段 compiled prompt/runtime override。
-  - `infer/step_meta.json`：在保留原有统计字段的同时，额外记录 `infer_backend / infer_model_dir|infer_model_id / infer_config_path / backend_python_phase / backend_entry_type / gpu_memory_mode / quantized_transformer / backend_profile_name / frames_avail / schedule_source / execution_backend / runs_plan_* / manifest_consumer_mode / prompt_policy / prompt_source_counts / policy_source_counts` 等前端编排信息；当前 `backend_entry_type` 会按实际执行方式区分为 `direct_backend` 或 `torchrun_backend_worker`。
+  - `infer/runs_plan.json`：运行计划与参数记录。顶层会显式保存 `prompt_file / prompt_file_digest8 / prompt_file_version / prompt_file_source`；`segments[*]` 会显式保存每段真实的 `start_idx / end_idx / raw_* / deploy_* / num_frames`，以及最终执行使用的 `prompt / negative_prompt / num_inference_steps / guidance_scale / prompt_source`。
+  - `infer/step_meta.json`：在保留原有统计字段的同时，额外记录 `infer_backend / infer_model_dir|infer_model_id / infer_config_path / backend_python_phase / backend_entry_type / gpu_memory_mode / quantized_transformer / backend_profile_name / frames_avail / schedule_source / execution_backend / runs_plan_* / execution_plan_path / prompt_source_counts` 等前端编排信息；当前 `backend_entry_type` 会按实际执行方式区分为 `direct_backend` 或 `torchrun_backend_worker`。
   - worker 生命周期：backend worker 会在结束或异常退出时做 best-effort barrier 与 `destroy_process_group()` 清理，以减少 `ProcessGroupNCCL` 警告噪音。
 
 ### 2.5 `scripts/merge_seq.py` (序列合并)
