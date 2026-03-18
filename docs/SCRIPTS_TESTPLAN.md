@@ -156,6 +156,7 @@ python -m exphub --mode prompt --dataset <ds> --sequence <seq> --tag <tag> --w <
 python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec>
 python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --infer_backend wan_fun_5b_inp --infer_extra "-- --num_inference_steps 20"
 python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --infer_backend wan_fun_a14b_inp
+python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w> --h <h> --fps <fps> --dur <dur> --start_sec <start_sec> --prompt_policy base_only
 ```
 
 **重点观察：**
@@ -165,6 +166,7 @@ python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w
 - `infer/runs_plan.json`、`infer/step_meta.json`、`merge/frames/` 的产物路径不应因 backend 切换而变化。
 - `--infer_model_dir` 为空时，应从 `config/platform.yaml` 自动解析对应 backend 的默认模型条目。
 - 若 `prompt/manifest.json` 为 `prompt_manifest_v2`，则至少抽查一个 segment，确认 `runs_plan.json` 中的 `prompt / negative_prompt / num_inference_steps / guidance_scale` 已非纯全局固定值，且 `policy_source=manifest_v2_structured`。
+- 若显式传 `--prompt_policy base_only`，则至少抽查一个 segment，确认 `runs_plan.json` 中 `prompt / negative_prompt` 直接等于顶层 `base_prompt / base_neg_prompt`，`num_inference_steps / guidance_scale` 等于 backend 默认值，且 `prompt_source=policy_source=base_only`。
 - 若替换为旧 manifest 或去掉结构化字段，则 infer 仍应完成执行，并在 `runs_plan.json` / `policy_debug.json` 中显示 `policy_source=legacy` 或 `fallback`。
 
 ## 4. `segment` 研究旁路冒烟测试

@@ -360,6 +360,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         default="",
         help="override infer backend model dir or model id",
     )
+    ap.add_argument(
+        "--prompt_policy",
+        default="structured",
+        choices=["structured", "base_only"],
+        help="infer prompt policy: structured consumes manifest-v2 segment fields, base_only uses only base prompts",
+    )
 
     ap.add_argument("--datasets_cfg", default="", help="datasets.json path (default: <exphub>/config/datasets.json)")
     ap.add_argument("--exp_root", default="", help="override experiments root (default: <exphub>/experiments/<dataset>/<sequence>)")
@@ -721,6 +727,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                 "prompt_model_dir": args.prompt_model_dir,
                 "infer_backend": args.infer_backend,
                 "infer_model_dir": args.infer_model_dir,
+                "prompt_policy": args.prompt_policy,
                 "prompt_sample_mode": args.prompt_sample_mode,
                 "prompt_num_images": args.prompt_num_images,
                 "prompt_structured": bool(args.prompt_structured),
@@ -904,6 +911,8 @@ def main(argv: Optional[List[str]] = None) -> None:
             str(args.infer_backend),
             "--infer_model_dir",
             str(args.infer_model_dir),
+            "--prompt_policy",
+            str(args.prompt_policy),
             "--backend_python_phase",
             str(infer_phase),
         ]

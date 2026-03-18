@@ -18,5 +18,6 @@ class InferRequest(object):
     gpus: int
     schedule_source: str
     execution_backend: str
+    prompt_policy: str = "structured"
     execution_segments: List[Dict[str, object]] = field(default_factory=list)
     infer_extra: List[str] = field(default_factory=list)

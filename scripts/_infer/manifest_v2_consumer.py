@@ -11,6 +11,10 @@ from _schedule import extract_execution_segments_from_manifest
 POLICY_SOURCE_MANIFEST_V2 = "manifest_v2_structured"
 POLICY_SOURCE_LEGACY = "legacy"
 POLICY_SOURCE_FALLBACK = "fallback"
+POLICY_SOURCE_BASE_ONLY = "base_only"
+
+PROMPT_POLICY_STRUCTURED = "structured"
+PROMPT_POLICY_BASE_ONLY = "base_only"
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _NEGATIVE_SPLIT_RE = re.compile(r"[\n,;]+")
@@ -307,6 +311,21 @@ def _resolve_structured_segment(base_prompt, base_neg_prompt, global_invariants,
     }
 
 
+def _resolve_base_only_segment(base_prompt, base_neg_prompt, default_num_inference_steps, default_guidance_scale):
+    # type: (str, str, int, float) -> dict
+    return {
+        "delta_prompt": "",
+        "delta_neg_prompt": "",
+        "final_prompt": str(base_prompt or "").strip(),
+        "final_neg_prompt": str(base_neg_prompt or "").strip(),
+        "prompt_source": POLICY_SOURCE_BASE_ONLY,
+        "policy_source": POLICY_SOURCE_BASE_ONLY,
+        "control_hints": {},
+        "num_inference_steps": int(default_num_inference_steps),
+        "guidance_scale": float(default_guidance_scale),
+    }
+
+
 def resolve_segment_overrides(
     manifest_info,
     num_segments,
@@ -314,14 +333,18 @@ def resolve_segment_overrides(
     default_negative_prompt,
     default_num_inference_steps,
     default_guidance_scale,
+    prompt_policy=PROMPT_POLICY_STRUCTURED,
 ):
-    # type: (dict, int, str, str, int, float) -> List[dict]
+    # type: (dict, int, str, str, int, float, str) -> List[dict]
     count = max(0, int(num_segments))
     base_prompt = str(manifest_info.get("base_prompt", "") or default_prompt or "").strip()
     base_neg_prompt = str(manifest_info.get("base_neg_prompt", "") or default_negative_prompt or "").strip()
     is_v2 = is_manifest_v2(manifest_info.get("_raw", {}))
     global_invariants = dict(manifest_info.get("global_invariants", {}) or {})
     seg_map = dict(manifest_info.get("segments", {}) or {})
+    selected_prompt_policy = str(prompt_policy or PROMPT_POLICY_STRUCTURED).strip().lower() or PROMPT_POLICY_STRUCTURED
+    if selected_prompt_policy not in (PROMPT_POLICY_STRUCTURED, PROMPT_POLICY_BASE_ONLY):
+        raise ValueError("unsupported prompt policy: {}".format(selected_prompt_policy))
     resolved = []
 
     for seg in range(count):
@@ -340,7 +363,21 @@ def resolve_segment_overrides(
         num_inference_steps = int(default_num_inference_steps)
         guidance_scale = float(default_guidance_scale)
 
-        if is_v2 and _segment_has_structured_fields(segment):
+        if selected_prompt_policy == PROMPT_POLICY_BASE_ONLY:
+            base_only = _resolve_base_only_segment(
+                base_prompt=base_prompt,
+                base_neg_prompt=base_neg_prompt,
+                default_num_inference_steps=int(default_num_inference_steps),
+                default_guidance_scale=float(default_guidance_scale),
+            )
+            prompt_source = str(base_only["prompt_source"])
+            policy_source = str(base_only["policy_source"])
+            final_prompt = str(base_only.get("final_prompt", "") or "").strip() or final_prompt
+            final_neg_prompt = str(base_only.get("final_neg_prompt", "") or "").strip()
+            control_hints = dict(base_only.get("control_hints", {}) or {})
+            num_inference_steps = int(base_only.get("num_inference_steps", num_inference_steps))
+            guidance_scale = float(base_only.get("guidance_scale", guidance_scale))
+        elif is_v2 and _segment_has_structured_fields(segment):
             structured = _resolve_structured_segment(
                 base_prompt=base_prompt,
                 base_neg_prompt=base_neg_prompt,
