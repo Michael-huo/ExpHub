@@ -133,8 +133,9 @@ python -m exphub \
 - `segment/clip_prompts.json` 与 `prompt/manifest.json` 的字段结构不应因 prompt backend 切换而变化。
 - `prompt/step_meta.json` 应记录 `backend / attn_impl / sample_mode / num_images / backend_python_phase / prompt_gen_total_sec / manifest_version / manifest_schema / fallback_segments`。
 - `infer.log` 不应再只出现固定 stride 的 `0->24 / 24->48 / ...`；应体现真实 deploy 边界，例如 `0->28 / 28->60 / 60->92`。
-- `infer/runs_plan.json` 应保存真实执行边界；`merge/frames/` 数量必须等于 `runs_plan` 推导出的 `merged_end_idx - merged_start_idx + 1`。
-- `infer/step_meta.json` 应显示 `infer_backend / backend_python_phase / backend_entry_type / runs_plan_sha1` 等编排字段；默认命令下 `infer_backend=wan_fun_5b_inp`，多卡口径下 `backend_entry_type` 应为 `torchrun_backend_worker`。
+- `infer/runs_plan.json` 应保存真实执行边界；`segments[*]` 还应能看到 `prompt / negative_prompt / num_inference_steps / guidance_scale / prompt_source / policy_source / control_hints`；`merge/frames/` 数量必须等于 `runs_plan` 推导出的 `merged_end_idx - merged_start_idx + 1`。
+- `infer/step_meta.json` 应显示 `infer_backend / backend_python_phase / backend_entry_type / runs_plan_sha1 / manifest_consumer_mode / policy_source_counts` 等编排字段；默认命令下 `infer_backend=wan_fun_5b_inp`，多卡口径下 `backend_entry_type` 应为 `torchrun_backend_worker`。
+- `infer/policy_debug.json` 应存在，并保存 segment-level compiled prompt 与 runtime policy，便于核对 `manifest_v2_structured / legacy / fallback` 三种来源。
 - 若 `all` 全链路耗时过长，至少应人工确认新链路对旧实验产物仍保留 legacy fallback（manifest/deploy schedule 缺失时退回旧 `kf_gap` 切段）。
 
 ### 3.6 Prompt backend 切换冒烟测试
@@ -163,6 +164,8 @@ python -m exphub --mode infer --dataset <ds> --sequence <seq> --tag <tag> --w <w
 - `--infer_backend wan_fun_5b_inp` 或默认命令时，日志与 `infer/step_meta.json` 应显示 `backend_python_phase=infer_fun_5b`。
 - `infer/runs_plan.json`、`infer/step_meta.json`、`merge/frames/` 的产物路径不应因 backend 切换而变化。
 - `--infer_model_dir` 为空时，应从 `config/platform.yaml` 自动解析对应 backend 的默认模型条目。
+- 若 `prompt/manifest.json` 为 `prompt_manifest_v2`，则至少抽查一个 segment，确认 `runs_plan.json` 中的 `prompt / negative_prompt / num_inference_steps / guidance_scale` 已非纯全局固定值，且 `policy_source=manifest_v2_structured`。
+- 若替换为旧 manifest 或去掉结构化字段，则 infer 仍应完成执行，并在 `runs_plan.json` / `policy_debug.json` 中显示 `policy_source=legacy` 或 `fallback`。
 
 ## 4. `segment` 研究旁路冒烟测试
 `segment_analyze.py` 现在既会在 `--mode segment` 成功后默认自动触发，也会在 `--mode all` 中于 `segment` 后、`prompt` 前自动触发；也可在已有 `segment/` 产物基础上单独运行。
