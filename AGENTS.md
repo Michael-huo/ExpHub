@@ -25,13 +25,22 @@
 
 ## 5. 文档强制同步 (Mandatory Docs Sync)
 - **Docs-as-Code (文档即代码)**：代码与文档具有同等地位。AI 必须根据修改内容，将更新精准路由到以下职责对应的文档中：
-  - **项目概览** → `docs/OVERVIEW.md`（高层级愿景与整体介绍）
-  - **系统架构** → `docs/ARCHITECTURE.md`（调用链路、平台化调度机制）
-  - **目录结构** → `docs/PROJECT_MAP.md`（文件树与各目录作用）
-  - **日志规则** → `docs/LOGGING.md`（终端 UI、前缀规范与落盘机制）
-  - **测试流程** → `docs/SCRIPTS_TESTPLAN.md`（如何运行跑通各模块）
-  - **脚本IO契约** → `docs/SCRIPTS_AUDIT.md`（各阶段输入输出产物、参数清单）
+  - **项目入口** → `docs/OVERVIEW.md`（项目是什么、当前默认主链路是什么、先读哪些文档）
+  - **系统架构** → `docs/ARCHITECTURE.md`（平台层/脚本层职责、phase 调度、实验目录组织）
+  - **流水线契约** → `docs/PIPELINE_CONTRACT.md`（各阶段输入输出、关键产物、最小验收与强契约）
+  - **日志规则** → `docs/LOGGING.md`（终端 UI、前缀规范、心跳与落盘机制）
+  - **Prompt 专题** → `docs/PROMPT_PROFILE_SYSTEM.md`（当前 `PromptProfile -> final_prompt.json` 专题说明）
   - **研究与开发主说明书** → `docs/RESEARCH_DEV_GUIDE.md`（课题背景、方法主线、评测维度、开发协作与阶段进展）
+  - **论文方法论北极星** → `docs/TITS_METHODOLOGY.md`（T-ITS 论文的方法论目标、学术叙事与模块贡献映射）
+- **推荐阅读顺序**：
+  1. 先读 `docs/OVERVIEW.md`
+  2. 再读 `docs/ARCHITECTURE.md`
+  3. 再读 `docs/PIPELINE_CONTRACT.md`
+  4. 如果任务只涉及系统事实、运行方式或脚本契约，到这里即可展开工作
+  5. 按任务需要补读 `docs/LOGGING.md`、`docs/PROMPT_PROFILE_SYSTEM.md`、`docs/RESEARCH_DEV_GUIDE.md`
+  6. 如果任务涉及“当前工程改动是否朝论文目标靠近”、方法设计、实验方向或模块贡献映射，必须额外参考 `docs/TITS_METHODOLOGY.md`
+- **职责边界**：`docs/TITS_METHODOLOGY.md` 用于学术目标对齐，不替代 `docs/ARCHITECTURE.md` 的系统事实源地位，也不替代 `docs/PIPELINE_CONTRACT.md` 的流水线契约地位。
+- **历史归档约束**：`docs/archive/` 只用于追溯旧实验设计与旧术语，不代表当前默认主链路。
 - **AI 强制自我审查**：AI 在完成一个阶段性的 Feature 开发后，必须主动审视 `docs/` 目录下的相关文档，并提供相应的更新文案；若改动影响研究目标、方法映射、评测维度或开发流程，必须同时检查 `docs/RESEARCH_DEV_GUIDE.md`。
 
 ## 6. 交付与验收标准 (Acceptance Criteria)

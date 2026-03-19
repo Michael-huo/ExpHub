@@ -1,98 +1,153 @@
-# ExpHub 系统架构说明 (ARCHITECTURE.md)
+# ExpHub 系统架构
 
-> **文档定位**：本文档是 ExpHub 平台的核心架构蓝图，定义了系统的顶层调度机制、主链路生命周期以及数据流转规范。关于具体的脚本输入输出参数，请参阅 `SCRIPTS_AUDIT.md`；关于日志 UI 规范，请参阅 `LOGGING.md`。
+> 本文回答什么问题：ExpHub 由哪些层组成、阶段如何被调度、实验目录如何组织、哪些边界不能被打破。
 
-## 1. 核心调度架构：平台化与跨环境穿透
-ExpHub 的核心设计理念是**“调度外壳与算法核心的分离”**。平台自身不绑定任何算法环境，而是作为一个智能路由器，根据配置动态拉起不同的运行环境。
+更多阶段级输入输出请看 [PIPELINE_CONTRACT.md](./PIPELINE_CONTRACT.md)，日志规则请看 [LOGGING.md](./LOGGING.md)；若需理解当前工程模块如何映射到论文方法论，请看 [TITS_METHODOLOGY.md](./TITS_METHODOLOGY.md)。
 
-- **唯一入口**：`python -m exphub`
-- **执行链路**：`exphub/__main__.py` -> `exphub/cli.py` -> `exphub/runner.py` -> `scripts/*.py`
-- **极致解耦 (Platform Decoupling)**：
-  - 平台通过 `scripts/_common.py` 读取 `config/platform.yaml` 获取所有外部依赖（包含 Conda 环境的 Python 解释器绝对路径、算法源码 Repos、模型权重 Models）。
-  - **统一 phase 配置**：各解释器统一定义在 `config/platform.yaml -> environments.phases.<phase>.python`，例如 `segment / prompt / prompt_smol / infer / infer_fun_5b / slam`。
-  - **配置形态**：
-    ```yaml
-    environments:
-      phases:
-        segment:
-          python: /path/to/segment/python
-        prompt:
-          python: /path/to/prompt/python
-        prompt_smol:
-          python: /path/to/prompt_smol/python
-        infer:
-          python: /path/to/infer/python
-        infer_fun_5b:
-          python: /path/to/infer_fun_5b/python
-        slam:
-          python: /path/to/slam/python
-    ```
-  - **跨环境穿透**：`exphub/runner.py` 不使用传统的 `bash -lc "conda activate ..."`。它按 phase 名读取对应解释器路径，并使用 `subprocess` 拉起底层脚本。
-  - **`segment` 的接入方式**：`segment` 仍保持 `runner.ros_exec(...)` 先 source ROS 的调用方式，但解释器解析也已收敛到统一的 phase resolver，不再使用 CLI override 或系统环境变量兼容层。
-  - **子进程继承**：底层脚本（如 `infer_i2v.py`）若需拉起更底层的多卡任务（如 `torchrun`），必须使用 `sys.executable`，以确保继承当前被激活的绝对路径，彻底免疫系统的 `PATH` 环境变量污染。
+## 1. 平台分层
 
-## 2. 主链路生命周期 (Main Pipeline)
-ExpHub 支持通过 `--mode all` 一键贯穿，或通过具体 mode 单步执行。`segment` 阶段完成后，系统会在主链路外默认立即尝试一次 warn-only 的 `segment_analyze.py` 后处理；这一步不会改写 raw schedule，也不会阻断后续 `prompt / infer / merge / slam`。主链路本身仍严格遵循以下 7 大阶段的单向数据流转：
+ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 
-1. **`segment` (切片锚定)**：读取原始数据集，按时间戳抽取关键帧，构建时间网格。
-2. **`prompt` (提示词生成)**：由 `prompt_gen.py` 前端抽取 3 到 5 张代表帧，再按 backend 路由到 VLM（当前支持 Qwen2-VL 与 SmolVLM2）做闭集 `PromptProfile` 分类、多帧投票聚合、规则清洗，并最终只写 `prompt/profile.json` 与 `prompt/final_prompt.json`。
-3. **`infer` (视频生成推理)**：由 `infer_i2v.py` 先完成 request 归一与 schedule 解析，再按 infer backend 调用 I2V 模型 (如 VideoX-Fun/Wan) 进行两帧之间的插帧推理；infer 只消费 `prompt/final_prompt.json` 中的 `prompt / negative_prompt` 两条文本，不再理解 segment-level prompt policy。
-4. **`merge` (序列合并)**：将分散的视频片段在时间轴上对齐、去重，并融合成连贯的长序列图像与视频。
-5. **`slam` (位姿估计)**：将合成的图像序列送入 VSLAM 算法（如 DROID-SLAM）计算相机轨迹。
-6. **`eval` (轨迹评估)**：使用 `evo` 工具比对估计轨迹与真实轨迹 (Ground Truth)，计算 APE/RPE 等指标。
-7. **`stats` (统计出图)**：收集上述各阶段的 `step_meta.json` 与运行日志，生成最终的 `EXPERIMENT PERFORMANCE PROFILING` 面板与数据报表。
+| 层级 | 位置 | 主要职责 |
+|---|---|---|
+| 平台入口层 | `exphub/__main__.py`, `exphub/cli.py` | 解析命令、选择 mode、组织 `segment -> ... -> stats` 调度 |
+| 运行器层 | `exphub/runner.py` | 按 phase 选择解释器，拉起子进程，收口日志 |
+| 实验上下文层 | `exphub/context.py`, `exphub/meta.py`, `exphub/cleanup.py` | 计算 `EXP_DIR`、统一命名、记录元数据、清理中间产物 |
+| 业务脚本层 | `scripts/*.py`, `scripts/_*/` | 执行各阶段算法逻辑 |
+| 配置层 | `config/platform.yaml`, `config/datasets.json` | 注册 phase Python、外部 repo、模型与数据集 |
 
-### 2.1 时间计划三层语义
-当前主链路中，关键帧相关时间计划已明确拆分为三层：
+平台层不直接实现算法；它的职责是把“在哪个环境执行哪段脚本”这件事做稳定。
 
-- `raw schedule`：只保存在 `segment/keyframes/keyframes_meta.json`，表达研究层正式关键帧序列，保持 canonical/source-of-truth 地位。
-- `deploy schedule`：保存在 `segment/deploy_schedule.json`，当前第一版只实现 `wan_r4` 投影，用于把 raw keyframes 投影到 Wan 可执行的时间网格。
-- `execution plan`：保存在 `segment/deploy_schedule.json` 或 `infer/execution_plan.json`，由 deploy schedule 派生并被 `infer / merge` 直接消费；`prompt` 不再承载执行边界。
+## 2. 执行入口与 phase 调度
 
-因此，`prompt / infer / merge` 不再自己根据全局固定 `kf_gap` 重建段边界；Wan 第一版要求 deploy 首尾固定、段数不变、总跨度不变，且每段 deploy gap 为 4 的倍数。
+统一入口是：
 
-### 2.2 Prompt backend 解耦
-- `scripts/prompt_gen.py` 只负责 CLI 参数归一、按 `sample_mode` 选图、调用 backend、解析/清洗闭集 `PromptProfile`，再写回 `prompt/profile.json` 与 `prompt/final_prompt.json`。
-- `scripts/_prompt/sampling.py` 只负责自然排序与采样策略；当前默认外部行为收敛为 `even + 5 图`，并仅保留其他模式作为兼容入口，不绑定具体模型。
-- `scripts/_prompt/backends/base.py` 定义统一 backend 接口：`load() / generate(image_paths, instruction) / meta()`。
-- `scripts/_prompt/backends/qwen_backend.py` 保留旧 Qwen 主路径。
-- `scripts/_prompt/backends/smolvlm2_backend.py` 接入 `HuggingFaceTB/SmolVLM2-2.2B-Instruct`，并允许通过 `prompt_smol` phase 使用独立 Conda Python。
-- `scripts/_prompt/profile.py / generator.py / templates.py` 承载新的最小 prompt 系统：闭集字段定义、投票聚合、模板映射与最终 prompt 生成。
+`python -m exphub`
 
-### 2.3 Infer backend 解耦
-- `scripts/infer_i2v.py` 现在只负责读取 `segment/frames`、`prompt/final_prompt.json`、`deploy_schedule.json`，并构造统一 infer request；真正的 prompt 消费只剩全局 `prompt / negative_prompt` 两条文本。
-- `scripts/_infer/backends/base.py` 定义统一 backend 接口：`load() / run(request) / meta()`。
-- `scripts/_infer/api.py` 负责根据 `--infer_backend` 创建 backend；当前支持：
-  - `wan_fun_5b_inp`：默认 backend，当前作为主 infer 路线；
-  - `wan_fun_a14b_inp`：显式回退/对照 backend，可通过 `--infer_backend wan_fun_a14b_inp` 启用。
-- `scripts/_infer/manifest_v2_consumer.py` 现退化为最小 prompt file consumer：读取 `prompt/final_prompt.json`，并把同一组 `prompt / negative_prompt` 广播到所有 execution segments。
-- `scripts/_infer/backends/wan_fun_runtime.py` 现承载 Wan-Fun 14B/5B 共用 runtime：包含 profile 解析、pipeline 构造骨架、同段双卡协同 worker、统一 prompt 注入、统一保存逻辑与分布式清理。
-- `wan_fun_a14b_inp` 与 `wan_fun_5b_inp` 现已平级：两者都只提供各自 backend profile 与 worker 入口，不再由 5B 继承/依赖 14B 实现。单卡可 direct run，多卡则由 backend 内部自行拉起 `torchrun` worker，从而保持产物目录与 `runs_plan.json` schema 不变。
-- `wan_fun_a14b_inp` 与 `wan_fun_5b_inp` 的默认模型与配置现统一由 ExpHub 自身管理：`config/platform.yaml -> models.wan2_2_fun_a14b_inp` / `models.wan2_2_fun_5b_inp` 的 `path` 都指向 `/data/hx/models/exphub/infer` 下对应模型目录，`config` 都指向仓内 `config/models/infer/*.yaml`；infer 已与 VideoX-Fun 的模型目录和配置目录解耦，但运行环境仍继续使用 `videox` conda。
-- 运行策略也通过 profile 解耦：A14B 默认维持当前可用的 qfloat8 路线；5B 默认改为非量化 `model_cpu_offload`，不再继承 14B 的量化策略。
-- 当前 Wan infer 的多卡执行模式仍是“同一段多卡协同推理、段与段串行”；所有 rank 走同一套 segment 推理路径，只在副作用出口保留最小角色差异，即仅 main process / rank0 负责保存视频、逐帧图片与结果元信息，并在 worker `finally` 中清理 `destroy_process_group()`。
-- `scripts/_infer_i2v_impl.py` 现仅保留为 deprecated compatibility shim，内部直接转发到新的 A14B backend。
-- CLI 会根据 backend 切换 phase：默认 5B 走 `infer_fun_5b`，显式 A14B fallback 走 `infer`；`infer_i2v.py` 仍是唯一对外 infer 入口。
+典型调用链为：
 
-## 3. 产物与目录规范 (Artifacts & Workspace)
-每个实验都会在一个专属的 `EXP_DIR` 下运行，命名契约由 `ExperimentContext` 统一管理（格式：`{tag}_{w}x{h}_t{start}s_dur{dur}s_fps{fps}_gap{kf_gap}`）。
+`exphub/__main__.py -> exphub/cli.py -> exphub/runner.py -> scripts/*.py`
 
-目录结构严格按照执行阶段划分，实现物理隔离：
-- `segment/`：存放抽取的关键帧、缩略图预览及分割元数据。
-- `prompt/`：存放 `profile.json`、`final_prompt.json` 与 `step_meta.json`。
-- `infer/`：存放各段生成的视频、推理帧文件夹及 `runs_plan.json`。
-- `merge/`：存放最终合并的 `frames/`、对齐时间戳 `timestamps.txt` 及完整视频。
-- `slam/`：存放轨迹输出（如 `traj_est.tum`）及 SLAM 系统内部缓存。
-- `eval/`：存放误差统计结果及 evo 绘制的误差对比图（`.zip` 或图像）。
-- `logs/`：收口所有阶段的终端全量输出（如 `infer.log`, `slam.log`），严格遵守前缀规范，不含原地刷新的乱码。
+### 2.1 phase Python 解析
 
-## 4. 模块执行边界与防篡改机制
-- **单向依赖**：下游步骤只能**只读**上游步骤的输出（例如 `prompt` 只能读 `segment/frames`），绝不允许反向修改或回写上游数据。
-- **无状态重试**：同参数重复执行任意步骤，必须直接覆盖原有输出目录或无缝接着跑（幂等性）。
-- **缺失阻断**：若前置数据缺失（如 `infer` 找不到 `prompt/final_prompt.json`），脚本必须立即抛出清晰的 `[ERR]` 错误并退出，禁止自行“脑补”或越权生成。
+所有跨环境解释器都从 `config/platform.yaml` 的 `environments.phases.<phase>.python` 读取。
 
-## 5. Doctor 体检机制 (`--mode doctor`)
-`doctor` 模式用于在正式运行前对环境和配置进行“防呆”检查。它**只检查不落盘**，不会创建任何实验目录。
-- **检查范围**：doctor 默认读取 core phase 的解释器配置，即 `segment / prompt / <selected infer phase> / slam`；若默认 prompt backend 为 `smolvlm2`，还会额外检查 `prompt_smol`；若 `--infer_backend wan_fun_5b_inp`，则 infer 侧检查项会切换为 `infer_fun_5b`。
-- **输出内容**：逐项输出 `phase=<name> python=<path> exists=<bool>`。
-- **失败条件**：若任一 core phase 缺失配置，或其 python 路径不存在/不可执行，则返回 `FAIL`。
+当前主链路相关的 phase 包括：
+
+- `segment`
+- `prompt`
+- `prompt_smol`
+- `infer`
+- `infer_fun_5b`
+- `slam`
+
+当前默认 phase 选择逻辑是：
+
+- `prompt_backend=smolvlm2` 时使用 `prompt_smol`
+- `prompt_backend=qwen` 时使用 `prompt`
+- `infer_backend=wan_fun_5b_inp` 时使用 `infer_fun_5b`
+- `infer_backend=wan_fun_a14b_inp` 时使用 `infer`
+- `merge` 复用当前 infer phase
+- `eval` 使用 `slam` phase 中的 `evo_*` 工具
+- `stats` 由 `prompt` phase 执行
+
+### 2.2 跨环境执行规则
+
+- 顶层调度不拼接 `conda activate`
+- `runner.run_env_python()` 直接使用 phase 对应的绝对 Python 路径
+- `segment` 仍通过 ROS 入口执行，但 phase 解析同样来自统一配置
+- 底层若继续拉起子进程或多卡 worker，必须继承当前解释器，而不是依赖系统 `PATH`
+
+## 3. 标准主链路
+
+主链路固定为：
+
+`segment -> prompt -> infer -> merge -> slam -> eval -> stats`
+
+各阶段的系统职责如下。
+
+| 阶段 | 主要脚本 | 系统职责 |
+|---|---|---|
+| `segment` | `scripts/segment_make.py` | 读取原始数据，输出标准帧序列、raw keyframes 和 deploy schedule |
+| `prompt` | `scripts/prompt_gen.py` | 从 `segment/frames/` 抽代表帧，生成 `PromptProfile` 与 `final_prompt` |
+| `infer` | `scripts/infer_i2v.py` | 读取 prompt 与执行计划，路由到具体 Wan backend |
+| `merge` | `scripts/merge_seq.py` | 按 `runs_plan.json` 的真实边界合并生成结果 |
+| `slam` | `scripts/slam_droid.py` | 在 `ori` 或 `gen` 轨道上估计位姿 |
+| `eval` | `exphub/cli.py` 内部调用 `evo_*` | 对 `ori/gen` 轨迹做对比评估 |
+| `stats` | `scripts/stats_collect.py` | 汇总 `step_meta.json` 与日志，生成最终统计 |
+
+`segment` 之后默认还会触发一次 `segment_analyze.py`：
+
+- 它是研究旁路，不属于主链路强依赖
+- 默认在 `--mode segment` 和 `--mode all` 后执行
+- 失败时只报 `WARN`，不阻断 `prompt / infer / merge / slam`
+
+## 4. 时间计划与 prompt 语义边界
+
+当前系统把“时间计划”和“prompt 文本”明确拆开。
+
+### 4.1 时间计划三层
+
+- raw schedule：`segment/keyframes/keyframes_meta.json`
+- deploy schedule：`segment/deploy_schedule.json`
+- execution plan：`infer/execution_plan.json`
+
+当前默认行为是：
+
+- `segment` 产出 raw keyframes，并投影出 `wan_r4` deploy schedule
+- `infer` 优先从 `deploy_schedule.json` 派生 execution segments
+- 如果 deploy schedule 缺失，`infer` 才回退到 `legacy_kf_gap` slicing
+- `merge` 只信任 `runs_plan.json` 中的真实 `start_idx / end_idx`
+
+### 4.2 prompt 边界
+
+当前 prompt 主链路已经收敛为：
+
+- `prompt/profile.json`
+- `prompt/final_prompt.json`
+
+`infer` 默认只消费 `final_prompt.json` 中的全局 `prompt / negative_prompt`，不再把旧的 `manifest_v2 / base_only / delta_prompt` 当作当前一线机制。
+
+专题细节见 [PROMPT_PROFILE_SYSTEM.md](./PROMPT_PROFILE_SYSTEM.md)。
+
+## 5. 实验上下文与目录布局
+
+每个实验运行在独立 `EXP_DIR`：
+
+`{tag}_{w}x{h}_t{start}s_dur{dur}s_fps{fps}_gap{kf_gap}`
+
+目录按阶段隔离，常见布局如下：
+
+- `segment/`：`frames/`、`keyframes/`、`keyframes_meta.json`、`deploy_schedule.json`
+- `prompt/`：`profile.json`、`final_prompt.json`、`step_meta.json`
+- `infer/`：`execution_plan.json`、`runs/`、`runs_plan.json`、`step_meta.json`
+- `merge/`：`frames/`、`timestamps.txt`、`calib.txt`、`step_meta.json`
+- `slam/`：`ori/`、`gen/` 轨迹与运行元数据
+- `eval/`：`evo_traj_*`、`evo_ape_*` 文本与可选图像
+- `stats/`：`report.json`、`compression.json`
+- `logs/`：各阶段完整日志
+
+## 6. 不能被打破的架构边界
+
+- 下游阶段只能读取上游产物，不能回写上游目录
+- 当前实验目录允许覆盖式重跑，但产物路径约定不能随意改名
+- 缺失关键输入时必须 fail fast，而不是自动脑补
+- 文档和代码必须一致；如果默认 backend、phase 或产物变了，文档需要同步
+
+## 7. Doctor 与运行方式
+
+`python -m exphub --mode doctor ...` 只做安全扫描，不创建实验目录。
+
+当前 `doctor` 至少检查：
+
+- `segment`
+- `prompt`
+- 选中的 infer phase
+- `slam`
+- 当默认 prompt backend 为 `smolvlm2` 时，额外检查 `prompt_smol`
+
+输出格式为：
+
+`DOCTOR phase=<name> python=<path> exists=<bool>`
+
+任一关键 phase 缺失或不可执行时，结果应为 `FAIL`。
