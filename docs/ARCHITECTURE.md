@@ -48,7 +48,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 - `infer_backend=wan_fun_5b_inp` 时使用 `infer_fun_5b`
 - `infer_backend=wan_fun_a14b_inp` 时使用 `infer`
 - `merge` 复用当前 infer phase
-- `eval` 使用 `slam` phase 中的 `evo_*` 工具
+- `eval` 使用 `slam` phase 解释器调度 `scripts/eval_traj.py`，由脚本统一封装 `evo` 评测与可视化
 - `stats` 由 `prompt` phase 执行
 
 ### 2.2 跨环境执行规则
@@ -73,7 +73,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 | `infer` | `scripts/infer_i2v.py` | 读取 prompt 与执行计划，路由到具体 Wan backend |
 | `merge` | `scripts/merge_seq.py` | 按 `runs_plan.json` 的真实边界合并生成结果 |
 | `slam` | `scripts/slam_droid.py` | 在 `ori` 或 `gen` 轨道上估计位姿 |
-| `eval` | `exphub/cli.py` 内部调用 `evo_*` | 对 `ori/gen` 轨迹做对比评估 |
+| `eval` | `scripts/eval_traj.py` | 对 `ori/gen` 轨迹做 APE/RPE 评估、结构化落盘与基础可视化 |
 | `stats` | `scripts/stats_collect.py` | 汇总 `step_meta.json` 与日志，生成最终统计 |
 
 `segment` 之后默认还会触发一次 `segment_analyze.py`：
@@ -123,7 +123,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 - `infer/`：`execution_plan.json`、`runs/`、`runs_plan.json`、`step_meta.json`
 - `merge/`：`frames/`、`timestamps.txt`、`calib.txt`、`step_meta.json`
 - `slam/`：`ori/`、`gen/` 轨迹与运行元数据
-- `eval/`：`evo_traj_*`、`evo_ape_*` 文本与可选图像
+- `eval/`：`metrics.json`、`summary.txt`、`plots/` 以及必要失败摘要
 - `stats/`：`report.json`、`compression.json`
 - `logs/`：各阶段完整日志
 

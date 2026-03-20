@@ -26,7 +26,7 @@
 | `infer` | `scripts/infer_i2v.py` | `segment/frames/`, `prompt/final_prompt.json`, `segment/deploy_schedule.json` | `infer/execution_plan.json`, `infer/runs/`, `infer/runs_plan.json`, `infer/step_meta.json` | `merge`, `stats` |
 | `merge` | `scripts/merge_seq.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
 | `slam` | `scripts/slam_droid.py` | `segment/` 或 `merge/` 轨道数据 | `slam/<track>/traj_est.tum`, `traj_est.npz`, `run_meta.json` | `eval` |
-| `eval` | `exphub/cli.py` 内部 `evo_*` 调用 | `slam/ori/traj_est.tum`, `slam/gen/traj_est.tum` | `eval/evo_traj_*.txt`, `eval/evo_ape_gen_vs_ori.txt`，以及可选图像 | 人工分析 |
+| `eval` | `scripts/eval_traj.py` | `slam/ori/traj_est.tum`, `slam/gen/traj_est.tum` | `eval/metrics.json`, `eval/summary.txt`, `eval/plots/*.png` | 人工分析 |
 | `stats` | `scripts/stats_collect.py` | 各阶段 `step_meta.json` 与日志 | `stats/report.json`, `stats/compression.json` | 汇总出口 |
 
 ## 3. 各阶段最小契约
@@ -96,9 +96,11 @@
 
 必须保证：
 
-- 在 `slam` phase 环境中执行 `evo_*`
-- 缺少工具时可以跳过，但应给出明确提示
-- 有 `ori` 和 `gen` 两条轨迹时，尝试生成 `gen_vs_ori` 的 APE 对比
+- 在 `slam` phase 环境中调度 `scripts/eval_traj.py`，由脚本统一调用 `evo` 评测内核
+- 结构化输出至少包含 `eval/metrics.json` 与 `eval/summary.txt`
+- 基础图像输出收敛到 `eval/plots/`，当前至少包含 `traj_xy.png`、`ape_curve.png`、`rpe_curve.png`
+- `metrics.json` 作为结构化事实源，至少包含 APE translation、RPE translation、matched pose 数、`eval_status` 与 `warnings`
+- 缺少轨迹文件或 `evo` 依赖时不能让主链路崩溃，应写出可理解的失败摘要，而不是只留下零散 txt
 
 ### `stats`
 
