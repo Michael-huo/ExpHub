@@ -513,6 +513,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     merge_py = scripts_dir / "merge_seq.py"
     droid_py = scripts_dir / "slam_droid.py"
     stats_py = scripts_dir / "stats_collect.py"
+    eval_main_py = scripts_dir / "eval_main.py"
     eval_traj_py = scripts_dir / "eval_traj.py"
     segment_analyze_py = scripts_dir / "segment_analyze.py"
     prompt_gen_py = (scripts_dir / "prompt_gen.py").resolve()
@@ -656,7 +657,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     else:
         viz_enable = args.mode in ("slam", "eval")
 
-    for p in [seg_py, infer_py, merge_py, droid_py, stats_py, eval_traj_py, segment_analyze_py]:
+    for p in [seg_py, infer_py, merge_py, droid_py, stats_py, eval_main_py, eval_traj_py, segment_analyze_py]:
         _ensure(p, "file")
 
     _ensure(prompt_gen_py, "file")
@@ -998,7 +999,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         tum_gen = ctx.slam_traj_path("gen")
         cmd = [
             "python",
-            str(eval_traj_py),
+            str(eval_main_py),
+            "--exp_dir",
+            str(exp_dir),
             "--reference",
             str(tum_ori),
             "--estimate",
@@ -1023,12 +1026,17 @@ def main(argv: Optional[List[str]] = None) -> None:
             check=False,
         )
 
-        metrics_path = ctx.eval_artifact_path("metrics.json")
+        metrics_path = ctx.eval_artifact_path("traj_metrics.json")
+        image_metrics_path = ctx.eval_artifact_path("image_metrics.json")
         summary_path = ctx.eval_artifact_path("summary.txt")
         if metrics_path.is_file():
             _info("STEP eval: metrics={}".format(metrics_path))
         else:
             _warn("eval metrics missing: {}".format(metrics_path))
+        if image_metrics_path.is_file():
+            _info("STEP eval: image_metrics={}".format(image_metrics_path))
+        else:
+            _warn("eval image metrics missing: {}".format(image_metrics_path))
         if summary_path.is_file():
             _info("STEP eval: summary={}".format(summary_path))
         else:
