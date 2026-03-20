@@ -4,6 +4,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
@@ -221,73 +222,320 @@ def _strip_info_prefix(line: str) -> str:
     return s
 
 
-def _extract_log_lines(log_path: Path, keywords: List[str]) -> List[str]:
-    out = []
+def _read_json_dict(path: Path) -> Dict[str, object]:
+    if not path.is_file():
+        return {}
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    return {}
+
+
+def _get_nested(obj: Dict[str, object], path: List[str]) -> object:
+    cur = obj
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+    return cur
+
+
+def _as_float_or_none(value: object) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _as_int_or_none(value: object) -> Optional[int]:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except Exception:
+        return None
+
+
+def _fmt_seconds(value: Optional[float], digits: int = 2, suffix: str = "s") -> str:
+    if value is None:
+        return "unavailable"
+    return "{:.{digits}f}{}".format(float(value), suffix, digits=digits)
+
+
+def _fmt_phase_seconds(value: Optional[float], total_time: float) -> str:
+    if value is None:
+        return "unavailable"
+    pct = (float(value) / float(total_time) * 100.0) if total_time > 0 else 0.0
+    return "{:8.2f}s ({:5.1f}%)".format(float(value), pct)
+
+
+def _fmt_metric(value: Optional[float], unit: str = "", digits: int = 4) -> str:
+    if value is None:
+        return "unavailable"
+    text = "{:.{digits}f}".format(float(value), digits=digits).rstrip("0").rstrip(".")
+    if not text:
+        text = "0"
+    if unit:
+        return "{} {}".format(text, unit)
+    return text
+
+
+def _fmt_ratio(value: Optional[float]) -> str:
+    if value is None:
+        return "unavailable"
+    return "{:.4f}x".format(float(value))
+
+
+def _fmt_reduction(value: Optional[float]) -> str:
+    if value is None:
+        return "unavailable"
+    return "{:.2f}%".format(float(value) * 100.0)
+
+
+def _fmt_count(value: Optional[int]) -> str:
+    if value is None:
+        return "unavailable"
+    return str(int(value))
+
+
+def _fmt_bytes(value: Optional[int]) -> str:
+    if value is None:
+        return "unavailable"
+    size = float(value)
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    unit_idx = 0
+    while size >= 1024.0 and unit_idx < len(units) - 1:
+        size /= 1024.0
+        unit_idx += 1
+    if unit_idx == 0:
+        return "{} {}".format(int(size), units[unit_idx])
+    return "{:.2f} {}".format(size, units[unit_idx])
+
+
+def _pick_float(obj: Dict[str, object], path: List[str]) -> Optional[float]:
+    return _as_float_or_none(_get_nested(obj, path))
+
+
+def _pick_int(obj: Dict[str, object], path: List[str]) -> Optional[int]:
+    return _as_int_or_none(_get_nested(obj, path))
+
+
+def _pick_first_int(obj: Dict[str, object], paths: List[List[str]]) -> Optional[int]:
+    for path in paths:
+        value = _pick_int(obj, path)
+        if value is not None:
+            return value
+    return None
+
+
+def _pick_first_float(obj: Dict[str, object], paths: List[List[str]]) -> Optional[float]:
+    for path in paths:
+        value = _pick_float(obj, path)
+        if value is not None:
+            return value
+    return None
+
+
+def _parse_infer_log_details(log_path: Path) -> Dict[str, object]:
+    out = {}  # type: Dict[str, object]
     if not log_path.is_file():
         return out
+
+    init_re = re.compile(
+        r"Initialization completed in ([0-9.]+)s \(Loading: ([0-9.]+)s, Quantization: ([0-9.]+)s\)"
+    )
+    done_re = re.compile(
+        r"done: segments=(\d+) frames=(\d+) init=([0-9.]+)s infer_sum=([0-9.]+)s "
+        r"avg_infer=([0-9.]+)s avg_frame=([0-9.]+)s total=([0-9.]+)s"
+    )
+
     try:
         lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     except Exception:
         return out
 
     for raw in lines:
-        line = raw.strip()
-        if not line:
-            continue
-        matched = False
-        for kw in keywords:
-            if kw in line:
-                matched = True
-                break
-        if not matched:
-            continue
-        out.append(_strip_info_prefix(line))
+        line = _strip_info_prefix(raw)
+        init_match = init_re.search(line)
+        if init_match:
+            out["infer.init"] = float(init_match.group(1))
+            out["infer.load"] = float(init_match.group(2))
+            out["infer.quant"] = float(init_match.group(3))
+        done_match = done_re.search(line)
+        if done_match:
+            out["infer.segments"] = int(done_match.group(1))
+            out["infer.frames"] = int(done_match.group(2))
+            out["infer.init"] = float(done_match.group(3))
+            out["infer.run"] = float(done_match.group(4))
+            out["infer.avg"] = float(done_match.group(5))
+            out["infer.avg_fr"] = float(done_match.group(6))
+            out["infer.total"] = float(done_match.group(7))
     return out
 
 
-def _print_performance_profiling(exp_dir: Path, step_times: Dict[str, float]) -> None:
-    if not step_times:
-        return
-
+def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict[str, object]:
+    phase_names = ["segment", "prompt", "infer", "merge", "slam", "eval", "stats"]
     total_time = sum(float(x) for x in step_times.values())
+
+    traj_metrics = _read_json_dict(exp_dir / "eval" / "traj_metrics.json")
+    image_metrics = _read_json_dict(exp_dir / "eval" / "image_metrics.json")
+    stats_report = _read_json_dict(exp_dir / "stats" / "report.json")
+    stats_legacy = _read_json_dict(exp_dir / "stats" / "compression.json")
+    infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
+
+    compression_obj = {}
+    if isinstance(stats_report.get("compression"), dict):
+        compression_obj = dict(stats_report.get("compression") or {})
+
+    legacy_ori = dict(stats_legacy.get("ori") or {}) if isinstance(stats_legacy.get("ori"), dict) else {}
+    legacy_comp = dict(stats_legacy.get("compressed") or {}) if isinstance(stats_legacy.get("compressed"), dict) else {}
+    legacy_ratios = dict(stats_legacy.get("ratios") or {}) if isinstance(stats_legacy.get("ratios"), dict) else {}
+
+    ori_bytes = _pick_first_int(
+        compression_obj,
+        [["ori_bytes"]],
+    )
+    if ori_bytes is None:
+        ori_bytes = _pick_first_int(legacy_ori, [["bytes_sum"]])
+
+    keyframes_bytes = _pick_first_int(
+        compression_obj,
+        [["keyframes_bytes"]],
+    )
+    if keyframes_bytes is None:
+        keyframes_bytes = _pick_first_int(legacy_comp, [["keyframe_bytes_sum"]])
+
+    prompt_bytes = _pick_first_int(
+        compression_obj,
+        [["prompt_bytes"]],
+    )
+    if prompt_bytes is None:
+        prompt_bytes = _pick_first_int(legacy_comp, [["prompt_bytes_sum"]])
+
+    comp_size = None  # type: Optional[int]
+    if keyframes_bytes is not None and prompt_bytes is not None:
+        comp_size = int(keyframes_bytes + prompt_bytes)
+    else:
+        comp_size = _pick_first_int(legacy_comp, [["total_bytes_sum"]])
+
+    ratio_bytes = _pick_first_float(
+        compression_obj,
+        [["ratio_bytes"]],
+    )
+    if ratio_bytes is None:
+        ratio_bytes = _pick_first_float(legacy_ratios, [["bytes"]])
+
+    keyframes_frames = _pick_first_int(
+        compression_obj,
+        [["keyframes_frames"]],
+    )
+    if keyframes_frames is None:
+        keyframes_frames = _pick_first_int(legacy_comp, [["keyframe_count"], ["keyframes_frame_count"]])
+
+    reduction_ratio = None  # type: Optional[float]
+    if ratio_bytes is not None:
+        reduction_ratio = 1.0 - float(ratio_bytes)
+
+    phase_times = {}
+    for phase_name in phase_names:
+        phase_times[phase_name] = _as_float_or_none(step_times.get(phase_name))
+
+    report = {
+        "exp_dir": str(exp_dir),
+        "total_time": float(total_time),
+        "phase_times": phase_times,
+        "infer_details": infer_details,
+        "quality": {
+            "ape_rmse": _pick_float(traj_metrics, ["ape_trans", "rmse"]),
+            "rpe_trans": _pick_float(traj_metrics, ["rpe_trans", "rmse"]),
+            "rpe_rot": _pick_float(traj_metrics, ["rpe_rot", "rmse"]),
+            "poses": _pick_int(traj_metrics, ["matched_pose_count"]),
+            "img_psnr": _pick_float(image_metrics, ["psnr", "mean"]),
+            "img_ms_ssim": _pick_float(image_metrics, ["ms_ssim", "mean"]),
+            "img_lpips": _pick_float(image_metrics, ["lpips", "mean"]),
+            "img_frames": _pick_int(image_metrics, ["frame_count"]),
+        },
+        "compression": {
+            "ratio": ratio_bytes,
+            "reduction": reduction_ratio,
+            "orig_size": ori_bytes,
+            "comp_size": comp_size,
+            "keyframes": keyframes_frames,
+        },
+    }
+    return report
+
+
+def _print_rows(rows: List[tuple]) -> None:
+    if not rows:
+        return
+    width = max(len(str(key)) for key, _ in rows)
+    for key, value in rows:
+        _info("{:<{w}} : {}".format(str(key), value, w=width))
+
+
+def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> None:
+    report = _load_experiment_report(exp_dir, step_times)
+    total_time = float(report.get("total_time") or 0.0)
+    phase_times = dict(report.get("phase_times") or {})
+    infer_details = dict(report.get("infer_details") or {})
+    quality = dict(report.get("quality") or {})
+    compression = dict(report.get("compression") or {})
+
     sep = "=" * 70
     div = "-" * 70
 
-    _info(sep)
-    _info("EXPERIMENT PERFORMANCE PROFILING")
-    _info(sep)
-    for step_name, dt in step_times.items():
-        sec = float(dt)
-        pct = (sec / total_time * 100.0) if total_time > 0 else 0.0
-        _info("{:<10} : {:8.2f}s ({:5.1f}%)".format(step_name, sec, pct))
+    time_rows = []
+    for phase_name in ["segment", "prompt", "infer", "merge", "slam", "eval", "stats"]:
+        time_rows.append((phase_name, _fmt_phase_seconds(_as_float_or_none(phase_times.get(phase_name)), total_time)))
 
+    detail_rows = [
+        ("infer.load", _fmt_seconds(_as_float_or_none(infer_details.get("infer.load")))),
+        ("infer.quant", _fmt_seconds(_as_float_or_none(infer_details.get("infer.quant")))),
+        ("infer.run", _fmt_seconds(_as_float_or_none(infer_details.get("infer.run")))),
+        ("infer.avg_fr", _fmt_seconds(_as_float_or_none(infer_details.get("infer.avg_fr")), digits=3, suffix="s/frame")),
+        ("total", _fmt_seconds(total_time)),
+    ]
+
+    quality_rows = [
+        ("ape_rmse", _fmt_metric(_as_float_or_none(quality.get("ape_rmse")), unit="m")),
+        ("rpe_trans", _fmt_metric(_as_float_or_none(quality.get("rpe_trans")), unit="m")),
+        ("rpe_rot", _fmt_metric(_as_float_or_none(quality.get("rpe_rot")), unit="deg")),
+        ("img.psnr", _fmt_metric(_as_float_or_none(quality.get("img_psnr")), unit="dB")),
+        ("img.ms_ssim", _fmt_metric(_as_float_or_none(quality.get("img_ms_ssim")))),
+        ("img.lpips", _fmt_metric(_as_float_or_none(quality.get("img_lpips")))),
+        ("poses", _fmt_count(_as_int_or_none(quality.get("poses")))),
+        ("img_frames", _fmt_count(_as_int_or_none(quality.get("img_frames")))),
+    ]
+
+    compression_rows = [
+        ("ratio", _fmt_ratio(_as_float_or_none(compression.get("ratio")))),
+        ("reduction", _fmt_reduction(_as_float_or_none(compression.get("reduction")))),
+        ("orig_size", _fmt_bytes(_as_int_or_none(compression.get("orig_size")))),
+        ("comp_size", _fmt_bytes(_as_int_or_none(compression.get("comp_size")))),
+        ("keyframes", _fmt_count(_as_int_or_none(compression.get("keyframes")))),
+    ]
+
+    _info(sep)
+    _info("EXPERIMENT REPORT")
+    _info(sep)
+    _info("[Time]")
+    _print_rows(time_rows)
     _info(div)
-    _info("CRITICAL PATH BREAKDOWN (Parsed from logs)")
-
-    logs_dir = exp_dir / "logs"
-    prompt_lines = _extract_log_lines(
-        logs_dir / "prompt.log",
-        ["Initialization completed in"],
-    )
-    infer_lines = _extract_log_lines(
-        logs_dir / "infer.log",
-        ["Initialization completed in", "avg_infer"],
-    )
-
-    if prompt_lines:
-        for line in prompt_lines:
-            _info("[Prompt] {}".format(line))
-    else:
-        _info("[Prompt] initialization marker not found")
-
-    if infer_lines:
-        for line in infer_lines:
-            _info("[Infer]  {}".format(line))
-    else:
-        _info("[Infer]  initialization/avg_infer markers not found")
-
-    _info(sep)
-    _info("TOTAL PIPELINE TIME: {:.2f}s".format(total_time))
+    _print_rows(detail_rows)
+    _info(div)
+    _info("[Quality]")
+    _print_rows(quality_rows)
+    _info(div)
+    _info("[Compression]")
+    _print_rows(compression_rows)
+    _info(div)
+    _print_rows([("exp_dir", str(report.get("exp_dir") or exp_dir))])
     _info(sep)
 
 
@@ -1101,7 +1349,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             _run_step("stats", step_stats, str(ctx.stats_report_path))
 
         apply_keep_level(exp_dir, args.keep_level)
-        _print_performance_profiling(exp_dir, step_times)
+        _print_experiment_report(exp_dir, step_times)
 
     except (ConfigError, RunError) as e:
         _die(str(e))

@@ -112,6 +112,7 @@
 - 输出 `stats/report.json`
 - 保留 `stats/compression.json` 兼容历史消费
 - 对缺失的 `step_meta.json` 给出 `WARN`，而不是直接崩溃
+- 实验结束后终端统一打印单块 `EXPERIMENT REPORT`，汇总 time / quality / compression 三类关键指标
 
 ## 4. `segment_analyze` 的旁路契约
 
