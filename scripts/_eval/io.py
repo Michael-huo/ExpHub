@@ -122,3 +122,24 @@ def resolve_image_eval_inputs(exp_dir):
         "runs_plan_path": exp_root / "infer" / "runs_plan.json",
         "merge_meta_path": exp_root / "merge" / "merge_meta.json",
     }
+
+
+def resolve_slam_eval_inputs(exp_dir):
+    exp_root = Path(exp_dir).resolve()
+    return {
+        "segment_frames_dir": exp_root / "segment" / "frames",
+        "segment_timestamps_path": exp_root / "segment" / "timestamps.txt",
+        "segment_calib_path": exp_root / "segment" / "calib.txt",
+        "deploy_schedule_path": exp_root / "segment" / "deploy_schedule.json",
+        "merge_frames_dir": exp_root / "merge" / "frames",
+        "merge_timestamps_path": exp_root / "merge" / "timestamps.txt",
+        "merge_calib_path": exp_root / "merge" / "calib.txt",
+        "runs_plan_path": exp_root / "infer" / "runs_plan.json",
+        "merge_meta_path": exp_root / "merge" / "merge_meta.json",
+        "slam_ori_tum_path": exp_root / "slam" / "ori" / "traj_est.tum",
+        "slam_ori_npz_path": exp_root / "slam" / "ori" / "traj_est.npz",
+        "slam_ori_run_meta_path": exp_root / "slam" / "ori" / "run_meta.json",
+        "slam_gt_tum_path": exp_root / "slam" / "gt" / "traj_est.tum",
+        "slam_gt_npz_path": exp_root / "slam" / "gt" / "traj_est.npz",
+        "slam_gt_run_meta_path": exp_root / "slam" / "gt" / "run_meta.json",
+    }

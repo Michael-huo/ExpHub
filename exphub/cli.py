@@ -384,6 +384,7 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
 
     traj_metrics = _read_json_dict(exp_dir / "eval" / "traj_metrics.json")
     image_metrics = _read_json_dict(exp_dir / "eval" / "image_metrics.json")
+    slam_metrics = _read_json_dict(exp_dir / "eval" / "slam_metrics.json")
     stats_report = _read_json_dict(exp_dir / "stats" / "report.json")
     stats_legacy = _read_json_dict(exp_dir / "stats" / "compression.json")
     infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
@@ -459,6 +460,9 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
             "img_ms_ssim": _pick_float(image_metrics, ["ms_ssim", "mean"]),
             "img_lpips": _pick_float(image_metrics, ["lpips", "mean"]),
             "img_frames": _pick_int(image_metrics, ["frame_count"]),
+            "slam_inlier": _pick_float(slam_metrics, ["inlier_ratio", "mean"]),
+            "slam_pose_sr": _pick_float(slam_metrics, ["pose_success_rate"]),
+            "slam_ref": str(slam_metrics.get("reference_source", "unavailable") or "unavailable"),
         },
         "compression": {
             "ratio": ratio_bytes,
@@ -509,6 +513,9 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
         ("img.psnr", _fmt_metric(_as_float_or_none(quality.get("img_psnr")), unit="dB")),
         ("img.ms_ssim", _fmt_metric(_as_float_or_none(quality.get("img_ms_ssim")))),
         ("img.lpips", _fmt_metric(_as_float_or_none(quality.get("img_lpips")))),
+        ("slam.inlier", _fmt_metric(_as_float_or_none(quality.get("slam_inlier")))),
+        ("slam.pose_sr", _fmt_metric(_as_float_or_none(quality.get("slam_pose_sr")))),
+        ("slam.ref", str(quality.get("slam_ref") or "unavailable")),
         ("poses", _fmt_count(_as_int_or_none(quality.get("poses")))),
         ("img_frames", _fmt_count(_as_int_or_none(quality.get("img_frames")))),
     ]

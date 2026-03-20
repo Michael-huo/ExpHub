@@ -6,6 +6,7 @@ from pathlib import Path
 
 from _common import log_err, log_warn
 from _eval.image_eval import run_image_eval
+from _eval.slam_eval import run_slam_eval
 from _eval.summary import log_eval_terminal_summary, write_eval_summary
 from _eval.traj_eval import run_traj_eval
 
@@ -57,6 +58,7 @@ def run_eval(
 
     traj_result = None
     image_result = None
+    slam_result = None
     try:
         traj_result = run_traj_eval(
             _traj_namespace(
@@ -82,18 +84,26 @@ def run_eval(
     except Exception as exc:
         log_warn("image eval backend failure: {}".format(exc))
 
+    try:
+        slam_result = run_slam_eval(exp_dir=exp_dir, out_dir=out_path)
+    except Exception as exc:
+        log_warn("slam-friendly eval backend failure: {}".format(exc))
+
     write_eval_summary(
         out_path,
         (traj_result or {}).get("metrics", {}),
         (image_result or {}).get("metrics", {}),
+        (slam_result or {}).get("metrics", {}),
     )
     log_eval_terminal_summary(
         (traj_result or {}).get("metrics", {}),
         (image_result or {}).get("metrics", {}),
+        (slam_result or {}).get("metrics", {}),
         out_path,
     )
 
     return {
         "traj": traj_result,
         "image": image_result,
+        "slam": slam_result,
     }

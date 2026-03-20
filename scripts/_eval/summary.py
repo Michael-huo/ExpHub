@@ -24,9 +24,16 @@ def _lpips_display(image_metrics):
     return fmt_value(value)
 
 
-def build_summary_lines(traj_metrics, image_metrics):
+def _bool_text(value):
+    if value is None:
+        return "n/a"
+    return "yes" if bool(value) else "no"
+
+
+def build_summary_lines(traj_metrics, image_metrics, slam_metrics):
     traj = traj_metrics or {}
     image = image_metrics or {}
+    slam = slam_metrics or {}
 
     lines = [
         "=== Trajectory Eval ===",
@@ -64,16 +71,36 @@ def build_summary_lines(traj_metrics, image_metrics):
         ]
     )
     lines.extend(_warning_lines(image))
+    lines.extend(
+        [
+            "",
+            "=== SLAM-Friendly Image Eval ===",
+            "status: {}".format(slam.get("eval_status", "failed")),
+            "reference_source: {}".format(slam.get("reference_source", "unavailable")),
+            "uses_proxy_reference: {}".format(_bool_text(slam.get("uses_proxy_reference"))),
+            "inlier_ratio mean / median / min / max: {} / {} / {} / {}".format(
+                fmt_value(slam.get("inlier_ratio", {}).get("mean")),
+                fmt_value(slam.get("inlier_ratio", {}).get("median")),
+                fmt_value(slam.get("inlier_ratio", {}).get("min")),
+                fmt_value(slam.get("inlier_ratio", {}).get("max")),
+            ),
+            "pose_success_rate: {}".format(fmt_value(slam.get("pose_success_rate"))),
+            "valid_pair_count: {}".format(int(slam.get("valid_pair_count") or 0)),
+            "valid_pose_pair_count: {}".format(int(slam.get("valid_pose_pair_count") or 0)),
+            "successful_pose_pair_count: {}".format(int(slam.get("successful_pose_pair_count") or 0)),
+        ]
+    )
+    lines.extend(_warning_lines(slam))
     return lines
 
 
-def write_eval_summary(out_dir, traj_metrics, image_metrics):
+def write_eval_summary(out_dir, traj_metrics, image_metrics, slam_metrics):
     out_path = Path(out_dir).resolve() / "summary.txt"
-    write_text(out_path, "\n".join(build_summary_lines(traj_metrics, image_metrics)) + "\n")
+    write_text(out_path, "\n".join(build_summary_lines(traj_metrics, image_metrics, slam_metrics)) + "\n")
     return out_path
 
 
-def log_eval_terminal_summary(traj_metrics, image_metrics, out_dir):
+def log_eval_terminal_summary(traj_metrics, image_metrics, slam_metrics, out_dir):
     traj_status = str((traj_metrics or {}).get("eval_status", "failed"))
     matched = int((traj_metrics or {}).get("matched_pose_count") or 0)
     prefix = log_info if traj_status in ("success", "partial") else log_warn
@@ -93,3 +120,15 @@ def log_eval_terminal_summary(traj_metrics, image_metrics, out_dir):
     image_prefix("eval image: PSNR mean={}".format(fmt_value((image_metrics or {}).get("psnr", {}).get("mean"), "dB")))
     image_prefix("eval image: MS-SSIM mean={}".format(fmt_value((image_metrics or {}).get("ms_ssim", {}).get("mean"))))
     image_prefix("eval image: LPIPS mean={}".format(_lpips_display(image_metrics)))
+
+    slam_status = str((slam_metrics or {}).get("eval_status", "failed"))
+    slam_prefix = log_info if slam_status in ("success", "partial") else log_warn
+    slam_prefix(
+        "eval slam: status={} valid_pairs={} ref={}".format(
+            slam_status,
+            int((slam_metrics or {}).get("valid_pair_count") or 0),
+            str((slam_metrics or {}).get("reference_source", "unavailable")),
+        )
+    )
+    slam_prefix("eval slam: inlier_ratio mean={}".format(fmt_value((slam_metrics or {}).get("inlier_ratio", {}).get("mean"))))
+    slam_prefix("eval slam: pose_success_rate={}".format(fmt_value((slam_metrics or {}).get("pose_success_rate"))))

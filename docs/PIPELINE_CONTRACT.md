@@ -26,7 +26,7 @@
 | `infer` | `scripts/infer_i2v.py` | `segment/frames/`, `prompt/final_prompt.json`, `segment/deploy_schedule.json` | `infer/execution_plan.json`, `infer/runs/`, `infer/runs_plan.json`, `infer/step_meta.json` | `merge`, `stats` |
 | `merge` | `scripts/merge_seq.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
 | `slam` | `scripts/slam_droid.py` | `segment/` 或 `merge/` 轨道数据 | `slam/<track>/traj_est.tum`, `traj_est.npz`, `run_meta.json` | `eval` |
-| `eval` | `scripts/eval_main.py` | `slam/ori/traj_est.tum`, `slam/gen/traj_est.tum`, `merge/frames/`, `segment/frames/` | `eval/traj_metrics.json`, `eval/image_metrics.json`, `eval/summary.txt`, `eval/image_per_frame.csv`, `eval/plots/*.png` | 人工分析 |
+| `eval` | `scripts/eval_main.py` | `slam/ori/traj_est.tum`, `slam/gen/traj_est.tum`, `merge/frames/`, `segment/frames/` | `eval/traj_metrics.json`, `eval/image_metrics.json`, `eval/slam_metrics.json`, `eval/summary.txt`, `eval/image_per_frame.csv`, `eval/slam_pairs.csv`, `eval/plots/*.png` | 人工分析 |
 | `stats` | `scripts/stats_collect.py` | 各阶段 `step_meta.json` 与日志 | `stats/report.json`, `stats/compression.json` | 汇总出口 |
 
 ## 3. 各阶段最小契约
@@ -97,11 +97,13 @@
 必须保证：
 
 - 在 `slam` phase 环境中调度 `scripts/eval_main.py`；前端壳负责组织输入，后端 `_eval/` 统一执行 traj/image eval
-- 结构化输出至少包含 `eval/traj_metrics.json`、`eval/image_metrics.json` 与 `eval/summary.txt`
+- 结构化输出至少包含 `eval/traj_metrics.json`、`eval/image_metrics.json`、`eval/slam_metrics.json` 与 `eval/summary.txt`
 - 轨迹图像输出收敛到 `eval/plots/`，当前至少包含 `traj_xy.png`、`ape_curve.png`、`rpe_curve.png`
 - 图像评价默认统计 `infer -> merge` 生成帧与对应 `ori` 帧的逐帧比较，新增 `eval/image_metrics.json`、`eval/image_per_frame.csv` 与 `eval/plots/image_metrics_curve.png`
+- SLAM-friendly 图像评价默认只统计时间上连续的相邻生成帧对，输出 `eval/slam_metrics.json`、`eval/slam_pairs.csv` 与 `eval/plots/slam_metrics_curve.png`
 - `traj_metrics.json` 作为轨迹评价事实源，至少包含 APE translation、RPE translation、matched pose 数、`eval_status` 与 `warnings`
 - `image_metrics.json` 作为图像评价事实源，至少包含 `psnr`、`ms_ssim`、`lpips` 的聚合统计、`frame_count`、`eval_status` 与 `warnings`
+- `slam_metrics.json` 作为两视图几何型 SLAM-friendly 评价事实源，至少包含 `inlier_ratio`、`pose_success_rate`、`reference_source`、`uses_proxy_reference`、`valid_pair_count`、`valid_pose_pair_count` 与 `warnings`
 - `summary.txt` 汇总轨迹与图像评价的人类可读摘要，不再单独输出 `image_summary.txt`
 - 缺少轨迹文件或 `evo` 依赖时不能让主链路崩溃，应写出可理解的失败摘要，而不是只留下零散 txt
 

@@ -73,7 +73,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 | `infer` | `scripts/infer_i2v.py` | 读取 prompt 与执行计划，路由到具体 Wan backend |
 | `merge` | `scripts/merge_seq.py` | 按 `runs_plan.json` 的真实边界合并生成结果 |
 | `slam` | `scripts/slam_droid.py` | 在 `ori` 或 `gen` 轨道上估计位姿 |
-| `eval` | `scripts/eval_main.py` | 调度 `_eval/` 后端，对 `ori/gen` 轨迹做 APE/RPE 评估，并补充 merge-vs-ori 的图像指标评估 |
+| `eval` | `scripts/eval_main.py` | 调度 `_eval/` 后端，对 `ori/gen` 轨迹做 APE/RPE 评估，并补充 merge-vs-ori 的图像指标与两视图几何型 SLAM-friendly 指标评估 |
 | `stats` | `scripts/stats_collect.py` | 汇总 `step_meta.json` 与日志，生成最终统计 |
 
 `segment` 之后默认还会触发一次 `segment_analyze.py`：
@@ -123,7 +123,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 - `infer/`：`execution_plan.json`、`runs/`、`runs_plan.json`、`step_meta.json`
 - `merge/`：`frames/`、`timestamps.txt`、`calib.txt`、`step_meta.json`
 - `slam/`：`ori/`、`gen/` 轨迹与运行元数据
-- `eval/`：`traj_metrics.json`、`image_metrics.json`、`summary.txt`、`image_per_frame.csv`、`plots/` 以及必要失败摘要
+- `eval/`：`traj_metrics.json`、`image_metrics.json`、`slam_metrics.json`、`summary.txt`、`image_per_frame.csv`、`slam_pairs.csv`、`plots/` 以及必要失败摘要
 - `stats/`：`report.json`、`compression.json`
 - `logs/`：各阶段完整日志
 
