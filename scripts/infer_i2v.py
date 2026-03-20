@@ -275,14 +275,18 @@ def main():
     backend_meta = dict(backend.meta() or {})
 
     log_prog(
-        "infer start: backend={} segments={} fps={} schedule_source={} execution_backend={} used_frames={} gpus={}".format(
+        "infer config: backend={} segments={} fps={} gpus={}".format(
             backend_meta.get("infer_backend", args.infer_backend),
             segments,
             fps,
+            args.gpus,
+        )
+    )
+    log_info(
+        "infer detail: schedule_source={} execution_backend={} used_frames={}".format(
             schedule_source,
             schedule_backend,
             used_frames,
-            args.gpus,
         )
     )
 

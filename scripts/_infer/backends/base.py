@@ -10,9 +10,6 @@ from typing import Dict, List, Optional, Tuple
 from _common import ensure_dir, ensure_file, get_platform_config
 
 
-ALLOW_PREFIX = ("[PROG]", "[INFO]", "[WARN]", "[ERR]", "[BAR]", "[PROMPT]")
-
-
 class InferBackend(object):
     name = ""
 
@@ -62,10 +59,8 @@ def _run_filtered(cmd, cwd, env):
     tail = deque(maxlen=250)
     for line in proc.stdout:
         tail.append(line)
-        clean = line.strip()
-        if any(clean.startswith(prefix) for prefix in ALLOW_PREFIX):
-            sys.stdout.write(clean + "\n")
-            sys.stdout.flush()
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
     rc = proc.wait()
     if rc != 0:

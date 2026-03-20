@@ -223,6 +223,73 @@ def detect_conda_base() -> Optional[Path]:
     return None
 
 
+def _phase_name_from_log_path(log_path: Optional[Path]) -> str:
+    if log_path is None:
+        return ""
+    stem = str(log_path.stem or "").strip().lower()
+    if stem.startswith("slam_"):
+        return "slam"
+    return stem
+
+
+def _strip_log_prefix(text: str) -> str:
+    stripped = text.lstrip()
+    for prefix in ("[INFO]", "[PROG]", "[WARN]", "[ERR]", "[STEP]", "[BAR]", "[PROMPT]"):
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip()
+    return stripped
+
+
+def _should_emit_info_terminal_line(phase_name: str, stripped: str) -> bool:
+    payload = _strip_log_prefix(stripped)
+    payload_lower = payload.lower()
+
+    if stripped.startswith("[STEP]") or stripped.startswith("[WARN]") or stripped.startswith("[ERR]"):
+        return True
+
+    if stripped.startswith("[PROG]"):
+        if phase_name == "segment":
+            return payload_lower.startswith("segment summary:")
+        if phase_name == "prompt":
+            return payload_lower.startswith("prompt profile generated from")
+        if phase_name == "infer":
+            return payload_lower.startswith("infer config:")
+        if phase_name == "merge":
+            return payload_lower.startswith("merge summary:")
+        if phase_name == "slam":
+            return payload_lower.startswith("slam summary:")
+        if phase_name == "stats":
+            return payload_lower.startswith("stats summary:")
+        return False
+
+    if not stripped.startswith("[INFO]"):
+        return False
+
+    if phase_name == "prompt":
+        return payload_lower.startswith("processor loaded in") or payload_lower.startswith("model weights loaded in")
+
+    if phase_name == "infer":
+        return (
+            payload_lower.startswith("initializing model pipeline and loading weights from disk")
+            or payload_lower.startswith("starting float8 quantization")
+            or payload_lower.startswith("quantizing transformer 1/2")
+            or payload_lower.startswith("quantizing transformer 2/2")
+            or payload_lower.startswith("transformer 1/2 quantized in")
+            or payload_lower.startswith("transformer 2/2 quantized in")
+            or payload_lower.startswith("initialization completed in")
+            or (payload_lower.startswith("seg ") and " infer=" in payload_lower)
+            or payload_lower.startswith("done: segments=")
+        )
+
+    if phase_name == "slam":
+        return payload_lower.startswith("slam tracking start:")
+
+    if phase_name == "eval":
+        return payload_lower.startswith("eval summary:")
+
+    return False
+
+
 def run_cmd(
     argv: Sequence[str],
     *,
@@ -245,6 +312,7 @@ def run_cmd(
     tail = deque(maxlen=tail_cap)
     rc = -1
     bar_line_active = False
+    phase_name = _phase_name_from_log_path(log_path)
 
     def _colorize_terminal_line(line: str) -> str:
         stripped = line.lstrip()
@@ -285,6 +353,8 @@ def run_cmd(
                 lf.write(raw_line)
 
             if lvl == "quiet":
+                if stripped.startswith("[STEP]") or stripped.startswith("[WARN]") or stripped.startswith("[ERR]"):
+                    print(_colorize_terminal_line(line))
                 continue
             if is_bar:
                 print("\r{}".format(line), end="", flush=True)
@@ -297,11 +367,8 @@ def run_cmd(
                 print(_colorize_terminal_line(line))
                 continue
 
-            # info: only pass through key prefixed lines
-            for p in prefixes:
-                if stripped.startswith(p):
-                    print(_colorize_terminal_line(line))
-                    break
+            if _should_emit_info_terminal_line(phase_name, stripped):
+                print(_colorize_terminal_line(line))
 
         if bar_line_active and lvl != "quiet":
             print("")

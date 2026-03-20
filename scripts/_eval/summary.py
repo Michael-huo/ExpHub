@@ -105,30 +105,29 @@ def log_eval_terminal_summary(traj_metrics, image_metrics, slam_metrics, out_dir
     matched = int((traj_metrics or {}).get("matched_pose_count") or 0)
     prefix = log_info if traj_status in ("success", "partial") else log_warn
 
-    prefix("eval traj: status={} matched_poses={} out={}".format(traj_status, matched, out_dir))
-    prefix("eval traj: APE RMSE={}".format(fmt_value((traj_metrics or {}).get("ape_trans", {}).get("rmse"), "m")))
-    prefix("eval traj: RPE trans RMSE={}".format(fmt_value((traj_metrics or {}).get("rpe_trans", {}).get("rmse"), "m")))
+    prefix("eval summary: traj/image/slam evaluation completed")
+    log_info("eval traj: status={} matched_poses={}".format(traj_status, matched))
+    log_info("eval traj: APE RMSE={}".format(fmt_value((traj_metrics or {}).get("ape_trans", {}).get("rmse"), "m")))
+    log_info("eval traj: RPE trans RMSE={}".format(fmt_value((traj_metrics or {}).get("rpe_trans", {}).get("rmse"), "m")))
 
     image_status = str((image_metrics or {}).get("eval_status", "failed"))
-    image_prefix = log_info if image_status in ("success", "partial") else log_warn
-    image_prefix(
+    log_info(
         "eval image: status={} frame_count={}".format(
             image_status,
             int((image_metrics or {}).get("frame_count") or 0),
         )
     )
-    image_prefix("eval image: PSNR mean={}".format(fmt_value((image_metrics or {}).get("psnr", {}).get("mean"), "dB")))
-    image_prefix("eval image: MS-SSIM mean={}".format(fmt_value((image_metrics or {}).get("ms_ssim", {}).get("mean"))))
-    image_prefix("eval image: LPIPS mean={}".format(_lpips_display(image_metrics)))
+    log_info("eval image: PSNR mean={}".format(fmt_value((image_metrics or {}).get("psnr", {}).get("mean"), "dB")))
+    log_info("eval image: MS-SSIM mean={}".format(fmt_value((image_metrics or {}).get("ms_ssim", {}).get("mean"))))
+    log_info("eval image: LPIPS mean={}".format(_lpips_display(image_metrics)))
 
     slam_status = str((slam_metrics or {}).get("eval_status", "failed"))
-    slam_prefix = log_info if slam_status in ("success", "partial") else log_warn
-    slam_prefix(
+    log_info(
         "eval slam: status={} valid_pairs={} ref={}".format(
             slam_status,
             int((slam_metrics or {}).get("valid_pair_count") or 0),
             str((slam_metrics or {}).get("reference_source", "unavailable")),
         )
     )
-    slam_prefix("eval slam: inlier_ratio mean={}".format(fmt_value((slam_metrics or {}).get("inlier_ratio", {}).get("mean"))))
-    slam_prefix("eval slam: pose_success_rate={}".format(fmt_value((slam_metrics or {}).get("pose_success_rate"))))
+    log_info("eval slam: inlier_ratio mean={}".format(fmt_value((slam_metrics or {}).get("inlier_ratio", {}).get("mean"))))
+    log_info("eval slam: pose_success_rate={}".format(fmt_value((slam_metrics or {}).get("pose_success_rate"))))

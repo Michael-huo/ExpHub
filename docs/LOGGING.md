@@ -6,7 +6,7 @@
 
 当前日志口径是：
 
-- 终端尽量干净，只保留阶段状态、关键警告和必要心跳
+- 默认终端采用白名单展示，只保留阶段状态、关键警告、进度条、少量阶段心跳和最终结果
 - `EXP_DIR/logs/*.log` 保留完整排障信息
 - 业务脚本不要直接用 `print()` 输出业务日志，应优先使用 `scripts/_common.py` 的日志门面
 
@@ -17,8 +17,8 @@
 | 前缀 | 用途 | 当前行为 |
 |---|---|---|
 | `[STEP]` | 顶层阶段开始、结束、失败 | 终端高亮，落盘保留 |
-| `[INFO]` | 正常状态变化、耗时心跳、输出路径摘要 | 终端透传，落盘保留 |
-| `[PROG]` | 阶段进度播报 | 终端透传，落盘保留 |
+| `[INFO]` | 正常状态变化、耗时心跳、输出路径摘要 | `info` 仅白名单透传关键心跳；详细内容默认只落盘；`debug` 透传更多细节 |
+| `[PROG]` | 阶段进度播报 | `info` 仅白名单透传阶段摘要；详细内容默认只落盘；`debug` 透传更多细节 |
 | `[WARN]` | 非致命问题、兼容回退、可继续执行的异常 | 终端透传，落盘保留 |
 | `[ERR]` | 致命错误 | 终端透传，落盘保留，并在失败时触发尾日志追溯 |
 | `[BAR]` | 进度条原地刷新专用前缀 | 终端原地刷新，不写入 `.log` |
@@ -55,7 +55,36 @@ ExpHub 的性能面板依赖显式心跳，而不是只看顶层计时。
 
 如果心跳格式被随意改坏，`stats` 和人工排障都会受影响。
 
-## 5. 外部库防污染
+## 5. 终端等级
+
+`exphub/cli.py` 当前沿用 `--log_level` 做终端收口：
+
+- `info`：默认模式。终端只保留 `EXPERIMENT SUMMARY`、`[STEP]`、`[BAR]`、少量白名单 `[INFO]/[PROG]` 心跳、`[WARN]/[ERR]` 和最终 `EXPERIMENT REPORT`
+- `debug`：放开更多 `[INFO]/[PROG]` 细节，适合现场排障
+- `quiet`：尽量只保留 `[STEP]`、`[WARN]/[ERR]` 与最终报告；默认不显示 `EXPERIMENT SUMMARY`
+
+白名单之外的路径、写盘回执、cache、policy materialize、schedule 构建、模型路径、命令行拼接等细节，默认都应下沉到 phase 日志，而不是继续刷终端。
+
+默认终端还会进一步压缩逐帧 prompt 明细、冗长 infer 配置、重复 eval 指标与绝对路径输出。
+
+## 6. Phase 日志落盘
+
+顶层 runner 会继续把子脚本完整 stdout/stderr 收口到 `EXP_DIR/logs/*.log`。
+
+典型文件包括：
+
+- `logs/segment.log`
+- `logs/prompt.log`
+- `logs/infer.log`
+- `logs/merge.log`
+- `logs/eval.log`
+- `logs/stats.log`
+- `logs/slam_ori.log` / `logs/slam_gen.log`
+- `logs/segment_analyze.log`
+
+默认终端被抑制的详细工程信息，应优先去这些文件排查。
+
+## 7. 外部库防污染
 
 调用 `evo`、`ffmpeg`、SLAM 或其他第三方程序时，应避免让它们直接把杂乱输出刷到终端。
 
@@ -65,7 +94,7 @@ ExpHub 的性能面板依赖显式心跳，而不是只看顶层计时。
 - 不能过滤时至少收口到日志文件
 - 只有符合前缀契约的内容才应该稳定出现在终端
 
-## 6. 当前默认日志口径与 prompt 系统的关系
+## 8. 当前默认日志口径与 prompt 系统的关系
 
 主链路 prompt 现在收敛为 `PromptProfile -> final_prompt.json`。
 

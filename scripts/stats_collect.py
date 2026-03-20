@@ -234,7 +234,7 @@ def main():
     comp_path = stats_dir / "compression.json"
     write_json_atomic(report_path, report, indent=2)
     write_json_atomic(comp_path, legacy, indent=2)
-    log_prog("stats collection done")
+    log_prog("stats summary: report generated")
     log_info("stats report written: {}".format(report_path))
     log_info("legacy compression written: {}".format(comp_path))
 

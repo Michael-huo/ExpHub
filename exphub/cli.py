@@ -36,10 +36,21 @@ _ANSI_RESET = "\033[0m"
 _ANSI_BOLD = "\033[1m"
 _ANSI_STEP = "\033[1;36m"
 _STEP_SEPARATOR = "=" * 70
+_CLI_LOG_LEVEL = "info"
 
 
 def _info(msg: str) -> None:
     print(f"[INFO] {msg}")
+
+
+def _runtime_info(msg: str) -> None:
+    if _CLI_LOG_LEVEL != "quiet":
+        _info(msg)
+
+
+def _debug_info(msg: str) -> None:
+    if _CLI_LOG_LEVEL == "debug":
+        _info(msg)
 
 
 def _run(msg: str) -> None:
@@ -689,6 +700,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--no_viz", action="store_true")
 
     args = ap.parse_args(argv)
+    global _CLI_LOG_LEVEL
+    _CLI_LOG_LEVEL = str(args.log_level or "info").strip().lower()
     args.keep_level = normalize_keep_level(args.keep_level)
     raw_segment_policy = str(args.segment_policy or "uniform")
     if not is_supported_policy_name(raw_segment_policy):
@@ -793,6 +806,23 @@ def main(argv: Optional[List[str]] = None) -> None:
         except Exception:
             return []
 
+    def _format_out_hint(out_hint: str) -> str:
+        text = str(out_hint or "").strip()
+        if not text:
+            return ""
+        try:
+            target = Path(text).resolve()
+        except Exception:
+            return text
+        try:
+            rel = target.relative_to(exp_dir.resolve())
+            short_text = rel.as_posix()
+        except ValueError:
+            short_text = text
+        if target.is_dir() and short_text and not short_text.endswith("/"):
+            short_text += "/"
+        return short_text or "."
+
     def _run_step(step_name: str, fn, out_hint: str = "") -> None:
         t0 = time.time()
         _step(f"{step_name} start mode={args.mode}")
@@ -815,8 +845,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             raise SystemExit(f"[ERR] step failed: {step_name}")
         sec = time.time() - t0
         step_times[step_name] = float(sec)
-        if out_hint:
-            _step(f"{step_name} done sec={sec:.2f} out={out_hint}")
+        out_hint_short = _format_out_hint(out_hint)
+        if out_hint_short:
+            _step(f"{step_name} done sec={sec:.2f} out={out_hint_short}")
         else:
             _step(f"{step_name} done sec={sec:.2f}")
 
@@ -876,19 +907,20 @@ def main(argv: Optional[List[str]] = None) -> None:
         _info("DOCTOR result=PASS")
         return 0
 
-    _print_experiment_summary(
-        mode=args.mode,
-        dataset=dataset,
-        sequence=sequence,
-        tag=tag,
-        w=int(args.w),
-        h=int(args.h),
-        fps_text=fps_arg,
-        dur_text=str(args.dur),
-        gpus=int(args.gpus),
-        keep_level=str(args.keep_level),
-        exp_dir=exp_dir,
-    )
+    if _CLI_LOG_LEVEL != "quiet":
+        _print_experiment_summary(
+            mode=args.mode,
+            dataset=dataset,
+            sequence=sequence,
+            tag=tag,
+            w=int(args.w),
+            h=int(args.h),
+            fps_text=fps_arg,
+            dur_text=str(args.dur),
+            gpus=int(args.gpus),
+            keep_level=str(args.keep_level),
+            exp_dir=exp_dir,
+        )
 
     if args.mode == "doctor":
         rc = step_doctor()
@@ -931,7 +963,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     def ensure_clean_exp_dir() -> None:
         if exp_dir.exists():
-            _info(f"overwrite enabled: rm -rf {exp_dir}")
+            _debug_info(f"overwrite enabled: rm -rf {exp_dir}")
             _rm_tree(exp_dir)
         exp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -988,7 +1020,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         ensure_clean_exp_dir()
         write_meta_snapshot()
         segment_python = _phase_python("segment")
-        _info("STEP segment: interpreter={}".format(segment_python))
+        _debug_info("STEP segment: interpreter={}".format(segment_python))
 
         dist_args: List[str] = []
         if ds.dist:
@@ -1186,7 +1218,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         def _run(tag_name: str, seg_path: Path) -> None:
             dst_dir = ctx.slam_track_dir(tag_name)
             _rm_in_exp(dst_dir)
-            _info(f"STEP slam: run={tag_name} segment_dir={seg_path}")
+            _runtime_info("slam run={}".format(tag_name))
 
             cmd = [
                 "python",
@@ -1228,7 +1260,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             npz_expect = ctx.slam_npz_path(tag_name).resolve()
             if tum_meta != tum_expect or npz_meta != npz_expect:
                 _die(f"slam run_meta path mismatch for track={tag_name}: tum={tum_meta} npz={npz_meta}")
-            _info(f"[OK] slam {tag_name} saved: {ctx.slam_traj_path(tag_name)}")
+            _debug_info(f"[OK] slam {tag_name} saved: {ctx.slam_traj_path(tag_name)}")
 
         if seq in ("ori", "both"):
             _ensure(ctx.segment_frames_dir, "dir")
@@ -1245,7 +1277,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     def step_eval() -> None:
         eval_plot_enable = not bool(args.no_viz)
-        _info("STEP eval: phase=slam plots={}".format(eval_plot_enable))
+        _debug_info("STEP eval: phase=slam plots={}".format(eval_plot_enable))
 
         _rm_tree(eval_dir)
         eval_dir.mkdir(parents=True, exist_ok=True)
@@ -1285,15 +1317,15 @@ def main(argv: Optional[List[str]] = None) -> None:
         image_metrics_path = ctx.eval_artifact_path("image_metrics.json")
         summary_path = ctx.eval_artifact_path("summary.txt")
         if metrics_path.is_file():
-            _info("STEP eval: metrics={}".format(metrics_path))
+            _debug_info("STEP eval: metrics={}".format(metrics_path))
         else:
             _warn("eval metrics missing: {}".format(metrics_path))
         if image_metrics_path.is_file():
-            _info("STEP eval: image_metrics={}".format(image_metrics_path))
+            _debug_info("STEP eval: image_metrics={}".format(image_metrics_path))
         else:
             _warn("eval image metrics missing: {}".format(image_metrics_path))
         if summary_path.is_file():
-            _info("STEP eval: summary={}".format(summary_path))
+            _debug_info("STEP eval: summary={}".format(summary_path))
         else:
             _warn("eval summary missing: {}".format(summary_path))
 
@@ -1301,7 +1333,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         if args.mode not in ("segment", "all"):
             return
         if args.skip_analyze:
-            _info("post analyze skipped: --skip_analyze")
+            _debug_info("post analyze skipped: --skip_analyze")
             return
 
         analysis_dir = exp_dir / "segment" / "analysis"
@@ -1312,7 +1344,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             "--exp_dir",
             str(exp_dir),
         ]
-        _info("post analyze start: exp_dir={} interpreter={}".format(exp_dir, segment_python))
+        _debug_info("post analyze start: exp_dir={} interpreter={}".format(exp_dir, segment_python))
         try:
             run_cmd(
                 cmd,
@@ -1325,7 +1357,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             log_path = str(e.log_path) if e.log_path else str(logs_dir / "segment_analyze.log")
             _warn("post analyze failed: rc={} log={}".format(rc, log_path))
             return
-        _info("post analyze done: {}".format(analysis_dir))
+        _debug_info("post analyze done: {}".format(analysis_dir))
 
 
     # Execute mode
@@ -1361,7 +1393,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     except (ConfigError, RunError) as e:
         _die(str(e))
 
-    _info(f"DONE. EXP_DIR={exp_dir}")
+    _runtime_info("DONE.")
 
 
 if __name__ == "__main__":

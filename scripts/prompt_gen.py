@@ -11,7 +11,7 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 from tqdm import tqdm
 
-from _common import ensure_dir, get_platform_config, log_info, log_prog, log_warn, write_json_atomic
+from _common import ensure_dir, get_platform_config, log_info, log_prog, log_prompt, log_warn, write_json_atomic
 from _prompt.api import create_backend
 from _prompt.backends.smolvlm2_backend import DEFAULT_SMOLVLM2_MODEL_ID
 from _prompt.generator import build_final_prompt_payload
@@ -208,8 +208,8 @@ def main():
                 "profile": dict(candidate),
             }
         )
-        log_info(
-            "frame {}/{} classified in {:.2f}s: scene={} surface={} lighting={} risk={}".format(
+        log_prompt(
+            "prompt detail: frame {}/{} classified in {:.2f}s: scene={} surface={} lighting={} risk={}".format(
                 int(idx + 1),
                 int(len(selected_paths)),
                 elapsed,

@@ -28,6 +28,10 @@ def log_prog(msg):
     print("[PROG] {}".format(msg), flush=True)
 
 
+def log_prompt(msg):
+    print("[PROMPT] {}".format(msg), flush=True)
+
+
 def log_err(msg):
     print("[ERR] {}".format(msg), file=sys.stderr, flush=True)
 

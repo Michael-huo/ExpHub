@@ -328,7 +328,7 @@ def main():
     }
     write_json_atomic(out_dir / "step_meta.json", step_meta, indent=2)
 
-    log_prog("merge done")
+    log_prog("merge summary: merged_frames={} segments={}".format(int(merged_count), int(len(segs))))
     log_info("out_dir: {}".format(out_dir))
     log_info("frames: {} (count={})".format(out_frames, merged_count))
     log_info("root_files: {}/*.txt/*.json".format(out_dir))

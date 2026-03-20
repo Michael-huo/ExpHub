@@ -499,7 +499,7 @@ def main():
     })
     _json_dump(slam_dir / "run_meta.json", run_meta)
 
-    log_prog("traj saved: {}".format(tum_path))
+    log_prog("slam summary: frames_processed={}".format(int(len(timestamps_used))))
     log_info("npz saved: {}".format(npz_path))
     log_info("meta saved: {}".format(slam_dir / "run_meta.json"))
 

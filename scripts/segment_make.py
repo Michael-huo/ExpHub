@@ -662,6 +662,13 @@ def main():
     write_json_atomic(os.path.join(root_dir, "step_meta.json"), step_meta, indent=2)
 
 
+    log_prog(
+        "segment summary: frames={} policy={} keyframes={}".format(
+            int(actual_frame_count),
+            str(args.segment_policy),
+            int(keyframes_frame_count),
+        )
+    )
     log_prog("wrote dataset: {}".format(out_dir))
     log_info("frames: {}".format(frames_dir))
     log_info("root: {}".format(root_dir))

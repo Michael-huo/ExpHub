@@ -359,9 +359,32 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
     t_all_start = time.time()
     allow_prefix = ("[PROG]", "[INFO]", "[WARN]", "[ERR]", "[BAR]", "[PROMPT]")
 
+    def _is_primary_rank():
+        # type: () -> bool
+        rank_text = str(os.environ.get("RANK", "") or "").strip()
+        if rank_text:
+            try:
+                return int(rank_text) == 0
+            except Exception:
+                return rank_text == "0"
+
+        local_rank_text = str(os.environ.get("LOCAL_RANK", "") or "").strip()
+        if local_rank_text:
+            try:
+                return int(local_rank_text) == 0
+            except Exception:
+                return local_rank_text == "0"
+
+        if dist.is_available() and dist.is_initialized():
+            try:
+                return dist.get_rank() == 0
+            except Exception:
+                return True
+        return True
+
     def rprint(msg):
         # type: (str) -> None
-        if os.environ.get("RANK", "0") != "0":
+        if not _is_primary_rank():
             return
         if not str(msg).startswith(allow_prefix):
             return
@@ -817,9 +840,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
 
     def _is_main_process():
         # type: () -> bool
-        if dist.is_available() and dist.is_initialized():
-            return dist.get_rank() == 0
-        return True
+        return _is_primary_rank()
 
     def _distributed_barrier():
         # type: () -> None
@@ -1098,7 +1119,8 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             )
 
     pipeline.set_progress_bar_config(
-        bar_format="[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+        bar_format="[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        disable=(not _is_primary_rank()),
     )
     t_init_end = time.time()
     t_init_total = t_init_end - t_init_start
