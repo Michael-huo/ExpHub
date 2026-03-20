@@ -513,6 +513,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     merge_py = scripts_dir / "merge_seq.py"
     droid_py = scripts_dir / "slam_droid.py"
     stats_py = scripts_dir / "stats_collect.py"
+    eval_traj_py = scripts_dir / "eval_traj.py"
     segment_analyze_py = scripts_dir / "segment_analyze.py"
     prompt_gen_py = (scripts_dir / "prompt_gen.py").resolve()
     logs_dir = ctx.logs_dir
@@ -655,7 +656,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     else:
         viz_enable = args.mode in ("slam", "eval")
 
-    for p in [seg_py, infer_py, merge_py, droid_py, stats_py, segment_analyze_py]:
+    for p in [seg_py, infer_py, merge_py, droid_py, stats_py, eval_traj_py, segment_analyze_py]:
         _ensure(p, "file")
 
     _ensure(prompt_gen_py, "file")
@@ -987,95 +988,51 @@ def main(argv: Optional[List[str]] = None) -> None:
             _run("gen", merge_dir)
 
     def step_eval() -> None:
-        # Run evo evaluation using the configured slam Python environment.
-        # Do not use shutil.which() from the orchestrator process, because PATH
-        # may differ from the slam interpreter's bin directory.
-
-        _info(f"STEP eval: phase=slam viz={viz_enable}")
+        eval_plot_enable = not bool(args.no_viz)
+        _info("STEP eval: phase=slam plots={}".format(eval_plot_enable))
 
         _rm_tree(eval_dir)
         eval_dir.mkdir(parents=True, exist_ok=True)
 
-        slam_python = _phase_python("slam")
-        slam_bin_dir = Path(slam_python).resolve().parent
-
-        def _tool_path(tool: str) -> Path:
-            return (slam_bin_dir / tool).resolve()
-
-        def _run_shell_in_slam_env(shell_cmd: str, check: bool = False) -> int:
-            py_cmd = "import subprocess,sys;sys.exit(subprocess.call({!r}, shell=True))".format(shell_cmd)
-            return step_runner.run_env_python(
-                ["python", "-c", py_cmd],
-                phase_name="slam",
-                check=check,
-                log_name="eval.log",
-                cwd=exphub_root,
-            )
-
-        def _has_tool(tool: str) -> bool:
-            p = _tool_path(tool)
-            return p.is_file() and os.access(str(p), os.X_OK)
-
-        if not _has_tool("evo_traj"):
-            _warn(f"evo_traj not found: {_tool_path('evo_traj')}; skip eval")
-            return
-
         tum_ori = ctx.slam_traj_path("ori")
         tum_gen = ctx.slam_traj_path("gen")
+        cmd = [
+            "python",
+            str(eval_traj_py),
+            "--reference",
+            str(tum_ori),
+            "--estimate",
+            str(tum_gen),
+            "--out_dir",
+            str(eval_dir),
+            "--reference_name",
+            "ori",
+            "--estimate_name",
+            "gen",
+            "--alignment_mode",
+            "se3",
+        ]
+        if not eval_plot_enable:
+            cmd.append("--skip_plots")
 
-        def _run_traj(name: str, tum: Path) -> None:
-            _info(f"STEP eval: evo_traj {name} ({tum})")
-            out_txt = ctx.eval_artifact_path("evo_traj_" + name + ".txt")
-            evo_traj = _tool_path("evo_traj")
-            if viz_enable:
-                out_png = ctx.eval_artifact_path("traj_" + name + ".png")
-                cmd = "MPLBACKEND=Agg {} tum {} -p --save_plot {} 2>&1 | tee {}".format(
-                    shlex.quote(str(evo_traj)),
-                    shlex.quote(str(tum)),
-                    shlex.quote(str(out_png)),
-                    shlex.quote(str(out_txt)),
-                )
-            else:
-                cmd = "{} tum {} 2>&1 | tee {}".format(
-                    shlex.quote(str(evo_traj)),
-                    shlex.quote(str(tum)),
-                    shlex.quote(str(out_txt)),
-                )
+        step_runner.run_env_python(
+            cmd,
+            phase_name="slam",
+            log_name="eval.log",
+            cwd=exphub_root,
+            check=False,
+        )
 
-            _run_shell_in_slam_env(cmd, check=False)
-
-        if tum_ori.exists():
-            _run_traj("ori", tum_ori)
+        metrics_path = ctx.eval_artifact_path("metrics.json")
+        summary_path = ctx.eval_artifact_path("summary.txt")
+        if metrics_path.is_file():
+            _info("STEP eval: metrics={}".format(metrics_path))
         else:
-            _warn(f"missing ORI traj: {tum_ori}")
-
-        if tum_gen.exists():
-            _run_traj("gen", tum_gen)
+            _warn("eval metrics missing: {}".format(metrics_path))
+        if summary_path.is_file():
+            _info("STEP eval: summary={}".format(summary_path))
         else:
-            _warn(f"missing GEN traj: {tum_gen}")
-
-        if tum_ori.exists() and tum_gen.exists() and _has_tool("evo_ape"):
-            _info(f"STEP eval: evo_ape gen_vs_ori ({tum_gen} vs {tum_ori})")
-            out_txt = ctx.eval_artifact_path("evo_ape_gen_vs_ori.txt")
-            evo_ape = _tool_path("evo_ape")
-            if viz_enable:
-                out_png = ctx.eval_artifact_path("ape_gen_vs_ori.png")
-                cmd = "MPLBACKEND=Agg {} tum {} {} -a -p --save_plot {} 2>&1 | tee {}".format(
-                    shlex.quote(str(evo_ape)),
-                    shlex.quote(str(tum_ori)),
-                    shlex.quote(str(tum_gen)),
-                    shlex.quote(str(out_png)),
-                    shlex.quote(str(out_txt)),
-                )
-            else:
-                cmd = "{} tum {} {} -a 2>&1 | tee {}".format(
-                    shlex.quote(str(evo_ape)),
-                    shlex.quote(str(tum_ori)),
-                    shlex.quote(str(tum_gen)),
-                    shlex.quote(str(out_txt)),
-                )
-
-            _run_shell_in_slam_env(cmd, check=False)
+            _warn("eval summary missing: {}".format(summary_path))
 
     def maybe_run_post_analyze() -> None:
         if args.mode not in ("segment", "all"):
