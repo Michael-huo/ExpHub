@@ -99,6 +99,7 @@
 - 在 `slam` phase 环境中调度 `scripts/eval_main.py`；前端壳负责组织输入，后端 `_eval/` 统一执行 traj/image eval
 - 结构化输出至少包含 `eval/traj_metrics.json`、`eval/image_metrics.json`、`eval/slam_metrics.json` 与 `eval/summary.txt`
 - 轨迹图像输出收敛到 `eval/plots/`，当前至少包含 `traj_xy.png`、`ape_curve.png`、`rpe_curve.png`
+- 当 `segment/keyframes/keyframes_meta.json` 可用时，`eval/plots/` 中的主轨迹图与各类曲线图会以轻量标记标出最终关键帧位置；缺失时只降级为不标记，不影响图生成
 - `traj_xy.png` 保留历史文件名，但其主图语义已是“主二维投影视图”，不再强绑定真实世界固定 XY 平面
 - 图像评价默认统计 `infer -> merge` 生成帧与对应 `ori` 帧的逐帧比较，新增 `eval/image_metrics.json`、`eval/image_per_frame.csv` 与 `eval/plots/image_metrics_curve.png`
 - SLAM-friendly 图像评价默认只统计时间上连续的相邻生成帧对，输出 `eval/slam_metrics.json`、`eval/slam_pairs.csv` 与 `eval/plots/slam_metrics_curve.png`

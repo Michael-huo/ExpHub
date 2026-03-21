@@ -143,3 +143,129 @@ def resolve_slam_eval_inputs(exp_dir):
         "slam_gt_npz_path": exp_root / "slam" / "gt" / "traj_est.npz",
         "slam_gt_run_meta_path": exp_root / "slam" / "gt" / "run_meta.json",
     }
+
+
+def _final_keyframe_warning(metrics_obj, warning_prefix, detail):
+    if metrics_obj is None:
+        return
+    prefix = str(warning_prefix or "").strip()
+    if prefix:
+        append_warning(metrics_obj, "{}: {}".format(prefix, detail))
+        return
+    append_warning(metrics_obj, detail)
+
+
+def _candidate_exp_roots(path_candidates):
+    seen = set()
+    out = []
+    for raw_path in list(path_candidates or []):
+        if raw_path is None:
+            continue
+        text = str(raw_path).strip()
+        if not text:
+            continue
+        try:
+            path_obj = Path(text).resolve()
+        except Exception:
+            continue
+        for candidate in [path_obj] + list(path_obj.parents):
+            key = str(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(candidate)
+    return out
+
+
+def resolve_eval_exp_root(path_candidates):
+    for candidate in _candidate_exp_roots(path_candidates):
+        meta_path = candidate / "segment" / "keyframes" / "keyframes_meta.json"
+        if meta_path.is_file():
+            return candidate
+    return None
+
+
+def _segment_timestamp_map(exp_root):
+    if exp_root is None:
+        return {}
+    timestamps = read_timestamps(Path(exp_root).resolve() / "segment" / "timestamps.txt")
+    out = {}
+    for idx, value in enumerate(timestamps):
+        try:
+            out[int(idx)] = float(value)
+        except Exception:
+            continue
+    return out
+
+
+def load_final_keyframe_context(path_candidates, metrics_obj=None, warning_prefix=""):
+    exp_root = resolve_eval_exp_root(path_candidates)
+    empty_context = {
+        "exp_root": None,
+        "meta_path": "",
+        "frame_indices": [],
+        "timestamps_by_frame": {},
+    }
+    if exp_root is None:
+        _final_keyframe_warning(
+            metrics_obj,
+            warning_prefix,
+            "final keyframes unavailable: missing segment/keyframes/keyframes_meta.json",
+        )
+        return empty_context
+
+    meta_path = Path(exp_root).resolve() / "segment" / "keyframes" / "keyframes_meta.json"
+    meta_obj = read_json(meta_path)
+    if meta_obj is None:
+        _final_keyframe_warning(
+            metrics_obj,
+            warning_prefix,
+            "final keyframes unavailable: failed to read {}".format(meta_path),
+        )
+        return empty_context
+
+    frame_indices = []
+    seen = set()
+    for value in list(meta_obj.get("keyframe_indices") or []):
+        try:
+            frame_idx = int(value)
+        except Exception:
+            continue
+        if frame_idx < 0 or frame_idx in seen:
+            continue
+        seen.add(frame_idx)
+        frame_indices.append(frame_idx)
+    frame_indices.sort()
+    if not frame_indices:
+        _final_keyframe_warning(
+            metrics_obj,
+            warning_prefix,
+            "final keyframes unavailable: keyframe_indices missing or empty in {}".format(meta_path),
+        )
+        return empty_context
+
+    timestamps_by_frame = {}
+    for item in list(meta_obj.get("keyframes") or []):
+        if not isinstance(item, dict):
+            continue
+        try:
+            frame_idx = int(item.get("frame_idx"))
+            ts_sec = float(item.get("ts_sec"))
+        except Exception:
+            continue
+        timestamps_by_frame[int(frame_idx)] = float(ts_sec)
+
+    if len(timestamps_by_frame) < len(frame_indices):
+        fallback_map = _segment_timestamp_map(exp_root)
+        for frame_idx in frame_indices:
+            if frame_idx in timestamps_by_frame:
+                continue
+            if frame_idx in fallback_map:
+                timestamps_by_frame[frame_idx] = float(fallback_map[frame_idx])
+
+    return {
+        "exp_root": Path(exp_root).resolve(),
+        "meta_path": str(meta_path),
+        "frame_indices": list(frame_indices),
+        "timestamps_by_frame": dict(timestamps_by_frame),
+    }

@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from _common import log_err, log_info, log_warn
-from _eval.io import append_warning, fmt_value, write_json
+from _eval.io import append_warning, fmt_value, load_final_keyframe_context, write_json
 
 
 _STAT_KEYS = ["rmse", "mean", "median", "std", "min", "max"]
@@ -23,6 +23,12 @@ _REF_COLOR = "#1f4e79"
 _EST_COLOR = "#c56a2d"
 _REF_BG_COLOR = "#b8c3cf"
 _FILL_ALPHA = 0.06
+_KEYFRAME_LINE_COLOR = "#b5bec8"
+_KEYFRAME_LINE_ALPHA = 0.55
+_KEYFRAME_LINE_WIDTH = 0.75
+_KEYFRAME_LINE_STYLE = (0, (3.2, 3.2))
+_KEYFRAME_MARKER_EDGE = "#6e7c86"
+_KEYFRAME_MARKER_SIZE = 22
 
 
 def add_traj_eval_args(parser):
@@ -91,6 +97,7 @@ def _curve_payload(result):
         "x": xs,
         "y": errors,
         "xlabel": xlabel,
+        "x_kind": "time" if seconds is not None and xs is not None and xlabel == "Time From Start (s)" else "index",
     }
 
 
@@ -357,6 +364,156 @@ def _curve_stats_text(stats_obj, unit):
     )
 
 
+def _draw_keyframe_vlines(ax, positions):
+    if not positions:
+        return
+    for x_value in positions:
+        ax.axvline(
+            float(x_value),
+            color=_KEYFRAME_LINE_COLOR,
+            linewidth=_KEYFRAME_LINE_WIDTH,
+            linestyle=_KEYFRAME_LINE_STYLE,
+            alpha=_KEYFRAME_LINE_ALPHA,
+            zorder=2.4,
+        )
+
+
+def _finite_timestamps(values):
+    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    if arr.size <= 0:
+        return np.asarray([], dtype=np.float64)
+    return arr[np.isfinite(arr)]
+
+
+def _timestamp_match_tolerance(sample_timestamps):
+    finite = _finite_timestamps(sample_timestamps)
+    if finite.shape[0] < 2:
+        return 1e-4
+    diffs = np.diff(finite)
+    diffs = diffs[diffs > 0.0]
+    if diffs.size <= 0:
+        return 1e-4
+    return max(1e-4, float(np.median(diffs)) * 0.45)
+
+
+def _nearest_timestamp_indices(sample_timestamps, target_timestamps, tolerance):
+    if tolerance is None or tolerance < 0.0:
+        return []
+    sample_arr = np.asarray(sample_timestamps, dtype=np.float64).reshape(-1)
+    if sample_arr.size <= 0:
+        return []
+    out = []
+    seen = set()
+    for target in list(target_timestamps or []):
+        try:
+            ts_value = float(target)
+        except Exception:
+            continue
+        if not np.isfinite(ts_value):
+            continue
+        pos = int(np.searchsorted(sample_arr, ts_value))
+        candidates = []
+        if pos < sample_arr.shape[0]:
+            candidates.append(pos)
+        if pos > 0:
+            candidates.append(pos - 1)
+        best_idx = None
+        best_diff = None
+        for idx in candidates:
+            diff = abs(float(sample_arr[idx]) - ts_value)
+            if best_diff is None or diff < best_diff:
+                best_idx = int(idx)
+                best_diff = float(diff)
+        if best_idx is None or best_diff is None or best_diff > tolerance:
+            continue
+        if best_idx in seen:
+            continue
+        seen.add(best_idx)
+        out.append(best_idx)
+    out.sort()
+    return out
+
+
+def _keyframe_timestamps(keyframe_context):
+    if not isinstance(keyframe_context, dict):
+        return []
+    ts_map = dict(keyframe_context.get("timestamps_by_frame") or {})
+    out = []
+    for frame_idx in list(keyframe_context.get("frame_indices") or []):
+        if frame_idx not in ts_map:
+            continue
+        try:
+            ts_value = float(ts_map[frame_idx])
+        except Exception:
+            continue
+        if np.isfinite(ts_value):
+            out.append(ts_value)
+    return out
+
+
+def _curve_keyframe_positions(curve_data, ref_timestamps, keyframe_context):
+    if not curve_data or not keyframe_context:
+        return []
+    curve_x = np.asarray(curve_data.get("x", []), dtype=np.float64).reshape(-1)
+    if curve_x.size <= 0:
+        return []
+    if not list(keyframe_context.get("frame_indices") or []):
+        return []
+
+    x_min = float(np.nanmin(curve_x))
+    x_max = float(np.nanmax(curve_x))
+    if curve_data.get("x_kind") == "time":
+        keyframe_timestamps = _keyframe_timestamps(keyframe_context)
+        finite_ref_ts = _finite_timestamps(ref_timestamps)
+        if not keyframe_timestamps or finite_ref_ts.size <= 0:
+            return []
+        base_ts = float(finite_ref_ts[0])
+        pad = _timestamp_match_tolerance(finite_ref_ts)
+        out = []
+        seen = set()
+        for ts_value in keyframe_timestamps:
+            x_value = float(ts_value - base_ts)
+            if x_value < x_min - pad or x_value > x_max + pad:
+                continue
+            rounded = round(x_value, 6)
+            if rounded in seen:
+                continue
+            seen.add(rounded)
+            out.append(x_value)
+        return out
+
+    tolerance = _timestamp_match_tolerance(ref_timestamps)
+    sample_indices = _nearest_timestamp_indices(ref_timestamps, _keyframe_timestamps(keyframe_context), tolerance)
+    out = []
+    for idx in sample_indices:
+        x_value = float(idx)
+        if x_value < x_min or x_value > x_max:
+            continue
+        out.append(x_value)
+    return out
+
+
+def _traj_keyframe_sample_indices(ref_timestamps, keyframe_context, sample_count):
+    if sample_count <= 0:
+        return []
+    tolerance = _timestamp_match_tolerance(ref_timestamps)
+    sample_indices = _nearest_timestamp_indices(ref_timestamps, _keyframe_timestamps(keyframe_context), tolerance)
+    out = []
+    for idx in sample_indices:
+        if idx <= 0 or idx >= int(sample_count) - 1:
+            continue
+        out.append(int(idx))
+    return out
+
+
+def _load_plot_keyframe_context(args, metrics_obj):
+    return load_final_keyframe_context(
+        [getattr(args, "out_dir", None), getattr(args, "reference", None), getattr(args, "estimate", None)],
+        metrics_obj=metrics_obj,
+        warning_prefix="eval plot keyframes",
+    )
+
+
 def _normalized_points(points_xy):
     arr = np.asarray(points_xy, dtype=np.float64)
     if arr.size == 0:
@@ -506,7 +663,7 @@ def _project_traj_to_view_plane(ref_xyz, est_xyz):
     }
 
 
-def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_label, metrics_obj):
+def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_label, metrics_obj, keyframe_sample_indices=None):
     from matplotlib.collections import LineCollection
     from matplotlib.colors import Normalize
     from matplotlib.lines import Line2D
@@ -568,6 +725,23 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
     if not est_line_drawn:
         ax.plot(est_xy[:, 0], est_xy[:, 1], color=_EST_COLOR, linewidth=2.2, alpha=0.96, zorder=3)
 
+    show_keyframe_legend = False
+    if keyframe_sample_indices:
+        valid_indices = [int(idx) for idx in keyframe_sample_indices if 0 <= int(idx) < ref_xy.shape[0]]
+        if valid_indices:
+            keyframe_xy = ref_xy[valid_indices]
+            ax.scatter(
+                keyframe_xy[:, 0],
+                keyframe_xy[:, 1],
+                s=_KEYFRAME_MARKER_SIZE,
+                facecolors="white",
+                edgecolors=_KEYFRAME_MARKER_EDGE,
+                linewidths=0.8,
+                alpha=0.92,
+                zorder=4,
+            )
+            show_keyframe_legend = True
+
     marker_size = 40
     ax.scatter(ref_xy[0, 0], ref_xy[0, 1], color=_REF_COLOR, s=marker_size, marker="o", edgecolors="white", linewidths=0.9, zorder=5)
     ax.scatter(ref_xy[-1, 0], ref_xy[-1, 1], color=_REF_COLOR, s=marker_size + 10, marker="D", edgecolors="white", linewidths=0.9, zorder=5)
@@ -584,6 +758,20 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
         Line2D([0], [0], color=_REF_BG_COLOR, linewidth=1.8, label=ref_label),
         Line2D([0], [0], color="#6e7c86" if colorbar is not None else _EST_COLOR, linewidth=2.4, label="{} (APE-colored)".format(est_label) if colorbar is not None else est_label),
     ]
+    if show_keyframe_legend:
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                linestyle="None",
+                marker="o",
+                markerfacecolor="white",
+                markeredgecolor=_KEYFRAME_MARKER_EDGE,
+                markeredgewidth=0.8,
+                markersize=5.0,
+                label="keyframes",
+            )
+        )
     ax.legend(
         handles=legend_handles,
         loc=legend_corner,
@@ -598,7 +786,7 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
     plt.close(fig)
 
 
-def _plot_ape_curve(plt, out_path, curve_data, metrics_obj):
+def _plot_ape_curve(plt, out_path, curve_data, metrics_obj, keyframe_xs=None):
     fig, ax = plt.subplots(figsize=(8.8, 4.5), dpi=_PLOT_DPI)
     _style_figure(fig)
     ax.plot(curve_data["x"], curve_data["y"], color=_REF_COLOR, linewidth=1.9, zorder=3)
@@ -607,13 +795,14 @@ def _plot_ape_curve(plt, out_path, curve_data, metrics_obj):
     ax.set_xlabel(str(curve_data["xlabel"]), fontsize=11)
     ax.set_ylabel("Translation Error (m)", fontsize=11)
     _style_axes(ax)
+    _draw_keyframe_vlines(ax, keyframe_xs)
     _add_corner_box(ax, _curve_stats_text(metrics_obj["ape_trans"], "m"), "upper right", _REF_COLOR, fontsize=9.2)
     fig.tight_layout(pad=0.6)
     fig.savefig(str(out_path), bbox_inches="tight", pad_inches=0.06)
     plt.close(fig)
 
 
-def _plot_rpe_curve(plt, out_path, trans_curve, rot_curve, metrics_obj):
+def _plot_rpe_curve(plt, out_path, trans_curve, rot_curve, metrics_obj, trans_keyframe_xs=None, rot_keyframe_xs=None):
     if rot_curve is None:
         fig, axes = plt.subplots(1, 1, figsize=(8.8, 4.5), dpi=_PLOT_DPI)
         axes = [axes]
@@ -629,6 +818,7 @@ def _plot_rpe_curve(plt, out_path, trans_curve, rot_curve, metrics_obj):
     ax0.set_xlabel(str(trans_curve["xlabel"]), fontsize=11)
     ax0.set_ylabel("Translation Error (m)", fontsize=11)
     _style_axes(ax0)
+    _draw_keyframe_vlines(ax0, trans_keyframe_xs)
     _add_corner_box(ax0, _curve_stats_text(metrics_obj["rpe_trans"], "m"), "upper right", _EST_COLOR, fontsize=9.0)
 
     if rot_curve is not None:
@@ -639,6 +829,7 @@ def _plot_rpe_curve(plt, out_path, trans_curve, rot_curve, metrics_obj):
         ax1.set_xlabel(str(rot_curve["xlabel"]), fontsize=11)
         ax1.set_ylabel("Rotation Error (deg)", fontsize=11)
         _style_axes(ax1)
+        _draw_keyframe_vlines(ax1, rot_keyframe_xs)
         _add_corner_box(ax1, _curve_stats_text(metrics_obj["rpe_rot"], "deg"), "upper right", "#546d8c", fontsize=9.0)
 
     fig.tight_layout(pad=0.55, rect=[0.0, 0.0, 1.0, 0.97])
@@ -660,8 +851,10 @@ def _generate_plots(args, plot_dir, eval_payload, metrics_obj):
     plt = _setup_matplotlib()
     plot_dir.mkdir(parents=True, exist_ok=True)
 
+    keyframe_context = _load_plot_keyframe_context(args, metrics_obj)
     ref_traj = ape_result.trajectories.get(str(args.reference_name))
     est_traj = ape_result.trajectories.get(str(args.estimate_name))
+    ref_timestamps = np.asarray(getattr(ref_traj, "timestamps", []), dtype=np.float64).reshape(-1) if ref_traj is not None else np.asarray([], dtype=np.float64)
     if ref_traj is None or est_traj is None:
         append_warning(metrics_obj, "aligned trajectories missing in APE result; skip traj plot")
     else:
@@ -674,6 +867,7 @@ def _generate_plots(args, plot_dir, eval_payload, metrics_obj):
             "{} (reference)".format(args.reference_name),
             "{} (estimate)".format(args.estimate_name),
             metrics_obj,
+            keyframe_sample_indices=_traj_keyframe_sample_indices(ref_timestamps, keyframe_context, ref_timestamps.shape[0]),
         )
 
     ape_curve = _curve_payload(ape_result)
@@ -685,6 +879,7 @@ def _generate_plots(args, plot_dir, eval_payload, metrics_obj):
             plot_dir / "ape_curve.png",
             ape_curve,
             metrics_obj,
+            keyframe_xs=_curve_keyframe_positions(ape_curve, ref_timestamps, keyframe_context),
         )
 
     rpe_trans_curve = _curve_payload(rpe_trans_result)
@@ -692,7 +887,15 @@ def _generate_plots(args, plot_dir, eval_payload, metrics_obj):
         append_warning(metrics_obj, "RPE translation curve unavailable")
     else:
         rpe_rot_curve = _curve_payload(eval_payload.get("rpe_rot"))
-        _plot_rpe_curve(plt, plot_dir / "rpe_curve.png", rpe_trans_curve, rpe_rot_curve, metrics_obj)
+        _plot_rpe_curve(
+            plt,
+            plot_dir / "rpe_curve.png",
+            rpe_trans_curve,
+            rpe_rot_curve,
+            metrics_obj,
+            trans_keyframe_xs=_curve_keyframe_positions(rpe_trans_curve, ref_timestamps, keyframe_context),
+            rot_keyframe_xs=_curve_keyframe_positions(rpe_rot_curve, ref_timestamps, keyframe_context),
+        )
 
 
 def update_traj_eval_status(metrics_obj):

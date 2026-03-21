@@ -16,6 +16,7 @@ from _eval.io import (
     empty_stats,
     fmt_value,
     metric_stats,
+    load_final_keyframe_context,
     read_json,
     read_timestamps,
     resolve_image_eval_inputs,
@@ -33,6 +34,10 @@ _TEXT_COLOR = "#1f2a35"
 _PSNR_COLOR = "#1f4e79"
 _MSSSIM_COLOR = "#4d7f4b"
 _LPIPS_COLOR = "#b35c2e"
+_KEYFRAME_LINE_COLOR = "#b5bec8"
+_KEYFRAME_LINE_ALPHA = 0.55
+_KEYFRAME_LINE_WIDTH = 0.75
+_KEYFRAME_LINE_STYLE = (0, (3.2, 3.2))
 
 
 def _base_metrics(exp_dir):
@@ -319,13 +324,46 @@ def _style_axes(ax):
     ax.tick_params(colors="#2f3b4a", labelsize=9.5)
 
 
-def _plot_metric_axis(ax, frame_indices, values, color, title, ylabel, unavailable_text):
+def _draw_keyframe_vlines(ax, positions):
+    if not positions:
+        return
+    for x_value in positions:
+        ax.axvline(
+            float(x_value),
+            color=_KEYFRAME_LINE_COLOR,
+            linewidth=_KEYFRAME_LINE_WIDTH,
+            linestyle=_KEYFRAME_LINE_STYLE,
+            alpha=_KEYFRAME_LINE_ALPHA,
+            zorder=2.1,
+        )
+
+
+def _keyframe_frame_positions(frame_indices, keyframe_context):
+    if not frame_indices or not isinstance(keyframe_context, dict):
+        return []
+    frame_set = set(int(value) for value in frame_indices)
+    out = []
+    seen = set()
+    for value in list(keyframe_context.get("frame_indices") or []):
+        try:
+            frame_idx = int(value)
+        except Exception:
+            continue
+        if frame_idx not in frame_set or frame_idx in seen:
+            continue
+        seen.add(frame_idx)
+        out.append(frame_idx)
+    return out
+
+
+def _plot_metric_axis(ax, frame_indices, values, color, title, ylabel, unavailable_text, keyframe_xs=None):
     _style_axes(ax)
     ax.set_title(title, fontsize=11.5, color=_TEXT_COLOR, pad=6)
     ax.set_xlabel("Frame Index", fontsize=10.5)
     ax.set_ylabel(ylabel, fontsize=10.5)
     if values:
-        ax.plot(frame_indices, values, color=color, linewidth=1.7)
+        ax.plot(frame_indices, values, color=color, linewidth=1.7, zorder=3)
+        _draw_keyframe_vlines(ax, keyframe_xs)
     else:
         ax.text(
             0.5,
@@ -339,12 +377,13 @@ def _plot_metric_axis(ax, frame_indices, values, color, title, ylabel, unavailab
         )
 
 
-def _write_plot(out_path, records, metrics_obj):
+def _write_plot(out_path, records, metrics_obj, keyframe_context=None):
     plt = _setup_matplotlib()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(3, 1, figsize=(9.0, 8.4), dpi=_PLOT_DPI, sharex=False)
     fig.patch.set_facecolor(_FIG_FACE)
     frame_indices = [int(item["frame_idx"]) for item in records]
+    keyframe_xs = _keyframe_frame_positions(frame_indices, keyframe_context)
     psnr_values = [float(item["psnr"]) for item in records if item.get("psnr") is not None]
     ms_ssim_values = [float(item["ms_ssim"]) for item in records if item.get("ms_ssim") is not None]
     lpips_values = [float(item["lpips"]) for item in records if item.get("lpips") is not None]
@@ -357,6 +396,7 @@ def _write_plot(out_path, records, metrics_obj):
         "PSNR",
         "dB",
         "PSNR unavailable",
+        keyframe_xs=keyframe_xs,
     )
     _plot_metric_axis(
         axes[1],
@@ -366,6 +406,7 @@ def _write_plot(out_path, records, metrics_obj):
         "MS-SSIM",
         "Score",
         "MS-SSIM unavailable",
+        keyframe_xs=keyframe_xs,
     )
     lpips_unavailable = "LPIPS unavailable"
     warnings_text = "\n".join(metrics_obj.get("warnings", []) or [])
@@ -379,6 +420,7 @@ def _write_plot(out_path, records, metrics_obj):
         "LPIPS",
         "Score",
         lpips_unavailable,
+        keyframe_xs=keyframe_xs,
     )
     fig.tight_layout(pad=0.8)
     fig.savefig(str(out_path), bbox_inches="tight", pad_inches=0.06)
@@ -400,7 +442,7 @@ def _update_status(metrics_obj):
     metrics_obj["eval_status"] = "partial"
 
 
-def write_image_outputs(out_dir, metrics_obj, records):
+def write_image_outputs(out_dir, metrics_obj, records, keyframe_context=None):
     image_metrics_path = out_dir / "image_metrics.json"
     image_csv_path = out_dir / "image_per_frame.csv"
     image_plot_path = out_dir / "plots" / "image_metrics_curve.png"
@@ -408,7 +450,7 @@ def write_image_outputs(out_dir, metrics_obj, records):
     write_json(image_metrics_path, metrics_obj, indent=2)
     write_csv(image_csv_path, ["frame_idx", "timestamp", "psnr", "ms_ssim", "lpips"], _csv_rows_from_records(records))
     try:
-        _write_plot(image_plot_path, records, metrics_obj)
+        _write_plot(image_plot_path, records, metrics_obj, keyframe_context=keyframe_context)
     except Exception as exc:
         append_warning(metrics_obj, "failed to generate image plot: {}".format(exc))
         write_json(image_metrics_path, metrics_obj, indent=2)
@@ -478,7 +520,8 @@ def run_image_eval(exp_dir, out_dir):
     metrics_obj["ms_ssim"] = metric_stats([item.get("ms_ssim") for item in records if item.get("ms_ssim") is not None])
     metrics_obj["lpips"] = metric_stats([item.get("lpips") for item in records if item.get("lpips") is not None])
     _update_status(metrics_obj)
-    write_image_outputs(out_path, metrics_obj, records)
+    keyframe_context = load_final_keyframe_context([exp_root], metrics_obj=metrics_obj, warning_prefix="image plot keyframes")
+    write_image_outputs(out_path, metrics_obj, records, keyframe_context=keyframe_context)
 
     return {
         "metrics": metrics_obj,

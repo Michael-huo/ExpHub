@@ -17,6 +17,7 @@ from _eval.io import (
     append_warning,
     empty_stats,
     metric_stats,
+    load_final_keyframe_context,
     read_json,
     read_timestamps,
     resolve_slam_eval_inputs,
@@ -42,6 +43,10 @@ _INLIER_COLOR = "#1f4e79"
 _POSE_COLOR = "#4d7f4b"
 _FAIL_COLOR = "#b35c2e"
 _REF_LINE_COLOR = "#6a7480"
+_KEYFRAME_LINE_COLOR = "#b5bec8"
+_KEYFRAME_LINE_ALPHA = 0.55
+_KEYFRAME_LINE_WIDTH = 0.75
+_KEYFRAME_LINE_STYLE = (0, (3.2, 3.2))
 
 
 def _base_metrics(exp_dir):
@@ -743,6 +748,43 @@ def _style_axes(ax):
     ax.tick_params(colors="#2f3b4a", labelsize=9.5)
 
 
+def _draw_keyframe_vlines(ax, positions):
+    if not positions:
+        return
+    for x_value in positions:
+        ax.axvline(
+            float(x_value),
+            color=_KEYFRAME_LINE_COLOR,
+            linewidth=_KEYFRAME_LINE_WIDTH,
+            linestyle=_KEYFRAME_LINE_STYLE,
+            alpha=_KEYFRAME_LINE_ALPHA,
+            zorder=2.1,
+        )
+
+
+def _pair_index_keyframe_positions(records, keyframe_context):
+    if not records or not isinstance(keyframe_context, dict):
+        return []
+    start_indices = [int(item["frame_idx_0"]) for item in records]
+    out = []
+    seen = set()
+    for value in list(keyframe_context.get("frame_indices") or []):
+        try:
+            frame_idx = int(value)
+        except Exception:
+            continue
+        pos = int(np.searchsorted(start_indices, frame_idx, side="left"))
+        x_value = float(pos) - 0.5
+        if x_value < -0.5 or x_value > float(len(records)) - 0.5:
+            continue
+        rounded = round(x_value, 6)
+        if rounded in seen:
+            continue
+        seen.add(rounded)
+        out.append(x_value)
+    return out
+
+
 def _plot_unavailable(ax, title, ylabel, text):
     _style_axes(ax)
     ax.set_title(title, fontsize=11.5, color=_TEXT_COLOR, pad=6)
@@ -760,7 +802,7 @@ def _plot_unavailable(ax, title, ylabel, text):
     )
 
 
-def _plot_inlier_axis(ax, records, metrics_obj):
+def _plot_inlier_axis(ax, records, metrics_obj, keyframe_xs=None):
     xs = list(range(len(records)))
     values = []
     has_value = False
@@ -790,14 +832,16 @@ def _plot_inlier_axis(ax, records, metrics_obj):
         markersize=3.2,
         markerfacecolor=_INLIER_COLOR,
         markeredgewidth=0.0,
+        zorder=3,
     )
     ref_value = (metrics_obj or {}).get("inlier_ratio", {}).get("mean")
     if ref_value is not None:
         ax.axhline(float(ref_value), color=_REF_LINE_COLOR, linestyle="--", linewidth=1.1, alpha=0.9)
+    _draw_keyframe_vlines(ax, keyframe_xs)
     ax.set_ylim(0.0, 1.02)
 
 
-def _plot_pose_axis(ax, records):
+def _plot_pose_axis(ax, records, keyframe_xs=None):
     xs = []
     ys = []
     for idx, item in enumerate(records):
@@ -818,7 +862,8 @@ def _plot_pose_axis(ax, records):
     ax.set_title("Pose Success", fontsize=11.5, color=_TEXT_COLOR, pad=6)
     ax.set_xlabel("Pair Index", fontsize=10.5)
     ax.set_ylabel("State", fontsize=10.5)
-    ax.step(xs, ys, where="mid", color=_POSE_COLOR, linewidth=1.5, alpha=0.95)
+    ax.step(xs, ys, where="mid", color=_POSE_COLOR, linewidth=1.5, alpha=0.95, zorder=3)
+    _draw_keyframe_vlines(ax, keyframe_xs)
     fail_x = [xs[pos] for pos, value in enumerate(ys) if int(value) == 0]
     succ_x = [xs[pos] for pos, value in enumerate(ys) if int(value) == 1]
     if fail_x:
@@ -830,15 +875,16 @@ def _plot_pose_axis(ax, records):
     ax.set_yticklabels(["fail", "success"])
 
 
-def _write_plot(out_path, records, metrics_obj):
+def _write_plot(out_path, records, metrics_obj, keyframe_context=None):
     plt = _setup_matplotlib()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig, axes = plt.subplots(2, 1, figsize=(9.0, 6.2), dpi=_PLOT_DPI, sharex=False)
     fig.patch.set_facecolor(_FIG_FACE)
     fig.suptitle("SLAM-friendly Metrics", fontsize=13, color=_TEXT_COLOR, y=0.99)
 
-    _plot_inlier_axis(axes[0], records, metrics_obj)
-    _plot_pose_axis(axes[1], records)
+    keyframe_xs = _pair_index_keyframe_positions(records, keyframe_context)
+    _plot_inlier_axis(axes[0], records, metrics_obj, keyframe_xs=keyframe_xs)
+    _plot_pose_axis(axes[1], records, keyframe_xs=keyframe_xs)
 
     fig.tight_layout(pad=0.8, rect=[0.0, 0.0, 1.0, 0.97])
     fig.savefig(str(out_path), bbox_inches="tight", pad_inches=0.06)
@@ -858,7 +904,7 @@ def _update_status(metrics_obj):
     metrics_obj["eval_status"] = "failed"
 
 
-def write_slam_outputs(out_dir, metrics_obj, records):
+def write_slam_outputs(out_dir, metrics_obj, records, keyframe_context=None):
     metrics_path = out_dir / "slam_metrics.json"
     pairs_path = out_dir / "slam_pairs.csv"
     plot_path = out_dir / "plots" / "slam_metrics_curve.png"
@@ -878,7 +924,7 @@ def write_slam_outputs(out_dir, metrics_obj, records):
         _csv_rows(records),
     )
     try:
-        _write_plot(plot_path, records, metrics_obj)
+        _write_plot(plot_path, records, metrics_obj, keyframe_context=keyframe_context)
     except Exception as exc:
         append_warning(metrics_obj, "failed to generate slam plot: {}".format(exc))
         write_json(metrics_path, metrics_obj, indent=2)
@@ -997,7 +1043,8 @@ def run_slam_eval(exp_dir, out_dir):
     metrics_obj["rotation_error_deg"] = metric_stats(rotation_values)
     metrics_obj["translation_direction_error_deg"] = metric_stats(translation_values)
     _update_status(metrics_obj)
-    write_slam_outputs(out_path, metrics_obj, records)
+    keyframe_context = load_final_keyframe_context([exp_root], metrics_obj=metrics_obj, warning_prefix="slam plot keyframes")
+    write_slam_outputs(out_path, metrics_obj, records, keyframe_context=keyframe_context)
 
     return {
         "metrics": metrics_obj,
