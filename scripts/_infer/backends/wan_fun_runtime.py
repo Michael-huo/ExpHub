@@ -190,6 +190,18 @@ def _normalize_vae_compression_ratios(config):
     return int(temporal_ratio), int(spatial_ratio)
 
 
+def _format_segment_range(seg_spec):
+    # type: (object) -> str
+    if not isinstance(seg_spec, dict):
+        return ""
+    try:
+        start_idx = int(seg_spec.get("start_idx"))
+        end_idx = int(seg_spec.get("end_idx"))
+    except Exception:
+        return ""
+    return " idx {}->{}".format(start_idx, end_idx)
+
+
 class WanFunInferBackend(DirectInferBackend):
     backend_profile = DEFAULT_WAN_FUN_RUNTIME_PROFILE
 
@@ -1553,10 +1565,12 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             elapsed = time.time() - batch_start
             left = total - seg_i
             eta = (elapsed / seg_i * left) if seg_i > 0 and left > 0 else 0.0
+            range_text = _format_segment_range(seg_spec)
             rprint(
-                "[INFO] seg {}/{}: infer={:.2f}s save={:.2f}s elapsed={:.1f}s eta={:.1f}s".format(
+                "[INFO] seg {}/{}:{} infer={:.2f}s save={:.2f}s elapsed={:.1f}s eta={:.1f}s".format(
                     seg_i,
                     total,
+                    range_text,
                     segment_result.infer_sec,
                     save_sec,
                     elapsed,

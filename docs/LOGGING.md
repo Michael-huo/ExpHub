@@ -67,6 +67,10 @@ ExpHub 的性能面板依赖显式心跳，而不是只看顶层计时。
 
 默认终端还会进一步压缩逐帧 prompt 明细、冗长 infer 配置、重复 eval 指标与绝对路径输出。
 
+当前 `infer` 的逐段摘要在 `info` 终端下应保持简洁，但建议保留执行边界信息，例如：
+
+`seg 1/5: idx 0->23 infer=12.34s save=0.21s elapsed=12.6s eta=50.4s`
+
 ## 6. Phase 日志落盘
 
 顶层 runner 会继续把子脚本完整 stdout/stderr 收口到 `EXP_DIR/logs/*.log`。
