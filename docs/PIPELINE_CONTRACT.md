@@ -99,9 +99,10 @@
 - 在 `slam` phase 环境中调度 `scripts/eval_main.py`；前端壳负责组织输入，后端 `_eval/` 统一执行 traj/image eval
 - 结构化输出至少包含 `eval/traj_metrics.json`、`eval/image_metrics.json`、`eval/slam_metrics.json` 与 `eval/summary.txt`
 - 轨迹图像输出收敛到 `eval/plots/`，当前至少包含 `traj_xy.png`、`ape_curve.png`、`rpe_curve.png`
+- `traj_xy.png` 保留历史文件名，但其主图语义已是“主二维投影视图”，不再强绑定真实世界固定 XY 平面
 - 图像评价默认统计 `infer -> merge` 生成帧与对应 `ori` 帧的逐帧比较，新增 `eval/image_metrics.json`、`eval/image_per_frame.csv` 与 `eval/plots/image_metrics_curve.png`
 - SLAM-friendly 图像评价默认只统计时间上连续的相邻生成帧对，输出 `eval/slam_metrics.json`、`eval/slam_pairs.csv` 与 `eval/plots/slam_metrics_curve.png`
-- `traj_metrics.json` 作为轨迹评价事实源，至少包含 APE translation、RPE translation、matched pose 数、`eval_status` 与 `warnings`
+- `traj_metrics.json` 作为轨迹评价事实源，至少包含 APE translation、RPE translation、matched pose 数、`ori_path_length_m`、`gen_path_length_m`、`eval_status` 与 `warnings`
 - `image_metrics.json` 作为图像评价事实源，至少包含 `psnr`、`ms_ssim`、`lpips` 的聚合统计、`frame_count`、`eval_status` 与 `warnings`
 - `slam_metrics.json` 作为两视图几何型 SLAM-friendly 评价事实源，至少包含 `inlier_ratio`、`pose_success_rate`、`reference_source`、`uses_proxy_reference`、`valid_pair_count`、`valid_pose_pair_count` 与 `warnings`
 - `summary.txt` 汇总轨迹与图像评价的人类可读摘要，不再单独输出 `image_summary.txt`
@@ -114,7 +115,7 @@
 - 输出 `stats/report.json`
 - 保留 `stats/compression.json` 兼容历史消费
 - 对缺失的 `step_meta.json` 给出 `WARN`，而不是直接崩溃
-- 实验结束后终端统一打印单块 `EXPERIMENT REPORT`，汇总 time / quality / compression 三类关键指标
+- 实验结束后终端统一打印单块 `EXPERIMENT REPORT`，汇总 time / quality / compression 三类关键指标；其中 quality 区块当前也包含 `ori_path_length_m` / `gen_path_length_m` 的展示
 
 ## 4. `segment_analyze` 的旁路契约
 

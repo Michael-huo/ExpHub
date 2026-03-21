@@ -42,6 +42,8 @@ def build_summary_lines(traj_metrics, image_metrics, slam_metrics):
         "RPE trans RMSE: {}".format(fmt_value(traj.get("rpe_trans", {}).get("rmse"), "m")),
         "RPE rot RMSE: {}".format(fmt_value(traj.get("rpe_rot", {}).get("rmse"), "deg")),
         "matched poses: {}".format(int(traj.get("matched_pose_count") or 0)),
+        "ori_path_length_m: {}".format(fmt_value(traj.get("ori_path_length_m"), "m")),
+        "gen_path_length_m: {}".format(fmt_value(traj.get("gen_path_length_m"), "m")),
     ]
     lines.extend(_warning_lines(traj))
     lines.extend(

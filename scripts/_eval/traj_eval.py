@@ -111,10 +111,14 @@ def _base_metrics(args):
         "rpe_delta_unit": str(args.delta_unit),
         "sync_t_max_diff_sec": float(args.t_max_diff),
         "sync_t_offset_sec": float(args.t_offset),
+        "ori_path_length_m": None,
+        "gen_path_length_m": None,
         "metric_units": {
             "ape_trans": "m",
             "rpe_trans": "m",
             "rpe_rot": "deg",
+            "ori_path_length_m": "m",
+            "gen_path_length_m": "m",
         },
         "ape_trans": _empty_stats(),
         "rpe_trans": _empty_stats(),
@@ -142,6 +146,49 @@ def _load_evo_modules():
     from evo.tools import file_interface
 
     return file_interface, metrics, sync, units, evo_ape, evo_rpe
+
+
+def _path_length_from_positions(points_xyz):
+    points = np.asarray(points_xyz, dtype=np.float64)
+    if points.ndim != 2 or points.shape[0] < 2:
+        return None
+    if points.shape[1] < 3:
+        return None
+    finite_mask = np.all(np.isfinite(points[:, :3]), axis=1)
+    valid_points = points[finite_mask, :3]
+    if valid_points.shape[0] < 2:
+        return None
+    diffs = np.diff(valid_points, axis=0)
+    seg_lengths = np.linalg.norm(diffs, axis=1)
+    finite_lengths = seg_lengths[np.isfinite(seg_lengths)]
+    if finite_lengths.size <= 0:
+        return None
+    return float(np.sum(finite_lengths))
+
+
+def _populate_path_lengths(metrics_obj, ape_result, ref_name, est_name):
+    trajectories = getattr(ape_result, "trajectories", {}) or {}
+    ref_traj = trajectories.get(str(ref_name))
+    est_traj = trajectories.get(str(est_name))
+
+    ref_length = None
+    if ref_traj is None:
+        append_warning(metrics_obj, "aligned reference trajectory unavailable for path length")
+    else:
+        ref_length = _path_length_from_positions(getattr(ref_traj, "positions_xyz", None))
+        if ref_length is None:
+            append_warning(metrics_obj, "insufficient aligned reference poses for path length")
+
+    est_length = None
+    if est_traj is None:
+        append_warning(metrics_obj, "aligned estimate trajectory unavailable for path length")
+    else:
+        est_length = _path_length_from_positions(getattr(est_traj, "positions_xyz", None))
+        if est_length is None:
+            append_warning(metrics_obj, "insufficient aligned estimate poses for path length")
+
+    metrics_obj["ori_path_length_m"] = ref_length
+    metrics_obj["gen_path_length_m"] = est_length
 
 
 def _evaluate(args, metrics_obj):
@@ -200,6 +247,7 @@ def _evaluate(args, metrics_obj):
         est_name=str(args.estimate_name),
     )
     metrics_obj["ape_trans"] = _stats_dict(ape_result.stats)
+    _populate_path_lengths(metrics_obj, ape_result, args.reference_name, args.estimate_name)
 
     rpe_trans_result = None
     rpe_rot_result = None
@@ -293,7 +341,7 @@ def _stat_line(label, value, unit):
 def _metrics_box_text(metrics_obj):
     lines = [
         _stat_line("APE RMSE", metrics_obj["ape_trans"].get("rmse"), "m"),
-        _stat_line("RPE RMSE", metrics_obj["rpe_trans"].get("rmse"), "m"),
+        _stat_line("RPE trans RMSE", metrics_obj["rpe_trans"].get("rmse"), "m"),
         "Matched: {}".format(int(metrics_obj.get("matched_pose_count") or 0)),
     ]
     return "\n".join(lines)
@@ -313,6 +361,12 @@ def _normalized_points(points_xy):
     arr = np.asarray(points_xy, dtype=np.float64)
     if arr.size == 0:
         return arr
+    if arr.ndim != 2:
+        return np.asarray([], dtype=np.float64).reshape(0, 2)
+    finite_mask = np.all(np.isfinite(arr), axis=1)
+    arr = arr[finite_mask]
+    if arr.size == 0:
+        return np.asarray([], dtype=np.float64).reshape(0, 2)
     mins = arr.min(axis=0)
     maxs = arr.max(axis=0)
     span = np.maximum(maxs - mins, 1e-9)
@@ -388,6 +442,70 @@ def _error_colormap():
     )
 
 
+def _xy_projection(points_xyz):
+    points = np.asarray(points_xyz, dtype=np.float64)
+    if points.ndim != 2:
+        return np.asarray([], dtype=np.float64).reshape(0, 2)
+    dims = min(points.shape[1], 2)
+    projected = points[:, :dims]
+    if dims == 2:
+        return projected
+    zeros = np.zeros((points.shape[0], 2 - dims), dtype=np.float64)
+    return np.hstack([projected, zeros])
+
+
+def _project_traj_to_view_plane(ref_xyz, est_xyz):
+    ref_points = np.asarray(ref_xyz, dtype=np.float64)
+    est_points = np.asarray(est_xyz, dtype=np.float64)
+    fallback = {
+        "ref_xy": _xy_projection(ref_points),
+        "est_xy": _xy_projection(est_points),
+        "projection_name": "xy",
+        "used_pca": False,
+    }
+    if ref_points.ndim != 2 or est_points.ndim != 2:
+        return fallback
+    if ref_points.shape[0] < 2 or ref_points.shape[1] < 3 or est_points.shape[1] < 3:
+        return fallback
+
+    finite_mask = np.all(np.isfinite(ref_points[:, :3]), axis=1)
+    ref_valid = ref_points[finite_mask, :3]
+    if ref_valid.shape[0] < 2:
+        return fallback
+
+    center = np.mean(ref_valid, axis=0)
+    centered = ref_valid - center
+    try:
+        _, _, vh = np.linalg.svd(centered, full_matrices=False)
+    except Exception:
+        return fallback
+
+    if vh.shape[0] < 2:
+        return fallback
+
+    basis = vh[:2, :].T
+    if basis.shape != (3, 2) or not np.all(np.isfinite(basis)):
+        return fallback
+
+    for idx in range(basis.shape[1]):
+        axis = basis[:, idx]
+        max_entry = int(np.argmax(np.abs(axis)))
+        if axis[max_entry] < 0.0:
+            basis[:, idx] *= -1.0
+
+    ref_xy = np.dot(ref_points[:, :3] - center, basis)
+    est_xy = np.dot(est_points[:, :3] - center, basis)
+    if not np.any(np.isfinite(ref_xy)) or not np.any(np.isfinite(est_xy)):
+        return fallback
+
+    return {
+        "ref_xy": ref_xy,
+        "est_xy": est_xy,
+        "projection_name": "pca",
+        "used_pca": True,
+    }
+
+
 def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_label, metrics_obj):
     from matplotlib.collections import LineCollection
     from matplotlib.colors import Normalize
@@ -396,25 +514,29 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
     ref_xyz = np.asarray(ref_traj.positions_xyz, dtype=np.float64)
     est_xyz = np.asarray(est_traj.positions_xyz, dtype=np.float64)
     errors = np.asarray(ape_result.np_arrays.get("error_array", []), dtype=np.float64)
-    all_xy = np.vstack([ref_xyz[:, :2], est_xyz[:, :2]])
+    projection = _project_traj_to_view_plane(ref_xyz, est_xyz)
+    ref_xy = projection["ref_xy"]
+    est_xy = projection["est_xy"]
+    all_xy = np.vstack([ref_xy, est_xy])
     corners = _corner_candidates(all_xy)
     info_corner = corners[0]
     legend_corner = corners[1] if len(corners) > 1 else "upper right"
 
-    fig, ax = plt.subplots(figsize=(8.8, 6.6), dpi=_PLOT_DPI)
+    fig, ax = plt.subplots(figsize=(9.2, 6.6), dpi=_PLOT_DPI)
     _style_figure(fig)
-    ax.plot(ref_xyz[:, 0], ref_xyz[:, 1], color=_REF_BG_COLOR, linewidth=1.8, alpha=0.96, zorder=1)
+    fig.subplots_adjust(left=0.08, right=0.84, bottom=0.12, top=0.90)
+    ax.plot(ref_xy[:, 0], ref_xy[:, 1], color=_REF_BG_COLOR, linewidth=1.8, alpha=0.96, zorder=1)
 
     colorbar = None
     est_line_drawn = False
     if est_xyz.shape[0] >= 2 and errors.size > 0:
         size = min(est_xyz.shape[0], errors.shape[0])
-        est_xy = est_xyz[:size, :2]
-        if est_xy.shape[0] >= 2:
+        est_xy_view = est_xy[:size]
+        if est_xy_view.shape[0] >= 2:
             seg_errors = 0.5 * (errors[:-1] + errors[1:]) if errors.size >= 2 else errors
             if seg_errors.size == 0:
                 seg_errors = np.asarray([errors[0]], dtype=np.float64)
-            points = est_xy.reshape(-1, 1, 2)
+            points = est_xy_view.reshape(-1, 1, 2)
             segments = np.concatenate([points[:-1], points[1:]], axis=1)
             seg_errors = np.asarray(seg_errors[: segments.shape[0]], dtype=np.float64)
             finite_errors = seg_errors[np.isfinite(seg_errors)]
@@ -435,7 +557,8 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
                 )
                 lc.set_array(seg_errors)
                 ax.add_collection(lc)
-                colorbar = fig.colorbar(lc, ax=ax, fraction=0.046, pad=0.03)
+                colorbar_ax = fig.add_axes([0.865, 0.16, 0.022, 0.66])
+                colorbar = fig.colorbar(lc, cax=colorbar_ax)
                 colorbar.set_label("APE (m)", fontsize=10.5, color=_TEXT_COLOR)
                 colorbar.ax.tick_params(labelsize=9.4, colors=_TEXT_COLOR)
                 colorbar.outline.set_edgecolor(_SPINE_COLOR)
@@ -443,18 +566,19 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
                 est_line_drawn = True
 
     if not est_line_drawn:
-        ax.plot(est_xyz[:, 0], est_xyz[:, 1], color=_EST_COLOR, linewidth=2.2, alpha=0.96, zorder=3)
+        ax.plot(est_xy[:, 0], est_xy[:, 1], color=_EST_COLOR, linewidth=2.2, alpha=0.96, zorder=3)
 
     marker_size = 40
-    ax.scatter(ref_xyz[0, 0], ref_xyz[0, 1], color=_REF_COLOR, s=marker_size, marker="o", edgecolors="white", linewidths=0.9, zorder=5)
-    ax.scatter(ref_xyz[-1, 0], ref_xyz[-1, 1], color=_REF_COLOR, s=marker_size + 10, marker="D", edgecolors="white", linewidths=0.9, zorder=5)
-    ax.scatter(est_xyz[0, 0], est_xyz[0, 1], color=_EST_COLOR, s=marker_size, marker="o", edgecolors="white", linewidths=0.9, zorder=5)
-    ax.scatter(est_xyz[-1, 0], est_xyz[-1, 1], color=_EST_COLOR, s=marker_size + 10, marker="D", edgecolors="white", linewidths=0.9, zorder=5)
+    ax.scatter(ref_xy[0, 0], ref_xy[0, 1], color=_REF_COLOR, s=marker_size, marker="o", edgecolors="white", linewidths=0.9, zorder=5)
+    ax.scatter(ref_xy[-1, 0], ref_xy[-1, 1], color=_REF_COLOR, s=marker_size + 10, marker="D", edgecolors="white", linewidths=0.9, zorder=5)
+    ax.scatter(est_xy[0, 0], est_xy[0, 1], color=_EST_COLOR, s=marker_size, marker="o", edgecolors="white", linewidths=0.9, zorder=5)
+    ax.scatter(est_xy[-1, 0], est_xy[-1, 1], color=_EST_COLOR, s=marker_size + 10, marker="D", edgecolors="white", linewidths=0.9, zorder=5)
 
-    ax.set_title("Trajectory XY", fontsize=13, color=_TEXT_COLOR, pad=10)
-    ax.set_xlabel("X (m)", fontsize=11)
-    ax.set_ylabel("Y (m)", fontsize=11)
-    ax.set_aspect("equal", adjustable="box")
+    ax.set_title("Trajectory Projection", fontsize=13, color=_TEXT_COLOR, pad=10)
+    ax.set_xlabel("View Axis 1 (m)", fontsize=11)
+    ax.set_ylabel("View Axis 2 (m)", fontsize=11)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.margins(x=0.06, y=0.08)
     _style_axes(ax)
     legend_handles = [
         Line2D([0], [0], color=_REF_BG_COLOR, linewidth=1.8, label=ref_label),
@@ -470,7 +594,6 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
         fontsize=9.3,
     )
     _add_corner_box(ax, _metrics_box_text(metrics_obj), info_corner, _REF_COLOR)
-    fig.tight_layout(pad=0.7)
     fig.savefig(str(out_path), bbox_inches="tight", pad_inches=0.06)
     plt.close(fig)
 
@@ -598,6 +721,8 @@ def log_traj_terminal_summary(metrics_obj, out_dir):
     prefix("eval metric: APE RMSE={}".format(fmt_value(metrics_obj["ape_trans"].get("rmse"), "m")))
     prefix("eval metric: RPE trans RMSE={}".format(fmt_value(metrics_obj["rpe_trans"].get("rmse"), "m")))
     prefix("eval metric: RPE rot RMSE={}".format(fmt_value(metrics_obj["rpe_rot"].get("rmse"), "deg")))
+    prefix("eval metric: ori path length={}".format(fmt_value(metrics_obj.get("ori_path_length_m"), "m")))
+    prefix("eval metric: gen path length={}".format(fmt_value(metrics_obj.get("gen_path_length_m"), "m")))
     if metrics_obj.get("warnings"):
         prefix("eval warnings: {}".format(len(metrics_obj["warnings"])))
 
