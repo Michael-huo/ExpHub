@@ -27,13 +27,20 @@ from scripts._segment.policies.naming import (
     policy_display_name,
 )
 from scripts._segment.research import (
+    build_risk_summary,
+    compute_risk_bundle,
     save_allocation_overview,
     save_comparison_overview,
     save_kinematics_overview,
     save_projection_overview,
+    save_risk_anchor_overview,
+    save_risk_curve,
     compute_frame_signal_rows,
     compute_motion_rows,
     compute_semantic_rows,
+    risk_bundle_to_dict,
+    risk_frame_rows_to_dicts,
+    risk_windows_to_dicts,
 )
 
 
@@ -981,6 +988,70 @@ def _official_log(signal_meta, keyframes_meta, csv_rows, analysis_dir, compariso
         log_info("semantic cache path: {}".format(semantic_meta.get("cache_path", "")))
 
 
+def _risk_kf_gap(data, args):
+    keyframes_meta = dict(data.get("keyframes_meta", {}) or {})
+    step_meta = dict(data.get("step_meta", {}) or {})
+    step_params = dict(step_meta.get("params", {}) or {})
+    candidates = [
+        keyframes_meta.get("kf_gap"),
+        step_params.get("kf_gap"),
+        getattr(args, "kf_gap", 0),
+    ]
+    for value in candidates:
+        try:
+            gap = int(value)
+        except Exception:
+            gap = 0
+        if gap > 0:
+            return int(gap)
+    return 0
+
+
+def _risk_log(risk_bundle, analysis_dir):
+    payload = risk_bundle_to_dict(risk_bundle)
+    hardest_window = dict(payload.get("hardest_window") or {})
+    if hardest_window:
+        hardest_range = "[{}:{}]".format(
+            int(hardest_window.get("expanded_start_frame", 0) or 0),
+            int(hardest_window.get("expanded_end_frame", 0) or 0),
+        )
+    else:
+        hardest_range = "none"
+    log_info("risk bundle version: {}".format(payload.get("metadata", {}).get("version", "")))
+    log_info("risk frame rows: {}".format(len(payload.get("frame_rows", []) or [])))
+    log_info("risk expanded windows: {}".format(len(payload.get("expanded_windows", []) or [])))
+    log_info("risk hardest window range: {}".format(hardest_range))
+    log_info("risk_bundle.json: {}".format(analysis_dir / "risk_bundle.json"))
+    log_info("risk_windows.csv: {}".format(analysis_dir / "risk_windows.csv"))
+
+
+def _run_risk_analysis(rows, data, analysis_dir, args):
+    maps = _keyframe_maps(data["keyframes_meta"])
+    risk_bundle = compute_risk_bundle(
+        rows=rows,
+        uniform_keyframe_indices=maps["uniform_indices"],
+        final_keyframe_indices=maps["final_indices"],
+        smooth_window=int(args.smooth_window),
+        kf_gap=_risk_kf_gap(data, args),
+    )
+    risk_summary = build_risk_summary(risk_bundle)
+
+    risk_bundle_path = analysis_dir / "risk_bundle.json"
+    risk_summary_path = analysis_dir / "risk_summary.json"
+    risk_timeseries_path = analysis_dir / "risk_timeseries.csv"
+    risk_windows_path = analysis_dir / "risk_windows.csv"
+    risk_curve_path = analysis_dir / "risk_curve.png"
+    risk_anchor_path = analysis_dir / "risk_anchor_overview.png"
+
+    write_json_atomic(str(risk_bundle_path), risk_bundle_to_dict(risk_bundle), indent=2)
+    write_json_atomic(str(risk_summary_path), risk_summary, indent=2)
+    _write_csv(risk_timeseries_path, risk_frame_rows_to_dicts(risk_bundle))
+    _write_csv(risk_windows_path, risk_windows_to_dicts(risk_bundle))
+    save_risk_curve(risk_bundle, risk_curve_path)
+    save_risk_anchor_overview(risk_bundle, risk_anchor_path)
+    _risk_log(risk_bundle, analysis_dir)
+
+
 def _run_official_analysis(exp_dir, segment_dir, analysis_dir, data, args):
     rows, signal_meta = _official_signal_rows(data, segment_dir, data["keyframes_meta"], args.smooth_window)
     maps = _keyframe_maps(data["keyframes_meta"])
@@ -1034,6 +1105,7 @@ def _run_official_analysis(exp_dir, segment_dir, analysis_dir, data, args):
         uniform_indices=maps["uniform_indices"],
     )
 
+    _run_risk_analysis(rows, data, analysis_dir, args)
     _official_log(signal_meta, data["keyframes_meta"], csv_rows, analysis_dir, comparison)
 
 

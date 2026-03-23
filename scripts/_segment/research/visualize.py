@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from ..policies.naming import normalize_policy_name, policy_display_name
+from .risk import risk_bundle_to_dict
 
 
 def _series(rows, key):
@@ -571,6 +572,190 @@ def save_projection_overview(
         bottom_ax.legend(loc="upper right", fontsize=9, ncol=3)
 
     fig.suptitle("{} Projection Overview".format(_policy_display_name(policy_name)), fontsize=13)
+    fig.tight_layout()
+    fig.savefig(str(output_path))
+    plt.close(fig)
+
+
+def _risk_rows(bundle):
+    payload = risk_bundle_to_dict(bundle)
+    return list(payload.get("frame_rows", []) or [])
+
+
+def _risk_windows(bundle):
+    payload = risk_bundle_to_dict(bundle)
+    return list(payload.get("expanded_windows", []) or [])
+
+
+def _risk_coverages(bundle):
+    payload = risk_bundle_to_dict(bundle)
+    return list(payload.get("window_coverages", []) or [])
+
+
+def _risk_metadata(bundle):
+    payload = risk_bundle_to_dict(bundle)
+    return dict(payload.get("metadata", {}) or {})
+
+
+def save_risk_curve(bundle, output_path):
+    rows = _risk_rows(bundle)
+    metadata = _risk_metadata(bundle)
+    windows = _risk_windows(bundle)
+
+    if not rows:
+        fig, ax = plt.subplots(figsize=(10, 4), dpi=150)
+        ax.set_title("Unified Risk Curve")
+        ax.set_xlabel("frame_idx")
+        ax.set_ylabel("risk score")
+        ax.grid(True, alpha=0.2)
+        fig.tight_layout()
+        fig.savefig(str(output_path))
+        plt.close(fig)
+        return
+
+    x = [int(row["frame_idx"]) for row in rows]
+    risk_score = _series(rows, "risk_score")
+    turn_proxy = _series(rows, "turn_proxy")
+    motion_proxy = _series(rows, "motion_proxy")
+    semantic_proxy = _series(rows, "semantic_proxy")
+    final_indices = [int(row["frame_idx"]) for row in rows if bool(row.get("is_final_kf", False))]
+    uniform_indices = [int(row["frame_idx"]) for row in rows if bool(row.get("is_uniform_base_kf", False))]
+    medium_threshold = float(metadata.get("thresholds", {}).get("medium", 0.4) or 0.4)
+    high_threshold = float(metadata.get("thresholds", {}).get("high", 0.65) or 0.65)
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 7), dpi=150, sharex=True)
+    risk_ax = axes[0]
+    proxy_ax = axes[1]
+
+    for window in windows:
+        risk_ax.axvspan(
+            int(window.get("expanded_start_frame", 0) or 0),
+            int(window.get("expanded_end_frame", 0) or 0),
+            color="#f4d35e",
+            alpha=0.18,
+        )
+        risk_ax.axvline(
+            int(window.get("peak_frame_idx", 0) or 0),
+            color="#bc6c25",
+            linewidth=1.0,
+            alpha=0.5,
+        )
+
+    risk_ax.plot(x, risk_score, color="#1d3557", linewidth=2.2, label="risk_score")
+    risk_ax.plot(x, _series(rows, "risk_score_raw"), color="#457b9d", linewidth=1.1, alpha=0.45, label="risk_score_raw")
+    risk_ax.axhline(medium_threshold, color="#e9c46a", linewidth=1.0, linestyle="--", label="medium threshold")
+    risk_ax.axhline(high_threshold, color="#e76f51", linewidth=1.0, linestyle="--", label="high/window threshold")
+    _scatter_candidates(risk_ax, [{"frame_idx": idx} for idx in uniform_indices], _official_y_map(rows, "risk_score"), "#7f7f7f", "|", "uniform anchors", size=120, alpha=0.8)
+    _scatter_candidates(risk_ax, [{"frame_idx": idx} for idx in final_indices], _official_y_map(rows, "risk_score"), "#111111", "o", "final keyframes", size=28)
+    risk_ax.set_ylabel("risk")
+    risk_ax.grid(True, alpha=0.22)
+    risk_ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+    proxy_ax.plot(x, turn_proxy, color="#264653", linewidth=1.8, label="turn_proxy")
+    proxy_ax.plot(x, motion_proxy, color="#2a9d8f", linewidth=1.8, label="motion_proxy")
+    proxy_ax.plot(x, semantic_proxy, color="#8d99ae", linewidth=1.8, label="semantic_proxy")
+    _keyframe_lines(proxy_ax, final_indices)
+    _scatter_candidates(proxy_ax, [{"frame_idx": idx} for idx in uniform_indices], _official_y_map(rows, "turn_proxy"), "#7f7f7f", "|", "uniform anchors", size=120, alpha=0.65)
+    proxy_ax.set_xlabel("frame_idx")
+    proxy_ax.set_ylabel("proxy")
+    proxy_ax.grid(True, alpha=0.22)
+    proxy_ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+    fig.suptitle("Unified Risk Curve", fontsize=13)
+    fig.tight_layout()
+    fig.savefig(str(output_path))
+    plt.close(fig)
+
+
+def save_risk_anchor_overview(bundle, output_path):
+    rows = _risk_rows(bundle)
+    coverages = _risk_coverages(bundle)
+    hardest_window = risk_bundle_to_dict(bundle).get("hardest_window")
+
+    if not rows:
+        fig, ax = plt.subplots(figsize=(10, 4), dpi=150)
+        ax.set_title("Risk Anchor Overview")
+        ax.set_xlabel("frame_idx")
+        ax.set_ylabel("allocation")
+        ax.grid(True, alpha=0.2)
+        fig.tight_layout()
+        fig.savefig(str(output_path))
+        plt.close(fig)
+        return
+
+    uniform_indices = [int(row["frame_idx"]) for row in rows if bool(row.get("is_uniform_base_kf", False))]
+    final_indices = [int(row["frame_idx"]) for row in rows if bool(row.get("is_final_kf", False))]
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 7), dpi=150)
+    timeline_ax = axes[0]
+    stats_ax = axes[1]
+
+    for coverage in coverages:
+        start_idx = int(coverage.get("expanded_start_frame", 0) or 0)
+        end_idx = int(coverage.get("expanded_end_frame", 0) or 0)
+        timeline_ax.axvspan(start_idx, end_idx, color="#f1faee", alpha=0.55)
+        timeline_ax.scatter(
+            [int(coverage.get("peak_frame_idx", 0) or 0)],
+            [0.4],
+            color="#d62828",
+            marker="o",
+            s=30,
+            zorder=4,
+        )
+        prev_final = coverage.get("prev_final_kf_idx")
+        next_final = coverage.get("next_final_kf_idx")
+        if prev_final is not None and next_final is not None:
+            timeline_ax.plot(
+                [int(prev_final), int(next_final)],
+                [0.68, 0.68],
+                color="#457b9d",
+                linewidth=2.0,
+                alpha=0.9,
+            )
+
+    if hardest_window:
+        timeline_ax.axvspan(
+            int(hardest_window.get("expanded_start_frame", 0) or 0),
+            int(hardest_window.get("expanded_end_frame", 0) or 0),
+            color="#ffb703",
+            alpha=0.2,
+            label="hardest window",
+        )
+
+    if uniform_indices:
+        timeline_ax.scatter(uniform_indices, [1.0 for _ in uniform_indices], color="#7f7f7f", marker="|", s=120, label="uniform anchors")
+    if final_indices:
+        timeline_ax.scatter(final_indices, [0.68 for _ in final_indices], color="#111111", marker="o", s=24, label="final keyframes")
+    timeline_ax.set_yticks([0.4, 0.68, 1.0])
+    timeline_ax.set_yticklabels(["risk peak", "final span", "uniform"])
+    timeline_ax.set_ylabel("anchors")
+    timeline_ax.grid(True, alpha=0.2)
+    timeline_ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+    ranks = [int(item.get("window_rank", 0) or 0) for item in coverages]
+    peak_scores = [float(item.get("peak_score", 0.0) or 0.0) for item in coverages]
+    integrated_scores = [float(item.get("integrated_score", 0.0) or 0.0) for item in coverages]
+    left_dist = [float(item.get("final_left_distance_to_window", 0.0) or 0.0) for item in coverages]
+    right_dist = [float(item.get("final_right_distance_to_window", 0.0) or 0.0) for item in coverages]
+
+    if ranks:
+        x_rank = np.asarray(ranks, dtype=np.float32)
+        stats_ax.bar(x_rank - 0.18, left_dist, width=0.32, color="#8ecae6", alpha=0.85, label="final_left_distance")
+        stats_ax.bar(x_rank + 0.18, right_dist, width=0.32, color="#219ebc", alpha=0.85, label="final_right_distance")
+        score_ax = stats_ax.twinx()
+        score_ax.plot(x_rank, peak_scores, color="#d62828", linewidth=1.8, marker="o", label="peak_score")
+        score_ax.plot(x_rank, integrated_scores, color="#6a4c93", linewidth=1.6, marker="D", label="integrated_score")
+        stats_ax.set_xticks(x_rank.tolist())
+        stats_ax.set_xticklabels(["W{}".format(int(rank)) for rank in ranks])
+        stats_ax.set_ylabel("distance (frames)")
+        score_ax.set_ylabel("score")
+        handles_a, labels_a = stats_ax.get_legend_handles_labels()
+        handles_b, labels_b = score_ax.get_legend_handles_labels()
+        stats_ax.legend(handles_a + handles_b, labels_a + labels_b, loc="upper right", fontsize=8, ncol=2)
+    stats_ax.set_xlabel("window_rank")
+    stats_ax.grid(True, alpha=0.2)
+
+    fig.suptitle("Risk Anchor Overview", fontsize=13)
     fig.tight_layout()
     fig.savefig(str(output_path))
     plt.close(fig)
