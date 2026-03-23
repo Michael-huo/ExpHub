@@ -39,7 +39,19 @@ def _build_bundle(used_rows, meta, prefix):
     }
 
 
-def load_semantic_signal_bundle(context, smooth_window):
+def _resolve_used_bounds(context, used_last_idx=None, used_frame_count=None):
+    if used_last_idx is None:
+        used_last_idx = int(context["used_last_idx"])
+    else:
+        used_last_idx = int(used_last_idx)
+    if used_frame_count is None:
+        used_frame_count = int(context["frame_count_used"])
+    else:
+        used_frame_count = int(used_frame_count)
+    return int(used_last_idx), int(used_frame_count)
+
+
+def load_semantic_signal_bundle(context, smooth_window, used_last_idx=None, used_frame_count=None):
     try:
         from _segment.research import compute_semantic_rows
     except ModuleNotFoundError as e:
@@ -54,6 +66,7 @@ def load_semantic_signal_bundle(context, smooth_window):
     frame_paths = context["frame_paths"]
     timestamps = context["timestamps"]
     cache_dir = context["policy_cache_dir"]
+    used_last_idx, used_frame_count = _resolve_used_bounds(context, used_last_idx, used_frame_count)
     log_info("semantic observe start: frames={}".format(len(frame_paths)))
     try:
         rows, meta = compute_semantic_rows(
@@ -70,17 +83,53 @@ def load_semantic_signal_bundle(context, smooth_window):
             )
         raise
 
-    used_rows = _used_rows(rows, context["used_last_idx"], context["frame_count_used"])
+    used_rows = _used_rows(rows, used_last_idx, used_frame_count)
     return _build_bundle(used_rows, meta, "semantic")
 
 
-def load_motion_signal_bundle(context, smooth_window):
+def load_motion_signal_bundle(context, smooth_window, used_last_idx=None, used_frame_count=None):
     from _segment.research import compute_motion_rows
 
+    used_last_idx, used_frame_count = _resolve_used_bounds(context, used_last_idx, used_frame_count)
     rows, meta = compute_motion_rows(
         context["frame_paths"],
         smooth_window=int(smooth_window),
         timestamps=context["timestamps"],
     )
-    used_rows = _used_rows(rows, context["used_last_idx"], context["frame_count_used"])
+    used_rows = _used_rows(rows, used_last_idx, used_frame_count)
     return _build_bundle(used_rows, meta, "motion")
+
+
+def load_risk_signal_bundle(context, smooth_window, used_last_idx=None, used_frame_count=None):
+    from _segment.research import compute_frame_signal_rows
+
+    used_last_idx, used_frame_count = _resolve_used_bounds(context, used_last_idx, used_frame_count)
+    semantic_bundle = load_semantic_signal_bundle(
+        context,
+        smooth_window,
+        used_last_idx=used_last_idx,
+        used_frame_count=used_frame_count,
+    )
+    motion_bundle = load_motion_signal_bundle(
+        context,
+        smooth_window,
+        used_last_idx=used_last_idx,
+        used_frame_count=used_frame_count,
+    )
+    rows, frame_signal_meta = compute_frame_signal_rows(
+        context["frame_paths"],
+        context["timestamps"],
+        semantic_rows=semantic_bundle["rows"],
+        motion_rows=motion_bundle["rows"],
+    )
+    used_rows = _used_rows(rows, used_last_idx, used_frame_count)
+    return {
+        "rows": list(used_rows),
+        "meta": {
+            "frame_signals": dict(frame_signal_meta),
+            "semantic": dict(semantic_bundle.get("meta", {}) or {}),
+            "motion": dict(motion_bundle.get("meta", {}) or {}),
+        },
+        "semantic": semantic_bundle,
+        "motion": motion_bundle,
+    }

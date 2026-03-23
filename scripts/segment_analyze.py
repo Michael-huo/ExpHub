@@ -72,6 +72,7 @@ SINGLE_OBSERVER_MAP = {
     "semantic": ["motion"],
     "motion": ["semantic"],
     "uniform": ["semantic", "motion"],
+    "risk": ["semantic", "motion"],
 }
 FIXED_BUDGET_RULE_KEYS = (
     "relocate_radius",
@@ -726,7 +727,7 @@ def _build_official_comparison(rows, keyframes_meta, signal_meta):
             "summary": _observer_summary(observer_policy, observer_bundle, observer_allocation["final_indices"]),
         }
 
-    if policy_name == "uniform":
+    if policy_name in ("uniform", "risk"):
         left_name = "semantic"
         right_name = "motion"
         left_entry = observer_entries.get(left_name)
@@ -957,7 +958,7 @@ def _official_analysis_summary(exp_dir, data, rows, keyframes_meta, comparison):
         summary["projection"] = projection
 
     comparison_block = dict(comparison.get("summary_block", {}) or {})
-    if policy_name == "uniform":
+    if policy_name in ("uniform", "risk"):
         if comparison_block:
             summary["comparison"] = comparison_block
         return summary
