@@ -759,3 +759,131 @@ def save_risk_anchor_overview(bundle, output_path):
     fig.tight_layout()
     fig.savefig(str(output_path))
     plt.close(fig)
+
+
+def save_proposed_schedule_overview(
+    bundle,
+    schedule_payload,
+    output_path,
+    current_uniform_indices=None,
+    current_final_indices=None,
+):
+    rows = _risk_rows(bundle)
+    schedule_payload = dict(schedule_payload or {})
+    windows = list(schedule_payload.get("risky_windows_used") or [])
+    teacher_dense_anchors = [int(idx) for idx in list(schedule_payload.get("teacher_dense_anchors") or [])]
+    proposed_final_anchors = [int(idx) for idx in list(schedule_payload.get("proposed_final_anchors") or [])]
+    current_uniform_indices = [int(idx) for idx in current_uniform_indices or []]
+    current_final_indices = [int(idx) for idx in current_final_indices or []]
+
+    if not rows:
+        fig, ax = plt.subplots(figsize=(10, 4), dpi=150)
+        ax.set_title("Proposed Schedule Overview")
+        ax.set_xlabel("frame_idx")
+        ax.set_ylabel("allocation")
+        ax.grid(True, alpha=0.2)
+        fig.tight_layout()
+        fig.savefig(str(output_path))
+        plt.close(fig)
+        return
+
+    x = [int(row["frame_idx"]) for row in rows]
+    risk_score = _series(rows, "risk_score")
+    risk_y_map = _official_y_map(rows, "risk_score")
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 7.5), dpi=150, sharex=True)
+    risk_ax = axes[0]
+    alloc_ax = axes[1]
+
+    for window in windows:
+        start_idx = int(window.get("expanded_start_frame", 0) or 0)
+        end_idx = int(window.get("expanded_end_frame", 0) or 0)
+        risk_ax.axvspan(start_idx, end_idx, color="#f4d35e", alpha=0.18)
+        alloc_ax.axvspan(start_idx, end_idx, color="#f4d35e", alpha=0.18)
+
+    risk_ax.plot(x, risk_score, color="#1d3557", linewidth=2.0, label="risk_score")
+    if teacher_dense_anchors:
+        _scatter_candidates(
+            risk_ax,
+            [{"frame_idx": idx} for idx in teacher_dense_anchors],
+            risk_y_map,
+            "#8d99ae",
+            "|",
+            "teacher dense anchors",
+            size=120,
+            alpha=0.75,
+        )
+    if proposed_final_anchors:
+        _scatter_candidates(
+            risk_ax,
+            [{"frame_idx": idx} for idx in proposed_final_anchors],
+            risk_y_map,
+            "#d62828",
+            "o",
+            "proposed anchors",
+            size=28,
+            alpha=0.95,
+        )
+    if current_final_indices:
+        _scatter_candidates(
+            risk_ax,
+            [{"frame_idx": idx} for idx in current_final_indices],
+            risk_y_map,
+            "#2a9d8f",
+            "D",
+            "current final anchors",
+            size=26,
+            alpha=0.9,
+        )
+    risk_ax.set_ylabel("risk")
+    risk_ax.grid(True, alpha=0.22)
+    risk_ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+    if teacher_dense_anchors:
+        alloc_ax.scatter(
+            teacher_dense_anchors,
+            [1.0 for _ in teacher_dense_anchors],
+            color="#8d99ae",
+            marker="|",
+            s=120,
+            label="teacher dense anchors",
+        )
+    if proposed_final_anchors:
+        alloc_ax.scatter(
+            proposed_final_anchors,
+            [0.72 for _ in proposed_final_anchors],
+            color="#d62828",
+            marker="o",
+            s=24,
+            label="proposed anchors",
+        )
+    if current_final_indices:
+        alloc_ax.scatter(
+            current_final_indices,
+            [0.42 for _ in current_final_indices],
+            color="#2a9d8f",
+            marker="D",
+            s=22,
+            label="current final anchors",
+        )
+    if current_uniform_indices:
+        alloc_ax.scatter(
+            current_uniform_indices,
+            [0.15 for _ in current_uniform_indices],
+            color="#7f7f7f",
+            marker="|",
+            s=110,
+            label="current uniform anchors",
+        )
+    alloc_ax.set_ylim(0.02, 1.12)
+    alloc_ax.set_yticks([0.15, 0.42, 0.72, 1.0])
+    alloc_ax.set_yticklabels(["current uniform", "current final", "proposed", "teacher"])
+    alloc_ax.set_xlabel("frame_idx")
+    alloc_ax.set_ylabel("schedule")
+    alloc_ax.grid(True, alpha=0.2)
+    alloc_ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+    fig.suptitle("Proposed Schedule Overview", fontsize=13)
+    fig.tight_layout()
+    fig.savefig(str(output_path))
+    plt.close(fig)

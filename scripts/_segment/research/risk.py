@@ -5,6 +5,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ..policies.uniform import compute_uniform_base
 from .kinematics import minmax_normalize, moving_average
 
 
@@ -30,6 +31,9 @@ DEFAULT_EXPANDED_MERGE_GAP_FRAMES = 4
 DEFAULT_HARDEST_WINDOW_SELECTION = (
     "peak_score desc -> integrated_score desc -> width_expanded desc -> expanded_start_frame asc"
 )
+DEFAULT_PROPOSED_TEACHER_GAP = 24
+DEFAULT_PROPOSED_SAFE_GAP = 60
+PROPOSED_SCHEDULE_VERSION = "risk_window_v1"
 
 
 @dataclass
@@ -715,6 +719,521 @@ def build_risk_summary(bundle, top_k=5):
         },
         "metadata": dict(payload.get("metadata", {}) or {}),
     }
+
+
+def _resolve_schedule_range(frame_count=None, frame_idx_start=0, frame_idx_end=None):
+    frame_idx_start = max(0, int(frame_idx_start or 0))
+    if frame_idx_end is None:
+        if frame_count is None:
+            frame_idx_end = frame_idx_start - 1
+        else:
+            frame_idx_end = frame_idx_start + max(0, int(frame_count) - 1)
+    frame_idx_end = int(frame_idx_end)
+    if frame_idx_end < frame_idx_start:
+        return frame_idx_start, frame_idx_start - 1, 0
+    return frame_idx_start, frame_idx_end, int(frame_idx_end - frame_idx_start + 1)
+
+
+def _uniform_anchor_range(frame_count=None, frame_idx_start=0, frame_idx_end=None, gap=1):
+    start_idx, end_idx, total_count = _resolve_schedule_range(
+        frame_count=frame_count,
+        frame_idx_start=frame_idx_start,
+        frame_idx_end=frame_idx_end,
+    )
+    if total_count <= 0:
+        return {
+            "indices": [],
+            "used_last_idx": int(start_idx - 1),
+            "used_count": 0,
+            "tail_drop": 0,
+        }
+    base = compute_uniform_base(total_count, gap)
+    return {
+        "indices": [int(start_idx + idx) for idx in list(base.get("indices") or [])],
+        "used_last_idx": int(start_idx + int(base.get("used_last_idx", -1) or -1)),
+        "used_count": int(base.get("used_count", 0) or 0),
+        "tail_drop": int(base.get("tail_drop", 0) or 0),
+    }
+
+
+def _clip_window_to_range(window, frame_idx_start, frame_idx_end):
+    raw_start = max(int(frame_idx_start), int(window.get("raw_start_frame", 0) or 0))
+    raw_end = min(int(frame_idx_end), int(window.get("raw_end_frame", 0) or 0))
+    expanded_start = max(int(frame_idx_start), int(window.get("expanded_start_frame", raw_start) or raw_start))
+    expanded_end = min(int(frame_idx_end), int(window.get("expanded_end_frame", raw_end) or raw_end))
+    if expanded_end < expanded_start:
+        return None
+    if raw_end < raw_start:
+        raw_start = int(expanded_start)
+        raw_end = int(expanded_end)
+    clipped = dict(window)
+    clipped["raw_start_frame"] = int(raw_start)
+    clipped["raw_end_frame"] = int(raw_end)
+    clipped["expanded_start_frame"] = int(expanded_start)
+    clipped["expanded_end_frame"] = int(expanded_end)
+    clipped["width_raw"] = int(max(0, raw_end - raw_start + 1))
+    clipped["width_expanded"] = int(max(0, expanded_end - expanded_start + 1))
+    return clipped
+
+
+def _window_time(frame_rows, frame_idx):
+    if frame_idx is None:
+        return None
+    if not frame_rows:
+        return None
+    frame_idx = int(frame_idx)
+    if frame_idx < 0 or frame_idx >= len(frame_rows):
+        return None
+    row = frame_rows[frame_idx]
+    if isinstance(row, dict):
+        return float(row.get("timestamp", 0.0) or 0.0)
+    return float(getattr(row, "timestamp", 0.0) or 0.0)
+
+
+def _merge_schedule_windows(windows, merge_gap_frames):
+    windows = sorted(
+        [dict(item) for item in windows or []],
+        key=lambda item: (
+            int(item.get("expanded_start_frame", item.get("raw_start_frame", 0)) or 0),
+            int(item.get("expanded_end_frame", item.get("raw_end_frame", 0)) or 0),
+        ),
+    )
+    if not windows:
+        return []
+    merge_gap_frames = max(0, int(merge_gap_frames or 0))
+    merged = [dict(windows[0])]
+    for item in windows[1:]:
+        current = merged[-1]
+        current_end = int(current.get("expanded_end_frame", current.get("raw_end_frame", 0)) or 0)
+        next_start = int(item.get("expanded_start_frame", item.get("raw_start_frame", 0)) or 0)
+        if next_start <= current_end + merge_gap_frames + 1:
+            current["raw_start_frame"] = min(
+                int(current.get("raw_start_frame", next_start) or next_start),
+                int(item.get("raw_start_frame", next_start) or next_start),
+            )
+            current["raw_end_frame"] = max(
+                int(current.get("raw_end_frame", current_end) or current_end),
+                int(item.get("raw_end_frame", current_end) or current_end),
+            )
+            current["expanded_start_frame"] = min(
+                int(current.get("expanded_start_frame", next_start) or next_start),
+                int(item.get("expanded_start_frame", next_start) or next_start),
+            )
+            current["expanded_end_frame"] = max(
+                int(current.get("expanded_end_frame", current_end) or current_end),
+                int(item.get("expanded_end_frame", current_end) or current_end),
+            )
+            current["peak_score"] = max(
+                float(current.get("peak_score", 0.0) or 0.0),
+                float(item.get("peak_score", 0.0) or 0.0),
+            )
+            current["integrated_score"] = float(current.get("integrated_score", 0.0) or 0.0) + float(
+                item.get("integrated_score", 0.0) or 0.0
+            )
+            peak_frame_current = int(current.get("peak_frame_idx", current["expanded_start_frame"]) or current["expanded_start_frame"])
+            peak_frame_item = int(item.get("peak_frame_idx", item["expanded_start_frame"]) or item["expanded_start_frame"])
+            if float(item.get("peak_score", 0.0) or 0.0) >= float(current.get("peak_score", 0.0) or 0.0):
+                current["peak_frame_idx"] = int(peak_frame_item)
+                if "peak_timestamp" in item:
+                    current["peak_timestamp"] = item.get("peak_timestamp")
+            else:
+                current["peak_frame_idx"] = int(peak_frame_current)
+            continue
+        merged.append(dict(item))
+    return merged
+
+
+def _window_dicts_for_schedule(bundle, frame_rows, use_expanded_windows=True):
+    payload = risk_bundle_to_dict(bundle)
+    key = "expanded_windows" if use_expanded_windows else "raw_windows"
+    windows = list(payload.get(key, []) or [])
+    prepared = []
+    for item in windows:
+        window = dict(item)
+        if "window_rank" not in window:
+            window["window_rank"] = 0
+        if "raw_start_time" not in window:
+            window["raw_start_time"] = _window_time(frame_rows, window.get("raw_start_frame"))
+        if "raw_end_time" not in window:
+            window["raw_end_time"] = _window_time(frame_rows, window.get("raw_end_frame"))
+        if "expanded_start_time" not in window:
+            window["expanded_start_time"] = _window_time(frame_rows, window.get("expanded_start_frame"))
+        if "expanded_end_time" not in window:
+            window["expanded_end_time"] = _window_time(frame_rows, window.get("expanded_end_frame"))
+        if "peak_timestamp" not in window:
+            window["peak_timestamp"] = _window_time(frame_rows, window.get("peak_frame_idx"))
+        prepared.append(window)
+    return prepared
+
+
+def _nearest_teacher_anchor(frame_idx, teacher_anchors, prefer_right):
+    if not teacher_anchors:
+        return None
+    pos = bisect_left(teacher_anchors, int(frame_idx))
+    left_idx = teacher_anchors[pos - 1] if pos > 0 else None
+    right_idx = teacher_anchors[pos] if pos < len(teacher_anchors) else None
+    if left_idx is None:
+        return None if right_idx is None else int(right_idx)
+    if right_idx is None:
+        return int(left_idx)
+    left_dist = abs(int(frame_idx) - int(left_idx))
+    right_dist = abs(int(right_idx) - int(frame_idx))
+    if left_dist < right_dist:
+        return int(left_idx)
+    if right_dist < left_dist:
+        return int(right_idx)
+    if prefer_right:
+        return int(right_idx)
+    return int(left_idx)
+
+
+def _safe_snapped_teacher_anchors(teacher_anchors, frame_count=None, frame_idx_start=0, frame_idx_end=None, safe_gap=1):
+    safe_uniform = _uniform_anchor_range(
+        frame_count=frame_count,
+        frame_idx_start=frame_idx_start,
+        frame_idx_end=frame_idx_end,
+        gap=safe_gap,
+    )
+    snapped = []
+    for frame_idx in list(safe_uniform.get("indices") or []):
+        snapped_idx = _nearest_teacher_anchor(frame_idx, teacher_anchors, prefer_right=True)
+        if snapped_idx is None:
+            continue
+        snapped.append(int(snapped_idx))
+    return safe_uniform, sorted(set(snapped))
+
+
+def _window_anchor_indices(anchor_indices, start_idx, end_idx):
+    anchor_indices = sorted(int(idx) for idx in anchor_indices or [])
+    if not anchor_indices:
+        return []
+    start_idx = int(start_idx)
+    end_idx = int(end_idx)
+    pos_left = bisect_left(anchor_indices, start_idx)
+    pos_right = bisect_right(anchor_indices, end_idx)
+    indices = []
+    if pos_left > 0:
+        indices.append(int(anchor_indices[pos_left - 1]))
+    indices.extend(int(idx) for idx in anchor_indices[pos_left:pos_right])
+    if pos_right < len(anchor_indices):
+        next_idx = int(anchor_indices[pos_right])
+        if not indices or int(indices[-1]) != next_idx:
+            indices.append(int(next_idx))
+    return indices
+
+
+def _max_anchor_gap(anchor_indices):
+    if len(anchor_indices) < 2:
+        return 0
+    max_gap = 0
+    for pos in range(1, len(anchor_indices)):
+        max_gap = max(int(max_gap), int(anchor_indices[pos]) - int(anchor_indices[pos - 1]))
+    return int(max_gap)
+
+
+def _count_in_or_around(anchor_indices, start_idx, end_idx):
+    return int(len(_window_anchor_indices(anchor_indices, start_idx, end_idx)))
+
+
+def _distance_to_window(frame_idx, window):
+    start_idx = int(window.get("expanded_start_frame", window.get("raw_start_frame", 0)) or 0)
+    end_idx = int(window.get("expanded_end_frame", window.get("raw_end_frame", 0)) or 0)
+    frame_idx = int(frame_idx)
+    if start_idx <= frame_idx <= end_idx:
+        return 0
+    if frame_idx < start_idx:
+        return int(start_idx - frame_idx)
+    return int(frame_idx - end_idx)
+
+
+def _nearest_window_rank(frame_idx, windows):
+    if not windows:
+        return None
+    best_rank = None
+    best_distance = None
+    best_start = None
+    for item in windows:
+        distance = _distance_to_window(frame_idx, item)
+        rank = int(item.get("window_rank", 0) or 0)
+        start_idx = int(item.get("expanded_start_frame", item.get("raw_start_frame", 0)) or 0)
+        if best_distance is None or distance < best_distance or (
+            distance == best_distance and (best_rank is None or rank < best_rank or (rank == best_rank and start_idx < best_start))
+        ):
+            best_distance = int(distance)
+            best_rank = int(rank)
+            best_start = int(start_idx)
+    return best_rank
+
+
+def _schedule_window_stats(frame_rows, risky_windows_used, teacher_dense_anchors, proposed_final_anchors, teacher_gap):
+    if not risky_windows_used:
+        return []
+    window_objects = [_build_window_region(
+        frame_rows=frame_rows,
+        start_idx=int(item.get("raw_start_frame", item.get("expanded_start_frame", 0)) or 0),
+        end_idx=int(item.get("raw_end_frame", item.get("expanded_end_frame", 0)) or 0),
+        expanded_start=int(item.get("expanded_start_frame", item.get("raw_start_frame", 0)) or 0),
+        expanded_end=int(item.get("expanded_end_frame", item.get("raw_end_frame", 0)) or 0),
+        window_id=int(item.get("window_id", 0) or 0),
+    ) for item in risky_windows_used]
+    for pos, item in enumerate(window_objects):
+        item.window_rank = int(risky_windows_used[pos].get("window_rank", pos + 1) or (pos + 1))
+    coverages = _build_window_coverages(
+        frame_rows=frame_rows,
+        expanded_windows=window_objects,
+        uniform_keyframe_indices=teacher_dense_anchors,
+        final_keyframe_indices=proposed_final_anchors,
+    )
+    stats = []
+    for coverage in coverages:
+        start_idx = int(coverage.expanded_start_frame)
+        end_idx = int(coverage.expanded_end_frame)
+        teacher_sequence = _window_anchor_indices(teacher_dense_anchors, start_idx, end_idx)
+        proposed_sequence = _window_anchor_indices(proposed_final_anchors, start_idx, end_idx)
+        teacher_gap_max = _max_anchor_gap(teacher_sequence)
+        proposed_gap_max = _max_anchor_gap(proposed_sequence)
+        stats.append(
+            {
+                "window_id": int(coverage.window_id),
+                "window_rank": int(coverage.window_rank),
+                "raw_start_frame": int(coverage.raw_start_frame),
+                "raw_end_frame": int(coverage.raw_end_frame),
+                "expanded_start_frame": int(coverage.expanded_start_frame),
+                "expanded_end_frame": int(coverage.expanded_end_frame),
+                "raw_start_time": float(coverage.raw_start_time),
+                "raw_end_time": float(coverage.raw_end_time),
+                "expanded_start_time": float(coverage.expanded_start_time),
+                "expanded_end_time": float(coverage.expanded_end_time),
+                "peak_frame_idx": int(coverage.peak_frame_idx),
+                "peak_timestamp": float(coverage.peak_timestamp),
+                "peak_score": float(coverage.peak_score),
+                "integrated_score": float(coverage.integrated_score),
+                "teacher_anchor_count_in_window": int(coverage.uniform_base_count),
+                "proposed_anchor_count_in_window": int(coverage.final_count),
+                "teacher_anchor_count_in_or_around_window": int(_count_in_or_around(teacher_dense_anchors, start_idx, end_idx)),
+                "proposed_anchor_count_in_or_around_window": int(_count_in_or_around(proposed_final_anchors, start_idx, end_idx)),
+                "teacher_span_across_window": coverage.uniform_span_across_window,
+                "proposed_span_across_window": coverage.final_span_across_window,
+                "teacher_left_distance_to_window": coverage.uniform_left_distance_to_window,
+                "teacher_right_distance_to_window": coverage.uniform_right_distance_to_window,
+                "proposed_left_distance_to_window": coverage.final_left_distance_to_window,
+                "proposed_right_distance_to_window": coverage.final_right_distance_to_window,
+                "teacher_max_gap_across_window": int(teacher_gap_max),
+                "proposed_max_gap_across_window": int(proposed_gap_max),
+                "protected": bool(proposed_gap_max <= int(teacher_gap) and bool(proposed_sequence)),
+            }
+        )
+    return stats
+
+
+def build_proposed_schedule_from_risk_bundle(
+    risk_bundle,
+    frame_count=None,
+    frame_idx_start=0,
+    frame_idx_end=None,
+    teacher_gap=DEFAULT_PROPOSED_TEACHER_GAP,
+    safe_gap=DEFAULT_PROPOSED_SAFE_GAP,
+    use_expanded_windows=True,
+    merge_nearby_windows=False,
+    merge_gap_frames=None,
+    edge_protection_teacher_hops=1,
+):
+    payload = risk_bundle_to_dict(risk_bundle)
+    frame_rows = [_dict_to_frame_row(item) for item in list(payload.get("frame_rows", []) or [])]
+    if frame_count is None and frame_idx_end is None:
+        frame_count = len(frame_rows)
+    frame_idx_start, frame_idx_end, total_count = _resolve_schedule_range(
+        frame_count=frame_count,
+        frame_idx_start=frame_idx_start,
+        frame_idx_end=frame_idx_end,
+    )
+    if frame_rows:
+        frame_idx_end = min(int(frame_idx_end), int(len(frame_rows) - 1))
+        total_count = max(0, int(frame_idx_end - frame_idx_start + 1))
+
+    teacher_gap = max(1, int(teacher_gap))
+    safe_gap = max(teacher_gap, int(safe_gap))
+    edge_protection_teacher_hops = max(0, int(edge_protection_teacher_hops))
+    teacher_uniform = _uniform_anchor_range(
+        frame_count=total_count,
+        frame_idx_start=frame_idx_start,
+        frame_idx_end=frame_idx_end,
+        gap=teacher_gap,
+    )
+    teacher_dense_anchors = list(teacher_uniform.get("indices") or [])
+    safe_uniform, safe_snapped_anchors = _safe_snapped_teacher_anchors(
+        teacher_dense_anchors,
+        frame_count=total_count,
+        frame_idx_start=frame_idx_start,
+        frame_idx_end=teacher_uniform.get("used_last_idx"),
+        safe_gap=safe_gap,
+    )
+
+    schedule_frame_end = int(teacher_uniform.get("used_last_idx", frame_idx_start - 1) or (frame_idx_start - 1))
+    risky_windows_used = []
+    if teacher_dense_anchors:
+        windows = _window_dicts_for_schedule(risk_bundle, frame_rows, use_expanded_windows=use_expanded_windows)
+        for window in windows:
+            clipped = _clip_window_to_range(window, frame_idx_start, schedule_frame_end)
+            if clipped is None:
+                continue
+            risky_windows_used.append(clipped)
+        if merge_nearby_windows and risky_windows_used:
+            if merge_gap_frames is None:
+                merge_gap_frames = max(0, teacher_gap // 2)
+            risky_windows_used = _merge_schedule_windows(risky_windows_used, merge_gap_frames)
+        risky_windows_used.sort(
+            key=lambda item: (
+                int(item.get("expanded_start_frame", item.get("raw_start_frame", 0)) or 0),
+                int(item.get("expanded_end_frame", item.get("raw_end_frame", 0)) or 0),
+            )
+        )
+        for pos, item in enumerate(risky_windows_used, start=1):
+            item["window_id"] = int(item.get("window_id", pos - 1) or (pos - 1))
+            item["window_rank"] = int(item.get("window_rank", pos) or pos)
+            item["width_raw"] = int(
+                max(0, int(item.get("raw_end_frame", 0) or 0) - int(item.get("raw_start_frame", 0) or 0) + 1)
+            )
+            item["width_expanded"] = int(
+                max(
+                    0,
+                    int(item.get("expanded_end_frame", 0) or 0) - int(item.get("expanded_start_frame", 0) or 0) + 1,
+                )
+            )
+            item["raw_start_time"] = _window_time(frame_rows, item.get("raw_start_frame"))
+            item["raw_end_time"] = _window_time(frame_rows, item.get("raw_end_frame"))
+            item["expanded_start_time"] = _window_time(frame_rows, item.get("expanded_start_frame"))
+            item["expanded_end_time"] = _window_time(frame_rows, item.get("expanded_end_frame"))
+            item["peak_timestamp"] = _window_time(frame_rows, item.get("peak_frame_idx"))
+
+    proposed_anchor_set = set(int(idx) for idx in safe_snapped_anchors)
+    if teacher_dense_anchors:
+        proposed_anchor_set.add(int(teacher_dense_anchors[0]))
+    teacher_positions = sorted(int(idx) for idx in teacher_dense_anchors)
+    for window in risky_windows_used:
+        start_idx = int(window.get("expanded_start_frame", 0) or 0)
+        end_idx = int(window.get("expanded_end_frame", 0) or 0)
+        left_pos = bisect_left(teacher_positions, start_idx)
+        right_pos = bisect_right(teacher_positions, end_idx)
+        keep_start = max(0, int(left_pos - edge_protection_teacher_hops))
+        keep_end = min(len(teacher_positions), int(right_pos + edge_protection_teacher_hops))
+        for pos in range(keep_start, keep_end):
+            proposed_anchor_set.add(int(teacher_positions[pos]))
+    proposed_final_anchors = sorted(proposed_anchor_set)
+
+    per_window_anchor_stats = _schedule_window_stats(
+        frame_rows=frame_rows,
+        risky_windows_used=risky_windows_used,
+        teacher_dense_anchors=teacher_dense_anchors,
+        proposed_final_anchors=proposed_final_anchors,
+        teacher_gap=teacher_gap,
+    )
+    all_risky_windows_protected = bool(all(bool(item.get("protected", False)) for item in per_window_anchor_stats))
+    max_gap_inside_risky_windows = 0
+    worst_window = None
+    for item in per_window_anchor_stats:
+        gap_value = int(item.get("proposed_max_gap_across_window", 0) or 0)
+        if gap_value > max_gap_inside_risky_windows:
+            max_gap_inside_risky_windows = int(gap_value)
+            worst_window = dict(item)
+
+    return {
+        "teacher_dense_anchors": list(teacher_dense_anchors),
+        "proposed_final_anchors": list(proposed_final_anchors),
+        "risky_windows_used": list(risky_windows_used),
+        "per_window_anchor_stats": list(per_window_anchor_stats),
+        "validation": {
+            "all_risky_windows_protected": bool(all_risky_windows_protected),
+            "max_gap_inside_risky_windows": int(max_gap_inside_risky_windows),
+            "worst_window_gap": int(max_gap_inside_risky_windows),
+            "worst_window": worst_window,
+            "violating_window_count": int(
+                len([item for item in per_window_anchor_stats if not bool(item.get("protected", False))])
+            ),
+        },
+        "estimated_uniform60_anchor_count": int(len(list(safe_uniform.get("indices") or []))),
+        "schedule_metadata": {
+            "version": str(PROPOSED_SCHEDULE_VERSION),
+            "strategy": "dense uniform teacher -> keep risky/edge teacher anchors -> sparse safe anchors snapped from gap60 baseline",
+            "teacher_gap": int(teacher_gap),
+            "safe_gap": int(safe_gap),
+            "frame_idx_start": int(frame_idx_start),
+            "frame_idx_end": int(schedule_frame_end),
+            "source_frame_idx_end": int(frame_idx_end),
+            "frame_count_total": int(total_count),
+            "teacher_used_count": int(teacher_uniform.get("used_count", 0) or 0),
+            "teacher_used_last_idx": int(schedule_frame_end),
+            "teacher_tail_drop": int(teacher_uniform.get("tail_drop", 0) or 0),
+            "use_expanded_windows": bool(use_expanded_windows),
+            "merge_nearby_windows": bool(merge_nearby_windows),
+            "merge_gap_frames": None if merge_gap_frames is None else int(merge_gap_frames),
+            "edge_protection_teacher_hops": int(edge_protection_teacher_hops),
+            "safe_uniform_anchor_count": int(len(list(safe_uniform.get("indices") or []))),
+            "safe_snapped_teacher_anchor_count": int(len(safe_snapped_anchors)),
+            "risky_window_count": int(len(risky_windows_used)),
+            "bundle_version": str((payload.get("metadata", {}) or {}).get("version", "")),
+            "tail_policy": "teacher anchors follow compute_uniform_base; tail beyond used_last_idx is excluded from proposed schedule",
+        },
+    }
+
+
+def proposed_schedule_anchor_rows(schedule_payload, risk_bundle):
+    payload = risk_bundle_to_dict(risk_bundle)
+    rows = list(payload.get("frame_rows", []) or [])
+    teacher_set = set(int(idx) for idx in list(schedule_payload.get("teacher_dense_anchors") or []))
+    proposed_set = set(int(idx) for idx in list(schedule_payload.get("proposed_final_anchors") or []))
+    windows = list(schedule_payload.get("risky_windows_used") or [])
+    all_indices = sorted(teacher_set | proposed_set)
+    output_rows = []
+    for frame_idx in all_indices:
+        timestamp = 0.0
+        if 0 <= int(frame_idx) < len(rows):
+            timestamp = float(rows[int(frame_idx)].get("timestamp", 0.0) or 0.0)
+        in_risky_window = False
+        for window in windows:
+            start_idx = int(window.get("expanded_start_frame", 0) or 0)
+            end_idx = int(window.get("expanded_end_frame", 0) or 0)
+            if start_idx <= int(frame_idx) <= end_idx:
+                in_risky_window = True
+                break
+        output_rows.append(
+            {
+                "frame_idx": int(frame_idx),
+                "timestamp": float(timestamp),
+                "source": "proposed" if int(frame_idx) in proposed_set else "teacher",
+                "is_teacher_anchor": bool(int(frame_idx) in teacher_set),
+                "is_proposed_anchor": bool(int(frame_idx) in proposed_set),
+                "in_risky_window": bool(in_risky_window),
+                "nearest_window_rank": _nearest_window_rank(frame_idx, windows),
+            }
+        )
+    return output_rows
+
+
+def proposed_schedule_window_rows(schedule_payload):
+    rows = []
+    for item in list(schedule_payload.get("per_window_anchor_stats") or []):
+        rows.append(
+            {
+                "window_rank": int(item.get("window_rank", 0) or 0),
+                "expanded_start_frame": int(item.get("expanded_start_frame", 0) or 0),
+                "expanded_end_frame": int(item.get("expanded_end_frame", 0) or 0),
+                "peak_score": float(item.get("peak_score", 0.0) or 0.0),
+                "integrated_score": float(item.get("integrated_score", 0.0) or 0.0),
+                "teacher_anchor_count_in_or_around_window": int(
+                    item.get("teacher_anchor_count_in_or_around_window", 0) or 0
+                ),
+                "proposed_anchor_count_in_or_around_window": int(
+                    item.get("proposed_anchor_count_in_or_around_window", 0) or 0
+                ),
+                "teacher_span_across_window": item.get("teacher_span_across_window"),
+                "proposed_span_across_window": item.get("proposed_span_across_window"),
+                "proposed_left_distance_to_window": item.get("proposed_left_distance_to_window"),
+                "proposed_right_distance_to_window": item.get("proposed_right_distance_to_window"),
+                "protected": bool(item.get("protected", False)),
+            }
+        )
+    return rows
 
 
 def _dict_to_frame_row(item):

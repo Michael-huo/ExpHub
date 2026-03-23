@@ -136,6 +136,23 @@
 - `allocation_overview.png`
 - `comparison_overview.png`
 - `projection_overview.png`
+- `risk_bundle.json`
+- `risk_summary.json`
+- `risk_timeseries.csv`
+- `risk_windows.csv`
+- `risk_curve.png`
+- `risk_anchor_overview.png`
+- `proposed_schedule.json`
+- `proposed_schedule.csv`
+- `proposed_schedule_overview.png`
+- `proposed_window_comparison.csv`
+
+其中 `proposed_schedule.*` / `proposed_window_comparison.csv` 属于 analysis-only research artifact：
+
+- 它们只用于验证统一 risk bundle 下的“teacher dense -> risky keep / safe retreat”原型
+- 不回写 `segment/keyframes/keyframes_meta.json`
+- 不回写 `segment/deploy_schedule.json`
+- 不被 `infer` / `merge` / `slam` 当作正式输入消费
 
 ## 5. 最小验收检查点
 
