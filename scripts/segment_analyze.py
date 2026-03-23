@@ -28,16 +28,20 @@ from scripts._segment.policies.naming import (
 )
 from scripts._segment.research import (
     build_risk_summary,
+    build_proposed_schedule_from_risk_bundle,
     compute_risk_bundle,
     save_allocation_overview,
     save_comparison_overview,
     save_kinematics_overview,
     save_projection_overview,
+    save_proposed_schedule_overview,
     save_risk_anchor_overview,
     save_risk_curve,
     compute_frame_signal_rows,
     compute_motion_rows,
     compute_semantic_rows,
+    proposed_schedule_anchor_rows,
+    proposed_schedule_window_rows,
     risk_bundle_to_dict,
     risk_frame_rows_to_dicts,
     risk_windows_to_dicts,
@@ -1025,6 +1029,44 @@ def _risk_log(risk_bundle, analysis_dir):
     log_info("risk_windows.csv: {}".format(analysis_dir / "risk_windows.csv"))
 
 
+def _proposed_schedule_payload(schedule_payload):
+    metadata = dict(schedule_payload.get("schedule_metadata", {}) or {})
+    validation = dict(schedule_payload.get("validation", {}) or {})
+    return {
+        "teacher_gap": int(metadata.get("teacher_gap", 0) or 0),
+        "safe_gap": int(metadata.get("safe_gap", 0) or 0),
+        "teacher_dense_anchors": list(schedule_payload.get("teacher_dense_anchors", []) or []),
+        "proposed_final_anchors": list(schedule_payload.get("proposed_final_anchors", []) or []),
+        "risky_windows_used": list(schedule_payload.get("risky_windows_used", []) or []),
+        "total_teacher_anchor_count": int(len(list(schedule_payload.get("teacher_dense_anchors", []) or []))),
+        "total_proposed_anchor_count": int(len(list(schedule_payload.get("proposed_final_anchors", []) or []))),
+        "estimated_uniform60_anchor_count": int(schedule_payload.get("estimated_uniform60_anchor_count", 0) or 0),
+        "validation": {
+            "all_risky_windows_protected": bool(validation.get("all_risky_windows_protected", False)),
+            "max_gap_inside_risky_windows": int(validation.get("max_gap_inside_risky_windows", 0) or 0),
+            "worst_window_gap": int(validation.get("worst_window_gap", 0) or 0),
+            "worst_window": validation.get("worst_window"),
+            "violating_window_count": int(validation.get("violating_window_count", 0) or 0),
+        },
+        "metadata": metadata,
+    }
+
+
+def _proposed_schedule_log(schedule_payload, analysis_dir):
+    metadata = dict(schedule_payload.get("schedule_metadata", {}) or {})
+    validation = dict(schedule_payload.get("validation", {}) or {})
+    log_info("proposed teacher gap: {}".format(int(metadata.get("teacher_gap", 0) or 0)))
+    log_info("proposed safe gap: {}".format(int(metadata.get("safe_gap", 0) or 0)))
+    log_info("proposed anchor count: {}".format(len(list(schedule_payload.get("proposed_final_anchors", []) or []))))
+    log_info("proposed risky window count: {}".format(len(list(schedule_payload.get("risky_windows_used", []) or []))))
+    log_info(
+        "proposed all_risky_windows_protected: {}".format(
+            bool(validation.get("all_risky_windows_protected", False))
+        )
+    )
+    log_info("proposed_schedule.json: {}".format(analysis_dir / "proposed_schedule.json"))
+
+
 def _run_risk_analysis(rows, data, analysis_dir, args):
     maps = _keyframe_maps(data["keyframes_meta"])
     risk_bundle = compute_risk_bundle(
@@ -1042,6 +1084,10 @@ def _run_risk_analysis(rows, data, analysis_dir, args):
     risk_windows_path = analysis_dir / "risk_windows.csv"
     risk_curve_path = analysis_dir / "risk_curve.png"
     risk_anchor_path = analysis_dir / "risk_anchor_overview.png"
+    proposed_schedule_path = analysis_dir / "proposed_schedule.json"
+    proposed_schedule_csv_path = analysis_dir / "proposed_schedule.csv"
+    proposed_schedule_overview_path = analysis_dir / "proposed_schedule_overview.png"
+    proposed_window_comparison_path = analysis_dir / "proposed_window_comparison.csv"
 
     write_json_atomic(str(risk_bundle_path), risk_bundle_to_dict(risk_bundle), indent=2)
     write_json_atomic(str(risk_summary_path), risk_summary, indent=2)
@@ -1049,7 +1095,29 @@ def _run_risk_analysis(rows, data, analysis_dir, args):
     _write_csv(risk_windows_path, risk_windows_to_dicts(risk_bundle))
     save_risk_curve(risk_bundle, risk_curve_path)
     save_risk_anchor_overview(risk_bundle, risk_anchor_path)
+
+    proposed_schedule = build_proposed_schedule_from_risk_bundle(
+        risk_bundle=risk_bundle,
+        frame_count=len(rows),
+        teacher_gap=24,
+        safe_gap=60,
+        use_expanded_windows=True,
+        merge_nearby_windows=False,
+        edge_protection_teacher_hops=1,
+    )
+    write_json_atomic(str(proposed_schedule_path), _proposed_schedule_payload(proposed_schedule), indent=2)
+    _write_csv(proposed_schedule_csv_path, proposed_schedule_anchor_rows(proposed_schedule, risk_bundle))
+    _write_csv(proposed_window_comparison_path, proposed_schedule_window_rows(proposed_schedule))
+    save_proposed_schedule_overview(
+        risk_bundle,
+        proposed_schedule,
+        proposed_schedule_overview_path,
+        current_uniform_indices=maps["uniform_indices"],
+        current_final_indices=maps["final_indices"],
+    )
+
     _risk_log(risk_bundle, analysis_dir)
+    _proposed_schedule_log(proposed_schedule, analysis_dir)
 
 
 def _run_official_analysis(exp_dir, segment_dir, analysis_dir, data, args):
