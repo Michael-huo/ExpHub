@@ -9,6 +9,7 @@ _POLICY_MODULES = {
     "motion": "_segment.policies.motion",
     "uniform": "_segment.policies.uniform",
     "semantic": "_segment.policies.semantic",
+    "risk": "_segment.policies.risk",
 }
 
 

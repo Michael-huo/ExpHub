@@ -330,7 +330,7 @@ def main():
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        help="keyframe policy: uniform anchors, motion fixed-budget relocation, or semantic fixed-budget relocation",
+        help="keyframe policy: uniform anchors, motion fixed-budget relocation, semantic fixed-budget relocation, or risk protected sparse schedule",
     )
 
     ap.add_argument("--dry_run", action="store_true", help="print plan and exit")
@@ -651,6 +651,18 @@ def main():
             "final_keyframe_count": int((kf_meta.get("summary") or {}).get("num_final_keyframes", 0)),
             "extra_kf_ratio": float((kf_meta.get("summary") or {}).get("extra_kf_ratio", 0.0)),
         }
+        if str(kf_meta.get("policy_name", args.segment_policy)) == "risk":
+            risk_meta = dict(kf_meta.get("policy_meta") or {})
+            step_meta["outputs"]["keyframe_policy"].update(
+                {
+                    "safe_gap": int(risk_meta.get("safe_gap", args.kf_gap) or args.kf_gap),
+                    "risky_gap": int(risk_meta.get("risky_gap", 0) or 0),
+                    "teacher_gap": int(risk_meta.get("teacher_gap", 0) or 0),
+                    "risk_window_count": int(risk_meta.get("risk_window_count", 0) or 0),
+                    "all_risky_windows_protected": bool(risk_meta.get("all_risky_windows_protected", False)),
+                    "reduction_vs_teacher": float(risk_meta.get("reduction_vs_teacher", 0.0) or 0.0),
+                }
+            )
     if int(args.kf_gap) > 0 and 'deploy_schedule' in locals():
         step_meta["outputs"]["deploy_schedule"] = {
             "path": str(os.path.join(root_dir, "deploy_schedule.json")),

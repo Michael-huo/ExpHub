@@ -61,6 +61,24 @@ def _build_keyframe_item_factory(frame_paths, timestamps):
 
 
 def _normalize_plan(context, plan):
+    frame_count_total = int(context["frame_count_total"])
+    plan_used_last_idx = plan.get("used_last_idx")
+    plan_frame_count_used = plan.get("frame_count_used")
+    if plan_used_last_idx is None and plan_frame_count_used is None:
+        used_last_idx = int(context["used_last_idx"])
+        frame_count_used = int(context["frame_count_used"])
+    else:
+        if plan_used_last_idx is None:
+            frame_count_used = max(0, int(plan_frame_count_used))
+            used_last_idx = int(frame_count_used - 1) if frame_count_used > 0 else -1
+        else:
+            used_last_idx = int(plan_used_last_idx)
+            frame_count_used = int(plan_frame_count_used) if plan_frame_count_used is not None else int(used_last_idx + 1)
+        used_last_idx = min(max(used_last_idx, -1), max(-1, frame_count_total - 1))
+        frame_count_used = min(max(frame_count_used, 0), frame_count_total)
+    tail_drop = int(plan.get("tail_drop", max(0, frame_count_total - frame_count_used)))
+    uniform_base_indices = list(plan.get("uniform_base_indices") or context["uniform_base_indices"])
+
     raw_items = list(plan.get("keyframe_items") or [])
     item_map = {}
     for item in raw_items:
@@ -74,7 +92,7 @@ def _normalize_plan(context, plan):
         frame_idx = int(value)
         if frame_idx in seen:
             continue
-        if frame_idx < 0 or frame_idx > int(context["used_last_idx"]):
+        if frame_idx < 0 or frame_idx > int(used_last_idx):
             continue
         seen.add(frame_idx)
         indices.append(frame_idx)
@@ -97,8 +115,8 @@ def _normalize_plan(context, plan):
     summary = dict(plan.get("summary") or {})
     summary["policy_name"] = str(context["policy_name"])
     summary["num_final_keyframes"] = int(len(indices))
-    summary["num_uniform_base"] = int(len(context["uniform_base_indices"]))
-    base_count = int(len(context["uniform_base_indices"]))
+    summary["num_uniform_base"] = int(len(uniform_base_indices))
+    base_count = int(len(uniform_base_indices))
     if base_count > 0:
         summary["extra_kf_ratio"] = float(max(0, len(indices) - base_count) / float(base_count))
     else:
@@ -106,10 +124,10 @@ def _normalize_plan(context, plan):
 
     return {
         "policy_name": str(context["policy_name"]),
-        "frame_count_total": int(context["frame_count_total"]),
-        "frame_count_used": int(context["frame_count_used"]),
-        "tail_drop": int(context["tail_drop"]),
-        "uniform_base_indices": list(context["uniform_base_indices"]),
+        "frame_count_total": int(frame_count_total),
+        "frame_count_used": int(frame_count_used),
+        "tail_drop": int(tail_drop),
+        "uniform_base_indices": list(uniform_base_indices),
         "keyframe_indices": indices,
         "keyframe_items": items,
         "summary": summary,
@@ -185,6 +203,7 @@ def materialize_keyframe_plan(root_dir, frames_dir, timestamps_path, kf_gap, key
 
     keyframes_meta = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "policy": str(plan["policy_name"]),
         "kf_gap": int(kf_gap),
         "mode_requested": str(keyframes_mode),
         "mode_actual": str(actual_mode),
@@ -199,7 +218,7 @@ def materialize_keyframe_plan(root_dir, frames_dir, timestamps_path, kf_gap, key
         "keyframes": list(plan["keyframe_items"]),
         "summary": dict(plan["summary"]),
         "policy_meta": dict(plan.get("policy_meta") or {}),
-        "note": "Keyframes remain backward compatible with the legacy uniform layout fields. semantic and motion use shared fixed-budget bounded relocation on top of the uniform skeleton.",
+        "note": "Keyframes remain backward compatible with the legacy uniform layout fields. Additional policies may extend policy_meta while keeping the core keyframe_indices contract stable.",
     }
 
     write_json_atomic(keyframes_dir / "keyframes_meta.json", keyframes_meta, indent=2)

@@ -895,12 +895,19 @@ def _safe_snapped_teacher_anchors(teacher_anchors, frame_count=None, frame_idx_s
         gap=safe_gap,
     )
     snapped = []
+    snap_pairs = []
     for frame_idx in list(safe_uniform.get("indices") or []):
         snapped_idx = _nearest_teacher_anchor(frame_idx, teacher_anchors, prefer_right=True)
         if snapped_idx is None:
             continue
+        snap_pairs.append(
+            {
+                "safe_frame_idx": int(frame_idx),
+                "teacher_frame_idx": int(snapped_idx),
+            }
+        )
         snapped.append(int(snapped_idx))
-    return safe_uniform, sorted(set(snapped))
+    return safe_uniform, sorted(set(snapped)), snap_pairs
 
 
 def _window_anchor_indices(anchor_indices, start_idx, end_idx):
@@ -1037,6 +1044,7 @@ def build_proposed_schedule_from_risk_bundle(
     merge_nearby_windows=False,
     merge_gap_frames=None,
     edge_protection_teacher_hops=1,
+    preserve_range_boundaries=True,
 ):
     payload = risk_bundle_to_dict(risk_bundle)
     frame_rows = [_dict_to_frame_row(item) for item in list(payload.get("frame_rows", []) or [])]
@@ -1052,24 +1060,26 @@ def build_proposed_schedule_from_risk_bundle(
         total_count = max(0, int(frame_idx_end - frame_idx_start + 1))
 
     teacher_gap = max(1, int(teacher_gap))
+    requested_safe_gap = max(1, int(safe_gap))
     safe_gap = max(teacher_gap, int(safe_gap))
     edge_protection_teacher_hops = max(0, int(edge_protection_teacher_hops))
+    requested_frame_end = int(frame_idx_end)
     teacher_uniform = _uniform_anchor_range(
         frame_count=total_count,
         frame_idx_start=frame_idx_start,
-        frame_idx_end=frame_idx_end,
+        frame_idx_end=requested_frame_end,
         gap=teacher_gap,
     )
     teacher_dense_anchors = list(teacher_uniform.get("indices") or [])
-    safe_uniform, safe_snapped_anchors = _safe_snapped_teacher_anchors(
+    schedule_frame_end = int(requested_frame_end)
+    safe_uniform, safe_snapped_anchors, safe_snapped_pairs = _safe_snapped_teacher_anchors(
         teacher_dense_anchors,
         frame_count=total_count,
         frame_idx_start=frame_idx_start,
-        frame_idx_end=teacher_uniform.get("used_last_idx"),
+        frame_idx_end=schedule_frame_end,
         safe_gap=safe_gap,
     )
 
-    schedule_frame_end = int(teacher_uniform.get("used_last_idx", frame_idx_start - 1) or (frame_idx_start - 1))
     risky_windows_used = []
     if teacher_dense_anchors:
         windows = _window_dicts_for_schedule(risk_bundle, frame_rows, use_expanded_windows=use_expanded_windows)
@@ -1107,7 +1117,11 @@ def build_proposed_schedule_from_risk_bundle(
             item["peak_timestamp"] = _window_time(frame_rows, item.get("peak_frame_idx"))
 
     proposed_anchor_set = set(int(idx) for idx in safe_snapped_anchors)
-    if teacher_dense_anchors:
+    if preserve_range_boundaries and schedule_frame_end >= int(frame_idx_start):
+        proposed_anchor_set.add(int(frame_idx_start))
+        if int(schedule_frame_end) > int(frame_idx_start):
+            proposed_anchor_set.add(int(schedule_frame_end))
+    elif teacher_dense_anchors:
         proposed_anchor_set.add(int(teacher_dense_anchors[0]))
     teacher_positions = sorted(int(idx) for idx in teacher_dense_anchors)
     for window in risky_windows_used:
@@ -1139,6 +1153,9 @@ def build_proposed_schedule_from_risk_bundle(
 
     return {
         "teacher_dense_anchors": list(teacher_dense_anchors),
+        "safe_uniform_anchors": list(safe_uniform.get("indices") or []),
+        "safe_snapped_anchors": list(safe_snapped_anchors),
+        "safe_snapped_pairs": list(safe_snapped_pairs),
         "proposed_final_anchors": list(proposed_final_anchors),
         "risky_windows_used": list(risky_windows_used),
         "per_window_anchor_stats": list(per_window_anchor_stats),
@@ -1154,26 +1171,91 @@ def build_proposed_schedule_from_risk_bundle(
         "estimated_uniform60_anchor_count": int(len(list(safe_uniform.get("indices") or []))),
         "schedule_metadata": {
             "version": str(PROPOSED_SCHEDULE_VERSION),
-            "strategy": "dense uniform teacher -> keep risky/edge teacher anchors -> sparse safe anchors snapped from gap60 baseline",
+            "strategy": "dense uniform teacher -> keep risky/edge teacher anchors -> sparse safe anchors snapped from safe-gap baseline",
             "teacher_gap": int(teacher_gap),
             "safe_gap": int(safe_gap),
+            "requested_safe_gap": int(requested_safe_gap),
             "frame_idx_start": int(frame_idx_start),
             "frame_idx_end": int(schedule_frame_end),
             "source_frame_idx_end": int(frame_idx_end),
             "frame_count_total": int(total_count),
             "teacher_used_count": int(teacher_uniform.get("used_count", 0) or 0),
-            "teacher_used_last_idx": int(schedule_frame_end),
+            "teacher_used_last_idx": int(teacher_uniform.get("used_last_idx", frame_idx_start - 1) or (frame_idx_start - 1)),
             "teacher_tail_drop": int(teacher_uniform.get("tail_drop", 0) or 0),
             "use_expanded_windows": bool(use_expanded_windows),
             "merge_nearby_windows": bool(merge_nearby_windows),
             "merge_gap_frames": None if merge_gap_frames is None else int(merge_gap_frames),
             "edge_protection_teacher_hops": int(edge_protection_teacher_hops),
+            "preserve_range_boundaries": bool(preserve_range_boundaries),
             "safe_uniform_anchor_count": int(len(list(safe_uniform.get("indices") or []))),
             "safe_snapped_teacher_anchor_count": int(len(safe_snapped_anchors)),
             "risky_window_count": int(len(risky_windows_used)),
             "bundle_version": str((payload.get("metadata", {}) or {}).get("version", "")),
             "tail_policy": "teacher anchors follow compute_uniform_base; tail beyond used_last_idx is excluded from proposed schedule",
         },
+    }
+
+
+def build_formal_risk_policy_meta(risk_bundle, schedule_payload, safe_gap, risky_gap, policy_name="risk"):
+    payload = risk_bundle_to_dict(risk_bundle)
+    metadata = dict(schedule_payload.get("schedule_metadata", {}) or {})
+    validation = dict(schedule_payload.get("validation", {}) or {})
+    hardest_window = dict(payload.get("hardest_window") or {}) if payload.get("hardest_window") else None
+    per_window_anchor_stats = list(schedule_payload.get("per_window_anchor_stats") or [])
+    teacher_dense_anchors = list(schedule_payload.get("teacher_dense_anchors") or [])
+    safe_uniform_anchors = list(schedule_payload.get("safe_uniform_anchors") or [])
+    safe_snapped_anchors = list(schedule_payload.get("safe_snapped_anchors") or [])
+    proposed_final_anchors = list(schedule_payload.get("proposed_final_anchors") or [])
+    protected_window_count = 0
+    for item in per_window_anchor_stats:
+        if bool(item.get("protected", False)):
+            protected_window_count += 1
+    reduction_vs_teacher = 0.0
+    if teacher_dense_anchors:
+        reduction_vs_teacher = max(
+            0.0,
+            1.0 - (float(len(proposed_final_anchors)) / float(len(teacher_dense_anchors))),
+        )
+
+    hardest_window_frame_range = None
+    hardest_window_peak_score = 0.0
+    if hardest_window:
+        hardest_window_frame_range = {
+            "start_frame": int(hardest_window.get("expanded_start_frame", 0) or 0),
+            "end_frame": int(hardest_window.get("expanded_end_frame", 0) or 0),
+        }
+        hardest_window_peak_score = float(hardest_window.get("peak_score", 0.0) or 0.0)
+
+    return {
+        "policy_name": str(policy_name),
+        "safe_gap": int(safe_gap),
+        "effective_safe_gap": int(metadata.get("safe_gap", safe_gap) or safe_gap),
+        "risky_gap": int(risky_gap),
+        "teacher_gap": int(metadata.get("teacher_gap", risky_gap) or risky_gap),
+        "risk_window_count": int(metadata.get("risky_window_count", len(schedule_payload.get("risky_windows_used", []) or [])) or 0),
+        "teacher_anchor_count": int(len(teacher_dense_anchors)),
+        "safe_uniform_anchor_count": int(len(safe_uniform_anchors)),
+        "safe_snapped_teacher_anchor_count": int(len(safe_snapped_anchors)),
+        "proposed_anchor_count": int(len(proposed_final_anchors)),
+        "final_keyframe_count": int(len(proposed_final_anchors)),
+        "all_risky_windows_protected": bool(validation.get("all_risky_windows_protected", False)),
+        "worst_window_gap": int(validation.get("worst_window_gap", 0) or 0),
+        "reduction_vs_teacher": float(reduction_vs_teacher),
+        "hardest_window_frame_range": hardest_window_frame_range,
+        "hardest_window_peak_score": float(hardest_window_peak_score),
+        "hardest_window": hardest_window,
+        "window_protection": {
+            "protected_window_count": int(protected_window_count),
+            "violating_window_count": int(validation.get("violating_window_count", 0) or 0),
+            "all_risky_windows_protected": bool(validation.get("all_risky_windows_protected", False)),
+            "max_gap_inside_risky_windows": int(validation.get("max_gap_inside_risky_windows", 0) or 0),
+            "worst_window_gap": int(validation.get("worst_window_gap", 0) or 0),
+            "worst_window": validation.get("worst_window"),
+            "per_window": list(per_window_anchor_stats),
+        },
+        "bundle_version": str((payload.get("metadata", {}) or {}).get("version", "")),
+        "schedule_version": str(metadata.get("version", "")),
+        "schedule_strategy": str(metadata.get("strategy", "")),
     }
 
 

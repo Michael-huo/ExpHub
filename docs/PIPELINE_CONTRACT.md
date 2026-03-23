@@ -45,6 +45,7 @@
 - `uniform`
 - `motion`
 - `semantic`
+- `risk`
 
 ### `prompt`
 

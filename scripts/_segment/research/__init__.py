@@ -3,6 +3,7 @@
 
 from .motion_energy import compute_motion_rows
 from .risk import (
+    build_formal_risk_policy_meta,
     build_risk_summary,
     build_proposed_schedule_from_risk_bundle,
     compute_risk_bundle,
@@ -32,6 +33,7 @@ __all__ = [
     "compute_risk_bundle",
     "compute_frame_signal_rows",
     "compute_semantic_rows",
+    "build_formal_risk_policy_meta",
     "build_risk_summary",
     "build_proposed_schedule_from_risk_bundle",
     "proposed_schedule_anchor_rows",
