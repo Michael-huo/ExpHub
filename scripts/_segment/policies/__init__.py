@@ -10,6 +10,7 @@ _POLICY_MODULES = {
     "uniform": "_segment.policies.uniform",
     "semantic": "_segment.policies.semantic",
     "risk": "_segment.policies.risk",
+    "state": "_segment.policies.state",
 }
 
 

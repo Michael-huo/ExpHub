@@ -8,6 +8,8 @@ from .extract import (
     SIGNAL_FAMILIES,
     build_signal_extraction_meta,
     extract_signal_timeseries,
+    extract_signal_timeseries_from_frames,
+    materialize_signal_extraction_outputs,
     write_signal_extraction_meta,
 )
 from .visualize import save_signal_plots
@@ -19,6 +21,8 @@ __all__ = [
     "SIGNAL_FAMILIES",
     "build_signal_extraction_meta",
     "extract_signal_timeseries",
+    "extract_signal_timeseries_from_frames",
+    "materialize_signal_extraction_outputs",
     "write_signal_extraction_meta",
     "save_signal_plots",
 ]

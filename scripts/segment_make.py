@@ -330,7 +330,7 @@ def main():
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        help="keyframe policy: uniform anchors, motion fixed-budget relocation, semantic fixed-budget relocation, or risk protected sparse schedule",
+        help="keyframe policy: uniform anchors, motion fixed-budget relocation, semantic fixed-budget relocation, risk protected sparse schedule, or state density schedule",
     )
 
     ap.add_argument("--dry_run", action="store_true", help="print plan and exit")
@@ -661,6 +661,28 @@ def main():
                     "risk_window_count": int(risk_meta.get("risk_window_count", 0) or 0),
                     "all_risky_windows_protected": bool(risk_meta.get("all_risky_windows_protected", False)),
                     "reduction_vs_teacher": float(risk_meta.get("reduction_vs_teacher", 0.0) or 0.0),
+                }
+            )
+        if str(kf_meta.get("policy_name", args.segment_policy)) == "state":
+            state_meta = dict(kf_meta.get("policy_meta") or {})
+            step_meta["outputs"]["keyframe_policy"].update(
+                {
+                    "safe_gap": int(state_meta.get("safe_gap", args.kf_gap) or args.kf_gap),
+                    "transition_gap": int(state_meta.get("transition_gap", 0) or 0),
+                    "high_gap": int(state_meta.get("high_gap", state_meta.get("risky_gap", 0)) or 0),
+                    "risky_gap": int(state_meta.get("risky_gap", 0) or 0),
+                    "pre_transition_frames": int(state_meta.get("pre_transition_frames", 0) or 0),
+                    "post_transition_frames": int(state_meta.get("post_transition_frames", 0) or 0),
+                    "min_anchor_spacing": int(state_meta.get("min_anchor_spacing", 0) or 0),
+                    "min_segment_frames": int(state_meta.get("min_segment_frames", 0) or 0),
+                    "state_segment_count": int(state_meta.get("state_segment_count", 0) or 0),
+                    "high_state_count": int(state_meta.get("high_state_count", 0) or 0),
+                    "low_state_count": int(state_meta.get("low_state_count", 0) or 0),
+                    "transition_band_count": int(state_meta.get("transition_band_count", 0) or 0),
+                    "min_final_gap": int(state_meta.get("min_final_gap", 0) or 0),
+                    "min_final_segment_frames": int(state_meta.get("min_final_segment_frames", 0) or 0),
+                    "short_segment_merge_count": int(state_meta.get("short_segment_merge_count", 0) or 0),
+                    "density_schedule_summary": list(state_meta.get("density_schedule_summary") or []),
                 }
             )
     if int(args.kf_gap) > 0 and 'deploy_schedule' in locals():

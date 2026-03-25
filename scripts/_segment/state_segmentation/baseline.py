@@ -69,6 +69,22 @@ def _read_signal_rows(csv_path):
     return rows
 
 
+def _coerce_signal_rows(rows):
+    coerced = []
+    for row in list(rows or []):
+        coerced.append(
+            {
+                "frame_idx": int(row.get("frame_idx", 0) or 0),
+                "timestamp": float(row.get("timestamp", row.get("ts_sec", 0.0)) or 0.0),
+                "motion_velocity": float(row.get("motion_velocity", 0.0) or 0.0),
+                "feature_motion": float(row.get("feature_motion", 0.0) or 0.0),
+            }
+        )
+    if not coerced:
+        raise ValueError("state segmentation requires non-empty signal rows")
+    return coerced
+
+
 def _zscore(values):
     arr = np.asarray(values, dtype=np.float32)
     mean_value = float(arr.mean()) if arr.size > 0 else 0.0
@@ -326,19 +342,24 @@ def _build_segments(rows, state_labels, state_scores, dt_sec):
 
 def _build_summary(segments, frame_count):
     high_segments = [item for item in segments if item.get("state_label") == STATE_HIGH]
+    low_segments = [item for item in segments if item.get("state_label") == STATE_LOW]
     high_frames = 0
     for item in high_segments:
         high_frames += int(item.get("duration_frames", 0) or 0)
     return {
         "segment_count": int(len(segments)),
         "high_state_segment_count": int(len(high_segments)),
+        "low_state_segment_count": int(len(low_segments)),
         "high_state_frame_count": int(high_frames),
         "high_state_frame_ratio": float(float(high_frames) / float(frame_count)) if int(frame_count) > 0 else 0.0,
     }
 
 
-def run_state_segmentation(
-    exp_dir,
+def compute_state_segments(
+    rows,
+    exp_dir=None,
+    input_csv=None,
+    output_dir=None,
     normalization_method=DEFAULT_NORMALIZATION_METHOD,
     smoothing_window=DEFAULT_SMOOTHING_WINDOW,
     enter_th=DEFAULT_ENTER_TH,
@@ -348,12 +369,11 @@ def run_state_segmentation(
     glitch_merge_len=DEFAULT_GLITCH_MERGE_LEN,
     weights=None,
 ):
-    exp_dir = ensure_dir(exp_dir, name="experiment dir")
-    segment_dir = ensure_dir(exp_dir / "segment", name="segment dir")
-    input_csv = segment_dir / "signal_extraction" / _INPUT_CSV_NAME
-    rows = _read_signal_rows(input_csv)
-    output_dir = (segment_dir / "state_segmentation").resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    rows = _coerce_signal_rows(rows)
+    exp_dir_path = Path(exp_dir).resolve() if exp_dir is not None else None
+    output_dir_path = Path(output_dir).resolve() if output_dir is not None else None
+    if output_dir_path is not None:
+        output_dir_path.mkdir(parents=True, exist_ok=True)
 
     weights = dict(weights or DEFAULT_WEIGHTS)
     smoothing_window = max(1, int(smoothing_window))
@@ -407,8 +427,8 @@ def run_state_segmentation(
 
     meta = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "source_exp_dir": str(exp_dir),
-        "input_csv": str(input_csv.resolve()),
+        "source_exp_dir": str(exp_dir_path) if exp_dir_path is not None else "",
+        "input_csv": str(Path(input_csv).resolve()) if input_csv else "",
         "input_signals": list(DEFAULT_INPUT_SIGNALS),
         "normalization_method": {
             "name": str(normalization_method),
@@ -435,22 +455,54 @@ def run_state_segmentation(
     }
 
     json_payload = {
-        "source_exp_dir": str(exp_dir),
-        "input_csv": str(input_csv.resolve()),
+        "source_exp_dir": str(exp_dir_path) if exp_dir_path is not None else "",
+        "input_csv": str(Path(input_csv).resolve()) if input_csv else "",
         "summary": summary,
         "segments": segments,
     }
 
     return {
-        "exp_dir": exp_dir,
-        "segment_dir": segment_dir,
-        "input_csv": input_csv.resolve(),
-        "output_dir": output_dir,
+        "exp_dir": exp_dir_path,
+        "segment_dir": output_dir_path.parent if output_dir_path is not None else None,
+        "input_csv": Path(input_csv).resolve() if input_csv else None,
+        "output_dir": output_dir_path,
         "frame_rows": frame_rows,
         "segments": segments,
         "meta": meta,
         "json_payload": json_payload,
     }
+
+
+def run_state_segmentation(
+    exp_dir,
+    normalization_method=DEFAULT_NORMALIZATION_METHOD,
+    smoothing_window=DEFAULT_SMOOTHING_WINDOW,
+    enter_th=DEFAULT_ENTER_TH,
+    exit_th=DEFAULT_EXIT_TH,
+    min_high_len=DEFAULT_MIN_HIGH_LEN,
+    min_low_len=DEFAULT_MIN_LOW_LEN,
+    glitch_merge_len=DEFAULT_GLITCH_MERGE_LEN,
+    weights=None,
+):
+    exp_dir = ensure_dir(exp_dir, name="experiment dir")
+    segment_dir = ensure_dir(exp_dir / "segment", name="segment dir")
+    input_csv = segment_dir / "signal_extraction" / _INPUT_CSV_NAME
+    rows = _read_signal_rows(input_csv)
+    output_dir = (segment_dir / "state_segmentation").resolve()
+    return compute_state_segments(
+        rows=rows,
+        exp_dir=exp_dir,
+        input_csv=input_csv,
+        output_dir=output_dir,
+        normalization_method=normalization_method,
+        smoothing_window=smoothing_window,
+        enter_th=enter_th,
+        exit_th=exit_th,
+        min_high_len=min_high_len,
+        min_low_len=min_low_len,
+        glitch_merge_len=glitch_merge_len,
+        weights=weights,
+    )
 
 
 def write_state_segments_csv(path, segments):
