@@ -135,6 +135,29 @@ def _resolve_segment_inputs(exp_dir):
     }
 
 
+def _resolve_inline_outputs(segment_dir=None, output_dir=None, cache_dir=None):
+    segment_dir = Path(segment_dir).resolve() if segment_dir is not None else None
+    if output_dir is None:
+        if segment_dir is None:
+            raise ValueError("output_dir or segment_dir is required for inline signal extraction")
+        output_dir = segment_dir / "signal_extraction"
+    output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if cache_dir is None:
+        if segment_dir is None:
+            raise ValueError("cache_dir or segment_dir is required for inline signal extraction")
+        cache_dir = segment_dir / ".segment_cache" / "signal_extraction"
+    cache_dir = Path(cache_dir).resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "segment_dir": segment_dir,
+        "output_dir": output_dir,
+        "cache_dir": cache_dir,
+    }
+
+
 def _existing_semantic_cache_dirs(segment_dir, keyframes_meta):
     cache_root = (segment_dir / ".segment_cache").resolve()
     candidates = []
@@ -222,6 +245,92 @@ def write_signal_timeseries_csv(path, rows):
             writer.writerow({key: row.get(key) for key in _TIMESERIES_COLUMNS})
 
 
+def extract_signal_timeseries_from_frames(
+    frame_paths,
+    timestamps,
+    exp_dir=None,
+    segment_dir=None,
+    keyframes_meta=None,
+    output_dir=None,
+    cache_dir=None,
+):
+    frame_paths = [Path(path).resolve() for path in list(frame_paths or [])]
+    timestamps = [float(value) for value in list(timestamps or [])]
+    if not frame_paths:
+        raise ValueError("signal extraction requires non-empty frame_paths")
+    if len(frame_paths) != len(timestamps):
+        raise ValueError(
+            "signal extraction frame/timestamp mismatch: frames={} timestamps={}".format(
+                len(frame_paths), len(timestamps)
+            )
+        )
+
+    inline_outputs = _resolve_inline_outputs(
+        segment_dir=segment_dir,
+        output_dir=output_dir,
+        cache_dir=cache_dir,
+    )
+    segment_dir = inline_outputs["segment_dir"] or Path(frame_paths[0]).resolve().parent.parent
+    exp_dir = Path(exp_dir).resolve() if exp_dir is not None else segment_dir.parent
+    keyframes_meta = dict(keyframes_meta or {})
+
+    log_info("signal extraction start: exp_dir={} frames={}".format(exp_dir, len(frame_paths)))
+    semantic_cache = _resolve_semantic_cache_dir(
+        segment_dir,
+        keyframes_meta,
+        inline_outputs["cache_dir"],
+    )
+
+    try:
+        with _quiet_semantic_library_noise():
+            semantic_rows, semantic_meta = compute_semantic_rows(
+                frame_paths,
+                semantic_cache["cache_dir"],
+                timestamps=timestamps,
+            )
+    except ModuleNotFoundError as e:
+        missing_name = str(getattr(e, "name", "") or "")
+        if missing_name in ("torch", "open_clip"):
+            raise SystemExit(
+                "[ERR] semantic signal extraction requires torch/open_clip in the current python environment. "
+                "Please rerun with the segmentclip interpreter or another environment that already has these dependencies."
+            )
+        raise
+    except RuntimeError as e:
+        text = str(e)
+        if "open_clip" in text:
+            raise SystemExit(
+                "[ERR] semantic signal extraction failed to initialize OpenCLIP: {}. "
+                "Please rerun with the configured segmentclip interpreter.".format(text)
+            )
+        raise
+
+    log_info("signal extraction motion observe start: frames={}".format(len(frame_paths)))
+    motion_rows, motion_meta = compute_motion_rows(
+        frame_paths,
+        timestamps=timestamps,
+    )
+    log_info("signal extraction frame signal compose start: frames={}".format(len(frame_paths)))
+    frame_rows, frame_signal_meta = compute_frame_signal_rows(
+        frame_paths,
+        timestamps,
+        semantic_rows=semantic_rows,
+        motion_rows=motion_rows,
+    )
+    selected_rows = _build_selected_rows(frame_rows)
+    return {
+        "exp_dir": exp_dir,
+        "segment_dir": segment_dir,
+        "output_dir": inline_outputs["output_dir"],
+        "rows": selected_rows,
+        "timestamps": timestamps,
+        "semantic_cache": semantic_cache,
+        "semantic_meta": semantic_meta,
+        "motion_meta": motion_meta,
+        "frame_signal_meta": frame_signal_meta,
+    }
+
+
 def build_signal_extraction_meta(payload, plot_meta):
     timestamps = list(payload["timestamps"])
     timestamp_range = {
@@ -265,68 +374,49 @@ def write_signal_extraction_meta(path, meta):
     write_json_atomic(Path(path).resolve(), meta, indent=2)
 
 
-def extract_signal_timeseries(exp_dir):
-    payload = _resolve_segment_inputs(exp_dir)
-    frame_paths = payload["frame_paths"]
-    timestamps = payload["timestamps"]
-    log_info("signal extraction start: exp_dir={} frames={}".format(payload["exp_dir"], len(frame_paths)))
-
-    semantic_cache = _resolve_semantic_cache_dir(
-        payload["segment_dir"],
-        payload["keyframes_meta"],
-        payload["cache_dir"],
-    )
-
-    try:
-        with _quiet_semantic_library_noise():
-            semantic_rows, semantic_meta = compute_semantic_rows(
-                frame_paths,
-                semantic_cache["cache_dir"],
-                timestamps=timestamps,
-            )
-    except ModuleNotFoundError as e:
-        missing_name = str(getattr(e, "name", "") or "")
-        if missing_name in ("torch", "open_clip"):
-            raise SystemExit(
-                "[ERR] semantic signal extraction requires torch/open_clip in the current python environment. "
-                "Please rerun with the segmentclip interpreter or another environment that already has these dependencies."
-            )
-        raise
-    except RuntimeError as e:
-        text = str(e)
-        if "open_clip" in text:
-            raise SystemExit(
-                "[ERR] semantic signal extraction failed to initialize OpenCLIP: {}. "
-                "Please rerun with the configured segmentclip interpreter.".format(text)
-            )
-        raise
-
-    log_info("signal extraction motion observe start: frames={}".format(len(frame_paths)))
-    motion_rows, motion_meta = compute_motion_rows(
-        frame_paths,
-        timestamps=timestamps,
-    )
-    log_info("signal extraction frame signal compose start: frames={}".format(len(frame_paths)))
-    frame_rows, frame_signal_meta = compute_frame_signal_rows(
-        frame_paths,
-        timestamps,
-        semantic_rows=semantic_rows,
-        motion_rows=motion_rows,
-    )
-    selected_rows = _build_selected_rows(frame_rows)
-    csv_path = payload["output_dir"] / "signal_timeseries.csv"
-    write_signal_timeseries_csv(csv_path, selected_rows)
+def materialize_signal_extraction_outputs(payload, plot_smooth_window=DEFAULT_PLOT_SMOOTH_WINDOW):
+    output_dir = Path(payload["output_dir"]).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = output_dir / "signal_timeseries.csv"
+    write_signal_timeseries_csv(csv_path, payload["rows"])
     log_info("signal extraction csv write: {}".format(csv_path))
 
+    from .visualize import save_signal_plots
+
+    plot_meta = save_signal_plots(
+        output_dir=output_dir,
+        rows=payload["rows"],
+        smooth_window=plot_smooth_window,
+    )
+    meta = build_signal_extraction_meta(payload, plot_meta)
+    meta_path = output_dir / "signal_extraction_meta.json"
+    write_signal_extraction_meta(meta_path, meta)
     return {
-        "exp_dir": payload["exp_dir"],
-        "segment_dir": payload["segment_dir"],
-        "output_dir": payload["output_dir"],
-        "rows": selected_rows,
-        "timestamps": timestamps,
         "csv_path": csv_path,
-        "semantic_cache": semantic_cache,
-        "semantic_meta": semantic_meta,
-        "motion_meta": motion_meta,
-        "frame_signal_meta": frame_signal_meta,
+        "meta_path": meta_path,
+        "meta": meta,
+        "plot_meta": plot_meta,
+        "plot_paths": {
+            "image_family": output_dir / "signal_image_family.png",
+            "motion_family": output_dir / "signal_motion_family.png",
+            "semantic_family": output_dir / "signal_semantic_family.png",
+            "representatives": output_dir / "signal_representatives.png",
+        },
     }
+
+
+def extract_signal_timeseries(exp_dir, plot_smooth_window=DEFAULT_PLOT_SMOOTH_WINDOW):
+    payload = _resolve_segment_inputs(exp_dir)
+    result = extract_signal_timeseries_from_frames(
+        frame_paths=payload["frame_paths"],
+        timestamps=payload["timestamps"],
+        exp_dir=payload["exp_dir"],
+        segment_dir=payload["segment_dir"],
+        keyframes_meta=payload["keyframes_meta"],
+        output_dir=payload["output_dir"],
+        cache_dir=payload["cache_dir"],
+    )
+    io_paths = materialize_signal_extraction_outputs(result, plot_smooth_window=plot_smooth_window)
+    result["csv_path"] = io_paths["csv_path"]
+    result["meta_path"] = io_paths["meta_path"]
+    return result

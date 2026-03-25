@@ -14,10 +14,7 @@ if __package__ is None or __package__ == "":
 from scripts._common import log_info
 from scripts._segment.signal_extraction import (
     DEFAULT_PLOT_SMOOTH_WINDOW,
-    build_signal_extraction_meta,
     extract_signal_timeseries,
-    save_signal_plots,
-    write_signal_extraction_meta,
 )
 
 
@@ -30,19 +27,11 @@ def build_arg_parser():
 
 def run_signal_extraction(argv=None):
     args = build_arg_parser().parse_args(argv)
-    payload = extract_signal_timeseries(args.exp_dir)
-    plot_meta = save_signal_plots(
-        output_dir=payload["output_dir"],
-        rows=payload["rows"],
-        smooth_window=args.plot_smooth_window,
-    )
-    meta = build_signal_extraction_meta(payload, plot_meta)
-    meta_path = payload["output_dir"] / "signal_extraction_meta.json"
-    write_signal_extraction_meta(meta_path, meta)
+    payload = extract_signal_timeseries(args.exp_dir, plot_smooth_window=args.plot_smooth_window)
     log_info("signal extraction done: output_dir={}".format(payload["output_dir"]))
     return {
         "csv_path": str(payload["csv_path"]),
-        "meta_path": str(meta_path),
+        "meta_path": str(payload["meta_path"]),
         "output_dir": str(payload["output_dir"]),
     }
 

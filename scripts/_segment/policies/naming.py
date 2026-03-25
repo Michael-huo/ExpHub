@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-OFFICIAL_POLICY_NAMES = ("uniform", "motion", "semantic", "risk")
+OFFICIAL_POLICY_NAMES = ("uniform", "motion", "semantic", "risk", "state")
 _DISPLAY_NAMES = {
     "uniform": "Uniform",
     "motion": "Motion",
     "semantic": "Semantic",
     "risk": "Risk",
+    "state": "State",
 }
 
 

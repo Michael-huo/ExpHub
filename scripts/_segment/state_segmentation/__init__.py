@@ -12,6 +12,7 @@ from .baseline import (
     DEFAULT_WEIGHTS,
     STATE_HIGH,
     STATE_LOW,
+    compute_state_segments,
     run_state_segmentation,
     write_state_segmentation_outputs,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "DEFAULT_WEIGHTS",
     "STATE_HIGH",
     "STATE_LOW",
+    "compute_state_segments",
     "run_state_segmentation",
     "save_state_segmentation_plots",
     "write_state_segmentation_outputs",
