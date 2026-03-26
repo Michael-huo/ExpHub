@@ -12,7 +12,7 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 
 当前主链路的默认口径是：
 
-- `prompt` 默认使用 `smolvlm2`，产出 `prompt/profile.json` 与 `prompt/final_prompt.json`
+- `prompt` 默认使用 `smolvlm2`，稳定产出 `prompt/profile.json` 与 `prompt/final_prompt.json`，并可附加产出 `prompt/state_prompt_manifest.json` 与 `prompt/deploy_to_state_prompt_map.json`
 - `infer` 默认使用 `wan_fun_5b_inp`，优先消费 `segment/deploy_schedule.json`
 - `segment` 成功后会默认触发一次 `segment_analyze.py` 旁路分析；它只写 `segment/analysis/`，不改写主链路产物
 
@@ -21,6 +21,8 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 - `segment/keyframes/keyframes_meta.json` 是 raw keyframe schedule 的事实源
 - `segment/deploy_schedule.json` 是当前 Wan 执行投影
 - `prompt/final_prompt.json` 是 `infer` 的默认 prompt 输入
+- `prompt/state_prompt_manifest.json` 是按 state 区间生成的局部 motion prompt
+- `prompt/deploy_to_state_prompt_map.json` 只负责把 execution segment 映射到 state prompt，不直接生成新 prompt
 
 ## 核心文档导航
 
