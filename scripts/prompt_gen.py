@@ -23,6 +23,7 @@ from _prompt.profile import (
     parse_profile_response,
 )
 from _prompt.sampling import list_images, sample_images
+from _prompt.state_prompt import build_state_prompt_artifacts
 
 
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -223,13 +224,32 @@ def main():
     aggregated_profile = aggregate_prompt_profiles(candidates)
     aggregated_profile["version"] = int(PROMPT_PROFILE_VERSION)
     final_prompt_payload = build_final_prompt_payload(aggregated_profile)
+    state_prompt_manifest_path = out_final_prompt.parent / "state_prompt_manifest.json"
+    deploy_to_state_prompt_map_path = out_final_prompt.parent / "deploy_to_state_prompt_map.json"
+    state_prompt_result = build_state_prompt_artifacts(
+        frames_dir=frames_dir,
+        frames_count=len(frame_files),
+        prompt_dir=out_final_prompt.parent,
+        global_prompt_path=out_final_prompt,
+        exp_dir=exp_dir,
+        segment_dir=Path(args.segment_dir).resolve() if args.segment_dir.strip() else None,
+    )
+    state_prompt_manifest = dict(state_prompt_result.get("state_prompt_manifest") or {})
+    deploy_to_state_prompt_map = dict(state_prompt_result.get("deploy_to_state_prompt_map") or {})
+    state_prompt_summary = dict(state_prompt_result.get("summary") or {})
 
     write_json_atomic(out_profile, aggregated_profile, indent=2)
     write_json_atomic(out_final_prompt, final_prompt_payload, indent=2)
+    write_json_atomic(state_prompt_manifest_path, state_prompt_manifest, indent=2)
+    write_json_atomic(deploy_to_state_prompt_map_path, deploy_to_state_prompt_map, indent=2)
 
     profile_bytes = out_profile.read_bytes()
     final_prompt_bytes = out_final_prompt.read_bytes()
-    outputs_bytes_sum = int(len(profile_bytes) + len(final_prompt_bytes))
+    state_prompt_manifest_bytes = state_prompt_manifest_path.read_bytes()
+    deploy_to_state_prompt_map_bytes = deploy_to_state_prompt_map_path.read_bytes()
+    outputs_bytes_sum = int(
+        len(profile_bytes) + len(final_prompt_bytes) + len(state_prompt_manifest_bytes) + len(deploy_to_state_prompt_map_bytes)
+    )
     avg_prompt_sec = float(sum(prompt_times) / float(len(prompt_times))) if prompt_times else 0.0
 
     model_record = str(backend_meta.get("model_dir", "") or backend_meta.get("model_id", "") or model_ref)
@@ -262,25 +282,45 @@ def main():
         "final_prompt_path": str(out_final_prompt),
         "final_prompt_size": int(len(final_prompt_bytes)),
         "final_prompt_sha1": hashlib.sha1(final_prompt_bytes).hexdigest(),
+        "state_prompt_manifest_path": str(state_prompt_manifest_path),
+        "state_prompt_manifest_size": int(len(state_prompt_manifest_bytes)),
+        "state_prompt_manifest_sha1": hashlib.sha1(state_prompt_manifest_bytes).hexdigest(),
+        "deploy_to_state_prompt_map_path": str(deploy_to_state_prompt_map_path),
+        "deploy_to_state_prompt_map_size": int(len(deploy_to_state_prompt_map_bytes)),
+        "deploy_to_state_prompt_map_sha1": hashlib.sha1(deploy_to_state_prompt_map_bytes).hexdigest(),
         "outputs": {
             "bytes_sum": int(outputs_bytes_sum),
             "profile_bytes_sum": int(len(profile_bytes)),
             "final_prompt_bytes_sum": int(len(final_prompt_bytes)),
+            "state_prompt_manifest_bytes_sum": int(len(state_prompt_manifest_bytes)),
+            "deploy_to_state_prompt_map_bytes_sum": int(len(deploy_to_state_prompt_map_bytes)),
             "profile_file_count": 1,
             "final_prompt_file_count": 1,
+            "state_prompt_manifest_file_count": 1,
+            "deploy_to_state_prompt_map_file_count": 1,
         },
         "profile": aggregated_profile,
         "rules_hit": list(final_prompt_payload.get("rules_hit", []) or []),
         "final_prompt_preview": str(final_prompt_payload.get("prompt", "") or ""),
         "negative_prompt_preview": str(final_prompt_payload.get("negative_prompt", "") or ""),
+        "state_prompt_summary": state_prompt_summary,
         "model": model_record,
         "frames_dir": str(frames_dir),
     }
     write_json_atomic(out_final_prompt.parent / "step_meta.json", step_meta, indent=2)
 
     log_prog("prompt profile generated from {} representative frames".format(int(len(selected_paths))))
+    log_info("state prompt detected state_segments={}".format(bool(state_prompt_summary.get("has_state_segments", False))))
+    log_info("state prompt manifest generated: count={}".format(int(state_prompt_summary.get("state_segment_count", 0) or 0)))
+    log_info(
+        "deploy to state prompt map generated: count={}".format(
+            int(state_prompt_summary.get("deploy_segment_count", 0) or 0)
+        )
+    )
     log_info("wrote: {}".format(out_profile))
     log_info("wrote: {}".format(out_final_prompt))
+    log_info("wrote: {}".format(state_prompt_manifest_path))
+    log_info("wrote: {}".format(deploy_to_state_prompt_map_path))
     log_info("wrote: {}".format(out_final_prompt.parent / "step_meta.json"))
     if errors:
         log_warn("{} representative frames fell back to the safe default profile".format(int(len(errors))))
