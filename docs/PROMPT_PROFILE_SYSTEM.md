@@ -149,18 +149,23 @@
 
 ## 7. 与 `infer` 的接口关系
 
-`infer_i2v.py` 当前只需要：
+`infer_i2v.py` 当前仍只向 runtime 提供：
 
 - `prompt`
 - `negative_prompt`
 
-它会把同一组文本广播到所有 execution segments。
+但现在会先派生 `infer/prompt_manifest_resolved.json`：
 
-`state_prompt_manifest.json` 与 `deploy_to_state_prompt_map.json` 当前只是附加接口：
+- 全局 `prompt / negative_prompt` 继续作为 base scene prompt
+- 若存在 `state_prompt_manifest.json` 与 `deploy_to_state_prompt_map.json`，则把 local motion prompt 拼到对应 execution segment 的正向 prompt 上
+- runtime 继续只消费 prompt manifest 和 per-segment override，不直接解析 state 文件
+- `negative_prompt` 默认沿用全局配置，不对 state prompt 做重复拼接
 
-- 它们为后续的 `global prompt + state local prompt` 拼接预留结构
-- 但当前 infer backend 还不会主动消费它们
-- 因此不能破坏 `final_prompt.json` 的现有兼容主线
+因此这两类附加产物现在不再只是旁路接口：
+
+- 它们驱动 infer 前端生成 execution-segment 级别的 prompt override
+- 缺失或格式异常时，infer 会清晰告警并无损回退到 global-only
+- `final_prompt.json` 的兼容主线仍然保留，作为所有拼接的 base prompt 源
 
 执行边界来自：
 

@@ -108,7 +108,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 - `prompt/state_prompt_manifest.json`
 - `prompt/deploy_to_state_prompt_map.json`
 
-`infer` 当前默认只消费 `final_prompt.json` 中的全局 `prompt / negative_prompt`。`state_prompt_manifest.json` 负责描述 state-aligned local motion prompt，`deploy_to_state_prompt_map.json` 负责把 execution segments 对齐到这些 state prompt，但这两者当前都不改变 infer 的默认消费逻辑。
+`infer` 仍以 `final_prompt.json` 里的全局 `prompt / negative_prompt` 作为 base scene prompt，但当前会在前端把它与 `state_prompt_manifest.json` / `deploy_to_state_prompt_map.json` 派生为 `infer/prompt_manifest_resolved.json`。runtime 继续只理解“prompt manifest + per-segment override”，不直接理解 state 文件本身。
 
 专题细节见 [PROMPT_PROFILE_SYSTEM.md](./PROMPT_PROFILE_SYSTEM.md)。
 
@@ -122,7 +122,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 
 - `segment/`：`frames/`、`keyframes/`、`keyframes_meta.json`、`deploy_schedule.json`
 - `prompt/`：`profile.json`、`final_prompt.json`、`state_prompt_manifest.json`、`deploy_to_state_prompt_map.json`、`step_meta.json`
-- `infer/`：`execution_plan.json`、`runs/`、`runs_plan.json`、`step_meta.json`
+- `infer/`：`execution_plan.json`、`prompt_manifest_resolved.json`、`prompt_resolution.json`、`runs/`、`runs_plan.json`、`step_meta.json`
 - `merge/`：`frames/`、`timestamps.txt`、`calib.txt`、`step_meta.json`
 - `slam/`：`ori/`、`gen/` 轨迹与运行元数据
 - `eval/`：`traj_metrics.json`、`image_metrics.json`、`slam_metrics.json`、`summary.txt`、`image_per_frame.csv`、`slam_pairs.csv`、`plots/` 以及必要失败摘要

@@ -25,6 +25,7 @@ from _common import (
     write_json_atomic,
 )
 from _infer.api import create_backend
+from _infer.prompt_resolver import build_prompt_resolution_for_infer
 from _infer.request import InferRequest
 from _schedule import (
     build_execution_segments_from_deploy_schedule,
@@ -77,6 +78,43 @@ def _count_by_key(items, key):
         name = str(item.get(key, "") or "").strip() or "unknown"
         counts[name] = int(counts.get(name, 0)) + 1
     return counts
+
+
+def _merge_prompt_resolution_into_plan(plan_obj, segment_resolutions):
+    # type: (dict, list) -> dict
+    plan = dict(plan_obj or {})
+    plan_segments = list(plan.get("segments", []) or [])
+    resolution_map = {}
+    for raw_item in list(segment_resolutions or []):
+        if not isinstance(raw_item, dict):
+            continue
+        seg = raw_item.get("seg")
+        if seg is None:
+            continue
+        try:
+            resolution_map[int(seg)] = dict(raw_item)
+        except Exception:
+            continue
+
+    for idx, raw_segment in enumerate(plan_segments):
+        if not isinstance(raw_segment, dict):
+            continue
+        seg_item = raw_segment
+        seg_key = seg_item.get("seg", idx)
+        try:
+            resolved = resolution_map.get(int(seg_key), {})
+        except Exception:
+            resolved = {}
+        if not isinstance(resolved, dict) or not resolved:
+            continue
+        seg_item["prompt_source"] = str(resolved.get("prompt_source", seg_item.get("prompt_source", "")) or "")
+        seg_item["deploy_segment_id"] = int(resolved.get("deploy_segment_id", seg_item.get("segment_id", idx)) or 0)
+        seg_item["state_segment_id"] = resolved.get("state_segment_id")
+        seg_item["state_label"] = resolved.get("state_label")
+        seg_item["motion_trend"] = resolved.get("motion_trend")
+        seg_item["prompt_preview"] = resolved.get("prompt_preview")
+    plan["segments"] = plan_segments
+    return plan
 
 
 def main():
@@ -248,10 +286,52 @@ def main():
             )
         )
 
+    try:
+        prompt_resolution = dict(
+            build_prompt_resolution_for_infer(
+                prompt_dir=prompt_dir,
+                infer_dir=infer_dir,
+                execution_segments=execution_segments,
+            )
+            or {}
+        )
+    except Exception as exc:
+        raise SystemExit("[ERR] failed to resolve infer prompt manifest: {}".format(exc))
+
+    for msg in list(prompt_resolution.get("warnings", []) or []):
+        log_warn("state prompt fallback: {}".format(msg))
+
+    log_info(
+        "state prompt files: detected={} state_segments={} mapped_segments={}".format(
+            bool(prompt_resolution.get("state_prompt_files_detected", False)),
+            int(prompt_resolution.get("state_prompt_segment_count", 0) or 0),
+            int(prompt_resolution.get("mapped_execution_segment_count", 0) or 0),
+        )
+    )
+    log_info(
+        "prompt manifest mode={} state_enabled={} runtime_prompt_file={}".format(
+            str(prompt_resolution.get("prompt_manifest_mode", "global_only")),
+            bool(prompt_resolution.get("state_prompt_enabled", False)),
+            prompt_resolution.get("prompt_file_path", prompt_file_std),
+        )
+    )
+    for preview_item in list(prompt_resolution.get("segment_resolutions", []) or [])[:3]:
+        log_info(
+            "prompt seg {}: source={} state_seg={} motion={}".format(
+                int(preview_item.get("seg", 0) or 0),
+                str(preview_item.get("prompt_source", "") or "unknown"),
+                preview_item.get("state_segment_id"),
+                str(preview_item.get("motion_trend", "") or "n/a"),
+            )
+        )
+
+    prompt_file_for_runtime = Path(str(prompt_resolution.get("prompt_file_path", prompt_file_std))).resolve()
+    ensure_file(prompt_file_for_runtime, "infer prompt manifest")
+
     request = InferRequest(
         frames_dir=frames_dir,
         exp_dir=exp_dir,
-        prompt_file_path=prompt_file_std,
+        prompt_file_path=prompt_file_for_runtime,
         execution_plan_path=execution_plan_path,
         fps=int(fps),
         kf_gap=int(kf_gap),
@@ -298,10 +378,24 @@ def main():
     plan_obj = json.loads(runs_plan.read_text(encoding="utf-8"))
     if not isinstance(plan_obj, dict):
         raise SystemExit("[ERR] invalid runs_plan.json: {}".format(runs_plan))
+    plan_obj = _merge_prompt_resolution_into_plan(plan_obj, prompt_resolution.get("segment_resolutions", []))
+    plan_obj["prompt_manifest_mode"] = str(prompt_resolution.get("prompt_manifest_mode", "global_only"))
+    plan_obj["state_prompt_enabled"] = bool(prompt_resolution.get("state_prompt_enabled", False))
+    plan_obj["state_prompt_segment_count"] = int(prompt_resolution.get("state_prompt_segment_count", 0) or 0)
+    plan_obj["mapped_execution_segment_count"] = int(prompt_resolution.get("mapped_execution_segment_count", 0) or 0)
+    plan_obj["prompt_source_counts"] = dict(prompt_resolution.get("prompt_source_counts", {}) or {})
+    plan_obj["state_motion_trend_counts"] = dict(prompt_resolution.get("state_motion_trend_counts", {}) or {})
     write_json_atomic(runs_plan, plan_obj, indent=2)
     plan_bytes = runs_plan.read_bytes()
     plan_segment_items = list(plan_obj.get("segments", []) or [])
     plan_segments = int(len(plan_segment_items))
+    prompt_manifest_path = ensure_file(prompt_file_for_runtime, "infer prompt manifest")
+    prompt_manifest_bytes = prompt_manifest_path.read_bytes()
+    prompt_resolution_path = ensure_file(
+        Path(str(prompt_resolution.get("prompt_resolution_path", infer_dir / "prompt_resolution.json"))).resolve(),
+        "prompt_resolution",
+    )
+    prompt_resolution_bytes = prompt_resolution_path.read_bytes()
 
     step_meta = {
         "step": "infer_i2v",
@@ -322,9 +416,21 @@ def main():
         "runs_plan_sha1": hashlib.sha1(plan_bytes).hexdigest(),
         "execution_plan_path": str(execution_plan_path),
         "execution_plan_segments": int(len(execution_segments)),
+        "prompt_manifest_path": str(prompt_manifest_path),
+        "prompt_manifest_size": int(len(prompt_manifest_bytes)),
+        "prompt_manifest_sha1": hashlib.sha1(prompt_manifest_bytes).hexdigest(),
+        "prompt_resolution_path": str(prompt_resolution_path),
+        "prompt_resolution_size": int(len(prompt_resolution_bytes)),
+        "prompt_resolution_sha1": hashlib.sha1(prompt_resolution_bytes).hexdigest(),
+        "prompt_manifest_mode": str(prompt_resolution.get("prompt_manifest_mode", "global_only")),
+        "state_prompt_enabled": bool(prompt_resolution.get("state_prompt_enabled", False)),
+        "state_prompt_files_detected": bool(prompt_resolution.get("state_prompt_files_detected", False)),
+        "state_prompt_segment_count": int(prompt_resolution.get("state_prompt_segment_count", 0) or 0),
+        "mapped_execution_segment_count": int(prompt_resolution.get("mapped_execution_segment_count", 0) or 0),
         "prompt_file_version": int(plan_obj.get("prompt_file_version", 1)),
         "prompt_file_source": str(plan_obj.get("prompt_file_source", "")),
         "prompt_source_counts": _count_by_key(plan_segment_items, "prompt_source"),
+        "state_motion_trend_counts": dict(prompt_resolution.get("state_motion_trend_counts", {}) or {}),
     }
     step_meta.update(backend_meta)
     step_meta.update(backend_result)

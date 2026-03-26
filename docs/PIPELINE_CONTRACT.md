@@ -12,7 +12,7 @@
 - `segment/keyframes/keyframes_meta.json` 是 raw keyframe schedule 的事实源
 - `segment/deploy_schedule.json` 是当前 Wan 执行投影；它不能回写覆盖 raw schedule
 - `prompt` 当前默认强承诺输出 `profile.json` 与 `final_prompt.json`，并可附加输出 `state_prompt_manifest.json` 与 `deploy_to_state_prompt_map.json`
-- `infer` 当前默认从 `prompt/final_prompt.json` 读取 `prompt / negative_prompt`
+- `infer` 当前以 `prompt/final_prompt.json` 作为 base prompt 输入，并在可用时派生 `infer/prompt_manifest_resolved.json` 给 runtime 消费
 - `merge` 必须按 `infer/runs_plan.json` 的真实边界合并，不能再假设全局固定 `kf_gap`
 - `segment / prompt / infer / merge` 应持续写出稳定的 `step_meta.json`；`slam` 轨道元数据当前写在 `run_meta.json`
 - 下游阶段只能消费上游结果，不能回写上游目录
@@ -23,7 +23,7 @@
 |---|---|---|---|---|
 | `segment` | `scripts/segment_make.py` | 数据集、标定、`platform.yaml` phase | `segment/frames/`, `segment/keyframes/keyframes_meta.json`, `segment/deploy_schedule.json`, `timestamps.txt`, `calib.txt`, `preprocess_meta.json`, `step_meta.json` | `prompt`, `infer`, `slam`, `segment_analyze` |
 | `prompt` | `scripts/prompt_gen.py` | `segment/frames/`, `segment/state_segmentation/state_segments.json`, `segment/deploy_schedule.json`（存在时） | `prompt/profile.json`, `prompt/final_prompt.json`, `prompt/state_prompt_manifest.json`, `prompt/deploy_to_state_prompt_map.json`, `prompt/step_meta.json` | `infer`, `stats` |
-| `infer` | `scripts/infer_i2v.py` | `segment/frames/`, `prompt/final_prompt.json`, `segment/deploy_schedule.json` | `infer/execution_plan.json`, `infer/runs/`, `infer/runs_plan.json`, `infer/step_meta.json` | `merge`, `stats` |
+| `infer` | `scripts/infer_i2v.py` | `segment/frames/`, `prompt/final_prompt.json`, `prompt/state_prompt_manifest.json`, `prompt/deploy_to_state_prompt_map.json`, `segment/deploy_schedule.json` | `infer/execution_plan.json`, `infer/prompt_manifest_resolved.json`, `infer/prompt_resolution.json`, `infer/runs/`, `infer/runs_plan.json`, `infer/step_meta.json` | `merge`, `stats` |
 | `merge` | `scripts/merge_seq.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
 | `slam` | `scripts/slam_droid.py` | `segment/` 或 `merge/` 轨道数据 | `slam/<track>/traj_est.tum`, `traj_est.npz`, `run_meta.json` | `eval` |
 | `eval` | `scripts/eval_main.py` | `slam/ori/traj_est.tum`, `slam/gen/traj_est.tum`, `merge/frames/`, `segment/frames/` | `eval/traj_metrics.json`, `eval/image_metrics.json`, `eval/slam_metrics.json`, `eval/summary.txt`, `eval/image_per_frame.csv`, `eval/slam_pairs.csv`, `eval/plots/*.png` | 人工分析 |
@@ -72,13 +72,15 @@
 
 - 优先从 `segment/deploy_schedule.json` 构建 execution segments
 - 缺失 deploy schedule 时，明确记录回退到 `legacy_kf_gap`
+- 若 `prompt/state_prompt_manifest.json` 与 `prompt/deploy_to_state_prompt_map.json` 存在且可解析，必须把 global prompt 与 state local prompt 派生为 execution-segment 级别的 prompt override
 - `runs_plan.json` 保存真实的 `start_idx / end_idx / num_frames`
-- `step_meta.json` 记录 backend、phase、schedule_source 与 runs plan 摘要
+- `step_meta.json` 记录 backend、phase、schedule_source、prompt manifest mode 与 runs plan 摘要
 
 兼容要求：
 
-- 当前默认输入是 `prompt/final_prompt.json`
-- `state_prompt_manifest.json` 与 `deploy_to_state_prompt_map.json` 当前不改变 `infer` 默认消费逻辑；缺失时不应影响现有实验目录运行
+- 当前默认 base 输入仍是 `prompt/final_prompt.json`
+- `state_prompt_manifest.json` 与 `deploy_to_state_prompt_map.json` 缺失时必须无损回退到 global-only，不应影响现有实验目录运行
+- runtime 继续只消费 prompt manifest；state 文件的解析与拼接发生在 `infer_i2v.py` 前端
 - 为兼容旧实验，consumer 仍能从旧 prompt 文件读取 `base_prompt / base_neg_prompt`
 - 这条兼容路径不应再被写成当前默认机制
 
