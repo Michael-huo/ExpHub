@@ -78,8 +78,22 @@ def _cleanup_min(exp_dir: Path) -> None:
         {"step_meta.json", "calib.txt", "timestamps.txt", "analysis", "deploy_schedule.json", "keyframes"},
     )
     _prune_dir_keep_names(exp_dir, exp_dir / "segment" / "keyframes", {"keyframes_meta.json"})
-    _prune_dir_keep_names(exp_dir, exp_dir / "prompt", {"profile.json", "final_prompt.json", "step_meta.json"})
-    _prune_dir_keep_names(exp_dir, exp_dir / "infer", {"step_meta.json", "runs_plan.json"})
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "prompt",
+        {
+            "profile.json",
+            "final_prompt.json",
+            "state_prompt_manifest.json",
+            "deploy_to_state_prompt_map.json",
+            "step_meta.json",
+        },
+    )
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "infer",
+        {"step_meta.json", "runs_plan.json", "prompt_manifest_resolved.json", "prompt_resolution.json"},
+    )
     _prune_dir_keep_names(exp_dir, exp_dir / "merge", {"step_meta.json", "calib.txt", "timestamps.txt"})
 
 

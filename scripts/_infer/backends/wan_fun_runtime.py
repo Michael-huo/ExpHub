@@ -771,19 +771,16 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
     prompt_dir.mkdir(parents=True, exist_ok=True)
 
     prompt_file_dst = prompt_dir / "final_prompt.json"
+    prompt_file_path = str(prompt_file_dst.resolve())
     if str(args.prompt_file or "").strip():
         src = Path(args.prompt_file).resolve()
         if not src.is_file():
             raise FileNotFoundError("prompt_file not found: {}".format(src))
-        import shutil
-
-        dst = prompt_file_dst.resolve()
-        if _samefile_safe_path(src, dst):
-            rprint("[INFO] prompt_file already at standard path, skip copy: {}".format(dst))
+        prompt_file_path = str(src)
+        if _samefile_safe_path(src, prompt_file_dst.resolve()):
+            rprint("[INFO] prompt_file already at standard path, using: {}".format(src))
         else:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(src), str(dst))
-            rprint("[INFO] prompt_file copied to standard path: {} -> {}".format(src, dst))
+            rprint("[INFO] prompt_file using custom path: {}".format(src))
     elif not prompt_file_dst.is_file():
         _write_json_atomic(
             str(prompt_file_dst),
@@ -794,8 +791,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 "source": "runtime_default",
             },
         )
-
-    prompt_file_path = str(prompt_file_dst)
+        prompt_file_path = str(prompt_file_dst.resolve())
     prompt_file_loaded = load_prompt_manifest_for_infer(
         prompt_file_path,
         default_prompt=prompt,

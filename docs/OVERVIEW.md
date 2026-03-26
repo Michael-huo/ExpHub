@@ -13,16 +13,17 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 当前主链路的默认口径是：
 
 - `prompt` 默认使用 `smolvlm2`，稳定产出 `prompt/profile.json` 与 `prompt/final_prompt.json`，并可附加产出 `prompt/state_prompt_manifest.json` 与 `prompt/deploy_to_state_prompt_map.json`
-- `infer` 默认使用 `wan_fun_5b_inp`，优先消费 `segment/deploy_schedule.json`
+- `infer` 默认使用 `wan_fun_5b_inp`，优先消费 `segment/deploy_schedule.json`，并在存在 state prompt 附加产物时派生 `infer/prompt_manifest_resolved.json` 供 runtime 直接消费
 - `segment` 成功后会默认触发一次 `segment_analyze.py` 旁路分析；它只写 `segment/analysis/`，不改写主链路产物
 
 如果你只需要把握当前系统，先记住三个核心事实：
 
 - `segment/keyframes/keyframes_meta.json` 是 raw keyframe schedule 的事实源
 - `segment/deploy_schedule.json` 是当前 Wan 执行投影
-- `prompt/final_prompt.json` 是 `infer` 的默认 prompt 输入
+- `prompt/final_prompt.json` 是 infer prompt 的 base scene 输入
 - `prompt/state_prompt_manifest.json` 是按 state 区间生成的局部 motion prompt
 - `prompt/deploy_to_state_prompt_map.json` 只负责把 execution segment 映射到 state prompt，不直接生成新 prompt
+- `infer/prompt_manifest_resolved.json` 是 infer 运行时真正消费的派生 prompt manifest；它会把 global prompt 与 state local prompt 对齐到 execution segments
 
 ## 核心文档导航
 
