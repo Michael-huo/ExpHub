@@ -608,7 +608,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        help="segment keyframe policy: uniform | motion | semantic | risk | state",
+        help="segment keyframe policy: uniform | state",
     )
     ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
@@ -787,7 +787,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     stats_py = scripts_dir / "stats_collect.py"
     eval_main_py = scripts_dir / "eval_main.py"
     eval_traj_py = scripts_dir / "eval_traj.py"
-    segment_analyze_py = scripts_dir / "segment_analyze.py"
     prompt_gen_py = (scripts_dir / "prompt_gen.py").resolve()
     logs_dir = ctx.logs_dir
     child_pass_prefixes = ("[INFO]", "[WARN]", "[ERR]", "[PROG]", "[STEP]")
@@ -948,7 +947,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     else:
         viz_enable = args.mode in ("slam", "eval")
 
-    for p in [seg_py, infer_py, merge_py, droid_py, stats_py, eval_main_py, eval_traj_py, segment_analyze_py]:
+    for p in [seg_py, infer_py, merge_py, droid_py, stats_py, eval_main_py, eval_traj_py]:
         _ensure(p, "file")
 
     _ensure(prompt_gen_py, "file")
@@ -1344,7 +1343,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         segment_python = _phase_python("segment")
         cmd = [
             str(segment_python),
-            str(segment_analyze_py),
+            str(seg_py),
+            "--task",
+            "analyze",
             "--exp_dir",
             str(exp_dir),
         ]
