@@ -25,7 +25,7 @@ from _segment.state_segmentation import (
 
 
 STATE_POLICY_NAME = "state"
-DEFAULT_RISKY_GAP = 24
+DEFAULT_HIGH_GAP = 24
 DEFAULT_TRANSITION_GAP = 24
 DEFAULT_PRE_TRANSITION_FRAMES = 24
 DEFAULT_POST_TRANSITION_FRAMES = 12
@@ -64,77 +64,6 @@ _ZONE_COLORS = {
     ZONE_TRANSITION: "#bde0fe",
     ZONE_HIGH: "#ffcc80",
 }
-
-
-def _schedule_gap_for_label(state_label, safe_gap, risky_gap):
-    if str(state_label) == STATE_HIGH:
-        return int(risky_gap)
-    return int(safe_gap)
-
-
-def _segment_anchor_indices(start_frame, end_frame, gap):
-    start_frame = int(start_frame)
-    end_frame = int(end_frame)
-    gap = max(1, int(gap))
-    if end_frame < start_frame:
-        return []
-
-    anchors = [int(start_frame)]
-    cursor = int(start_frame) + int(gap)
-    while cursor < int(end_frame):
-        anchors.append(int(cursor))
-        cursor += int(gap)
-    if anchors[-1] != int(end_frame):
-        anchors.append(int(end_frame))
-    return anchors
-
-
-def _state_segment_schedule_rows(segments, safe_gap, risky_gap):
-    rows = []
-    for segment in list(segments or []):
-        gap = _schedule_gap_for_label(segment.get("state_label"), safe_gap, risky_gap)
-        anchors = _segment_anchor_indices(
-            segment.get("start_frame", 0),
-            segment.get("end_frame", -1),
-            gap,
-        )
-        rows.append(
-            {
-                "segment_id": int(segment.get("segment_id", 0) or 0),
-                "state_label": str(segment.get("state_label", STATE_LOW)),
-                "start_frame": int(segment.get("start_frame", 0) or 0),
-                "end_frame": int(segment.get("end_frame", 0) or 0),
-                "duration_frames": int(segment.get("duration_frames", 0) or 0),
-                "gap": int(gap),
-                "anchor_count": int(len(anchors)),
-                "anchors": list(anchors),
-            }
-        )
-    return rows
-
-
-def _merge_state_schedule_rows(schedule_rows):
-    final_indices = []
-    seen = set()
-    for row in list(schedule_rows or []):
-        for frame_idx in list(row.get("anchors") or []):
-            frame_idx = int(frame_idx)
-            if frame_idx in seen:
-                continue
-            seen.add(frame_idx)
-            final_indices.append(int(frame_idx))
-    final_indices.sort()
-    return final_indices
-
-
-def _segment_for_frame(frame_idx, segments):
-    frame_idx = int(frame_idx)
-    for segment in list(segments or []):
-        start_frame = int(segment.get("start_frame", 0) or 0)
-        end_frame = int(segment.get("end_frame", 0) or 0)
-        if start_frame <= frame_idx <= end_frame:
-            return segment
-    return None
 
 
 def _build_state_items(build_item, final_indices, density_rows, safe_base_indices):
@@ -695,8 +624,7 @@ def _save_density_schedule_overview(path, frame_rows, segments, density_rows, sc
 def build_policy_plan(context):
     safe_gap = max(1, int(context["kf_gap"]))
     transition_gap = int(DEFAULT_TRANSITION_GAP)
-    risky_gap = int(DEFAULT_RISKY_GAP)
-    high_gap = int(risky_gap)
+    high_gap = int(DEFAULT_HIGH_GAP)
     pre_transition_frames = int(DEFAULT_PRE_TRANSITION_FRAMES)
     post_transition_frames = int(DEFAULT_POST_TRANSITION_FRAMES)
     min_anchor_spacing = int(DEFAULT_MIN_ANCHOR_SPACING)
@@ -723,7 +651,6 @@ def build_policy_plan(context):
                 "safe_gap": int(safe_gap),
                 "transition_gap": int(transition_gap),
                 "high_gap": int(high_gap),
-                "risky_gap": int(risky_gap),
                 "pre_transition_frames": int(pre_transition_frames),
                 "post_transition_frames": int(post_transition_frames),
                 "min_anchor_spacing": int(min_anchor_spacing),
@@ -749,7 +676,7 @@ def build_policy_plan(context):
     used_timestamps = list(context["timestamps"][:frame_count_used])
 
     log_info(
-        "state policy observe start: frames={} used={} safe_gap={} risky_gap={}".format(
+        "state policy observe start: frames={} used={} safe_gap={} high_gap={}".format(
             int(context["frame_count_total"]),
             int(frame_count_used),
             int(safe_gap),
@@ -842,9 +769,7 @@ def build_policy_plan(context):
     low_state_count = len([row for row in state_frame_ranges if str(row.get("state_label")) == STATE_LOW])
     summary = {
         "policy_name": STATE_POLICY_NAME,
-        "uniform_count": int(len(safe_base_indices)),
         "num_uniform_base": int(len(safe_base_indices)),
-        "final_keyframe_count": int(len(final_indices)),
         "num_final_keyframes": int(len(final_indices)),
         "inserted_count": int(allocation_meta["inserted_count"]),
         "high_state_anchor_count": int(allocation_meta["high_anchor_count"]),
@@ -857,7 +782,6 @@ def build_policy_plan(context):
         "safe_gap": int(safe_gap),
         "transition_gap": int(transition_gap),
         "high_gap": int(high_gap),
-        "risky_gap": int(risky_gap),
         "pre_transition_frames": int(pre_transition_frames),
         "post_transition_frames": int(post_transition_frames),
         "min_anchor_spacing": int(min_anchor_spacing),
@@ -868,13 +792,6 @@ def build_policy_plan(context):
         "extra_kf_ratio": float(
             max(0.0, float(len(final_indices) - len(safe_base_indices))) / float(len(safe_base_indices))
         ) if safe_base_indices else 0.0,
-        "num_boundary_selected": 0,
-        "num_support_selected": int(len(final_indices)),
-        "num_boundary_relocated": 0,
-        "num_boundary_inserted": 0,
-        "num_support_inserted": int(allocation_meta["inserted_count"]),
-        "num_promoted_support_inserted": int(allocation_meta["inserted_count"]),
-        "num_burst_windows_triggered": int(high_state_count),
     }
 
     log_info(
@@ -900,7 +817,6 @@ def build_policy_plan(context):
             "safe_gap": int(safe_gap),
             "transition_gap": int(transition_gap),
             "high_gap": int(high_gap),
-            "risky_gap": int(risky_gap),
             "pre_transition_frames": int(pre_transition_frames),
             "post_transition_frames": int(post_transition_frames),
             "min_anchor_spacing": int(min_anchor_spacing),

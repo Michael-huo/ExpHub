@@ -1,54 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from .motion_energy import compute_motion_rows
-from .risk import (
-    build_formal_risk_policy_meta,
-    build_risk_summary,
-    build_proposed_schedule_from_risk_bundle,
-    compute_risk_bundle,
-    proposed_schedule_anchor_rows,
-    proposed_schedule_window_rows,
-    risk_bundle_to_dict,
-    risk_frame_rows_to_dicts,
-    risk_windows_to_dicts,
-)
-from .semantic_openclip import compute_semantic_rows
-from .signals import compute_frame_signal_rows
-from .visualize import (
-    save_allocation_overview,
-    save_comparison_overview,
-    save_kinematics_overview,
-    save_projection_overview,
-    save_proposed_schedule_overview,
-    save_risk_anchor_overview,
-    save_risk_curve,
-    save_roles_overview,
-    save_score_overview,
-    save_semantic_overview,
-)
+import importlib
 
-__all__ = [
-    "compute_motion_rows",
-    "compute_risk_bundle",
-    "compute_frame_signal_rows",
-    "compute_semantic_rows",
-    "build_formal_risk_policy_meta",
-    "build_risk_summary",
-    "build_proposed_schedule_from_risk_bundle",
-    "proposed_schedule_anchor_rows",
-    "proposed_schedule_window_rows",
-    "risk_bundle_to_dict",
-    "risk_frame_rows_to_dicts",
-    "risk_windows_to_dicts",
-    "save_allocation_overview",
-    "save_comparison_overview",
-    "save_kinematics_overview",
-    "save_projection_overview",
-    "save_proposed_schedule_overview",
-    "save_risk_anchor_overview",
-    "save_risk_curve",
-    "save_roles_overview",
-    "save_score_overview",
-    "save_semantic_overview",
-]
+
+_EXPORTS = {
+    "compute_motion_rows": ".motion_energy",
+    "compute_semantic_rows": ".semantic_openclip",
+    "compute_frame_signal_rows": ".signals",
+    "save_allocation_overview": ".visualize",
+    "save_comparison_overview": ".visualize",
+    "save_kinematics_overview": ".visualize",
+    "save_projection_overview": ".visualize",
+}
+
+__all__ = list(_EXPORTS.keys())
+
+
+def __getattr__(name):
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError("module '{}' has no attribute '{}'".format(__name__, name))
+    module = importlib.import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value

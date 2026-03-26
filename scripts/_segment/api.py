@@ -30,7 +30,6 @@ def _build_keyframe_item_factory(frame_paths, timestamps):
         source_type,
         source_role,
         rerank_score=None,
-        semantic_relation="",
         is_inserted=False,
         is_relocated=False,
         replaced_uniform_index=None,
@@ -48,7 +47,6 @@ def _build_keyframe_item_factory(frame_paths, timestamps):
             "source_role": str(source_role),
             "candidate_role": str(candidate_role or source_role),
             "rerank_score": float(rerank_score) if rerank_score is not None else None,
-            "semantic_relation": str(semantic_relation or ""),
             "is_inserted": bool(is_inserted),
             "is_relocated": bool(is_relocated),
             "replaced_uniform_index": int(replaced_uniform_index) if replaced_uniform_index is not None else None,
@@ -218,7 +216,7 @@ def materialize_keyframe_plan(root_dir, frames_dir, timestamps_path, kf_gap, key
         "keyframes": list(plan["keyframe_items"]),
         "summary": dict(plan["summary"]),
         "policy_meta": dict(plan.get("policy_meta") or {}),
-        "note": "Keyframes remain backward compatible with the legacy uniform layout fields. Additional policies may extend policy_meta while keeping the core keyframe_indices contract stable.",
+        "note": "Keyframe materialization keeps keyframe_indices stable while allowing policy-specific metadata in policy_meta.",
     }
 
     write_json_atomic(keyframes_dir / "keyframes_meta.json", keyframes_meta, indent=2)

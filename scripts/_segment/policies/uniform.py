@@ -43,19 +43,12 @@ def build_policy_plan(context):
         "summary": {
             "policy_name": "uniform",
             "num_uniform_base": int(len(indices)),
-            "num_boundary_selected": 0,
-            "num_support_selected": 0,
-            "num_boundary_relocated": 0,
-            "num_boundary_inserted": 0,
-            "num_support_inserted": 0,
-            "num_promoted_support_inserted": 0,
-            "num_burst_windows_triggered": 0,
             "num_final_keyframes": int(len(indices)),
             "extra_kf_ratio": 0.0,
         },
         "policy_meta": {
             "rules": {
-                "description": "legacy uniform anchors sampled every kf_gap frames",
+                "description": "uniform anchors sampled every kf_gap frames",
             },
         },
     }

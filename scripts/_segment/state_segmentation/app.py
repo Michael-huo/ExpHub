@@ -3,13 +3,6 @@
 """Run a minimal baseline state segmentation on top of signal extraction outputs."""
 
 import argparse
-import sys
-from pathlib import Path
-
-if __package__ is None or __package__ == "":
-    _REPO_ROOT = Path(__file__).resolve().parents[1]
-    if str(_REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(_REPO_ROOT))
 
 from scripts._common import log_info, log_prog
 from scripts._segment.state_segmentation import (

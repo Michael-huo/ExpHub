@@ -164,21 +164,15 @@ def _existing_semantic_cache_dirs(segment_dir, keyframes_meta):
     seen = set()
 
     policy_name = normalize_policy_name(keyframes_meta.get("policy_name", "") or keyframes_meta.get("policy", "") or "")
-    preferred_names = []
     if policy_name:
-        preferred_names.append(policy_name)
-    preferred_names.extend(["semantic", "risk", "segment_analyze"])
-
-    for name in preferred_names:
-        cache_dir = cache_root / name
+        cache_dir = cache_root / policy_name
         cache_path = cache_dir / "semantic_embeddings.npz"
         if cache_path.is_file():
             resolved_dir = cache_dir.resolve()
             cache_key = str(resolved_dir)
-            if cache_key in seen:
-                continue
-            seen.add(cache_key)
-            candidates.append(resolved_dir)
+            if cache_key not in seen:
+                seen.add(cache_key)
+                candidates.append(resolved_dir)
 
     if cache_root.is_dir():
         for cache_path in sorted(cache_root.rglob("semantic_embeddings.npz")):
