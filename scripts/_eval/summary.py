@@ -96,9 +96,13 @@ def build_summary_lines(traj_metrics, image_metrics, slam_metrics):
     return lines
 
 
+def build_summary_text(traj_metrics, image_metrics, slam_metrics):
+    return "\n".join(build_summary_lines(traj_metrics, image_metrics, slam_metrics))
+
+
 def write_eval_summary(out_dir, traj_metrics, image_metrics, slam_metrics):
     out_path = Path(out_dir).resolve() / "summary.txt"
-    write_text(out_path, "\n".join(build_summary_lines(traj_metrics, image_metrics, slam_metrics)) + "\n")
+    write_text(out_path, build_summary_text(traj_metrics, image_metrics, slam_metrics) + "\n")
     return out_path
 
 

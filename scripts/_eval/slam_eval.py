@@ -1044,12 +1044,9 @@ def run_slam_eval(exp_dir, out_dir):
     metrics_obj["translation_direction_error_deg"] = metric_stats(translation_values)
     _update_status(metrics_obj)
     keyframe_context = load_final_keyframe_context([exp_root], metrics_obj=metrics_obj, warning_prefix="slam plot keyframes")
-    write_slam_outputs(out_path, metrics_obj, records, keyframe_context=keyframe_context)
 
     return {
         "metrics": metrics_obj,
         "records": records,
-        "metrics_path": out_path / "slam_metrics.json",
-        "pairs_path": out_path / "slam_pairs.csv",
-        "plot_path": out_path / "plots" / "slam_metrics_curve.png",
+        "keyframe_context": keyframe_context,
     }

@@ -69,17 +69,18 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 | 阶段 | 主要脚本 | 系统职责 |
 |---|---|---|
 | `segment` | `scripts/segment_make.py` | 读取原始数据，输出标准帧序列、raw keyframes 和 deploy schedule |
-| `prompt` | `scripts/prompt_gen.py` | 从 `segment/frames/` 抽代表帧，生成 `PromptProfile` 与 `final_prompt` |
+| `prompt` | `scripts/prompt_gen.py` | 从 `segment/frames/` 抽代表帧，生成 `final_prompt`、state prompt 事实源与聚合 `report.json` |
 | `infer` | `scripts/infer_i2v.py` | 读取 prompt 与执行计划，路由到具体 Wan backend |
 | `merge` | `scripts/merge_seq.py` | 按 `runs_plan.json` 的真实边界合并生成结果 |
 | `slam` | `scripts/slam_droid.py` | 在 `ori` 或 `gen` 轨道上估计位姿 |
 | `eval` | `scripts/eval_main.py` | 调度 `_eval/` 后端，对 `ori/gen` 轨迹做 APE/RPE 评估，并补充 merge-vs-ori 的图像指标与两视图几何型 SLAM-friendly 指标评估 |
-| `stats` | `scripts/stats_collect.py` | 汇总 `step_meta.json` 与日志，生成最终统计 |
+| `stats` | `scripts/stats_collect.py` | 汇总 `segment/merge step_meta.json`、`prompt/infer report.json` 与日志，生成最终统计 |
 
 `segment` 之后默认还会触发一次 `segment_analyze.py`：
 
 - 它是研究旁路，不属于主链路强依赖
 - 默认在 `--mode segment` 和 `--mode all` 后执行
+- 默认只刷新 `segment/signal_extraction/` 与 `segment/state_segmentation/` 下的聚合研究产物，不再独立扩张 `segment/analysis/`
 - 失败时只报 `WARN`，不阻断 `prompt / infer / merge / slam`
 
 ## 4. 时间计划与 prompt 语义边界
@@ -90,7 +91,8 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 
 - raw schedule：`segment/keyframes/keyframes_meta.json`
 - deploy schedule：`segment/deploy_schedule.json`
-- execution plan：`infer/execution_plan.json`
+- runtime execution plan：`infer` 前端临时文件，不作为默认落盘产物保留
+- execution facts：`infer/runs_plan.json`
 
 当前默认行为是：
 
@@ -103,10 +105,10 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 
 当前 prompt 主链路已经收敛为：
 
-- `prompt/profile.json`
 - `prompt/final_prompt.json`
 - `prompt/state_prompt_manifest.json`
 - `prompt/deploy_to_state_prompt_map.json`
+- `prompt/report.json`
 
 `infer` 仍以 `final_prompt.json` 里的全局 `prompt / negative_prompt` 作为 base scene prompt，但当前会在前端把它与 `state_prompt_manifest.json` / `deploy_to_state_prompt_map.json` 派生为 `infer/prompt_manifest_resolved.json`。runtime 继续只理解“prompt manifest + per-segment override”，不直接理解 state 文件本身。
 
@@ -121,11 +123,11 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 目录按阶段隔离，常见布局如下：
 
 - `segment/`：`frames/`、`keyframes/`、`keyframes_meta.json`、`deploy_schedule.json`
-- `prompt/`：`profile.json`、`final_prompt.json`、`state_prompt_manifest.json`、`deploy_to_state_prompt_map.json`、`step_meta.json`
-- `infer/`：`execution_plan.json`、`prompt_manifest_resolved.json`、`prompt_resolution.json`、`runs/`、`runs_plan.json`、`step_meta.json`
+- `prompt/`：`final_prompt.json`、`state_prompt_manifest.json`、`deploy_to_state_prompt_map.json`、`report.json`
+- `infer/`：`prompt_manifest_resolved.json`、`runs/`、`runs_plan.json`、`report.json`
 - `merge/`：`frames/`、`timestamps.txt`、`calib.txt`、`step_meta.json`
 - `slam/`：`ori/`、`gen/` 轨迹与运行元数据
-- `eval/`：`traj_metrics.json`、`image_metrics.json`、`slam_metrics.json`、`summary.txt`、`image_per_frame.csv`、`slam_pairs.csv`、`plots/` 以及必要失败摘要
+- `eval/`：`report.json`、`details.csv`、`plots/traj_xy.png`、`plots/metrics_overview.png` 以及必要失败摘要
 - `stats/`：`report.json`、`compression.json`
 - `logs/`：各阶段完整日志
 

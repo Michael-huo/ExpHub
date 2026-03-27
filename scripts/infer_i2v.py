@@ -6,10 +6,10 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +26,7 @@ from _common import (
 )
 from _infer.api import create_backend
 from _infer.prompt_resolver import build_prompt_resolution_for_infer
+from _infer.reporting import build_infer_report, cleanup_legacy_infer_outputs, write_infer_report
 from _infer.request import InferRequest
 from _schedule import (
     build_execution_segments_from_deploy_schedule,
@@ -78,6 +79,27 @@ def _count_by_key(items, key):
         name = str(item.get(key, "") or "").strip() or "unknown"
         counts[name] = int(counts.get(name, 0)) + 1
     return counts
+
+
+def _write_runtime_execution_plan(infer_dir, schedule_source, schedule_backend, execution_segments):
+    # type: (Path, str, str, list) -> Path
+    infer_dir = Path(infer_dir).resolve()
+    infer_dir.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix="execution_plan_", suffix=".json", dir=str(infer_dir))
+    os.close(fd)
+    runtime_plan_path = Path(tmp_path).resolve()
+    write_json_atomic(
+        runtime_plan_path,
+        {
+            "version": 1,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "schedule_source": str(schedule_source),
+            "execution_backend": str(schedule_backend),
+            "segments": list(execution_segments or []),
+        },
+        indent=2,
+    )
+    return runtime_plan_path
 
 
 def _merge_prompt_resolution_into_plan(plan_obj, segment_resolutions):
@@ -197,7 +219,6 @@ def main():
     prompt_dir = exp_dir / "prompt"
     prompt_file_std = prompt_dir / "final_prompt.json"
     infer_dir = exp_dir / "infer"
-    execution_plan_path = infer_dir / "execution_plan.json"
     runs_root = infer_dir / "runs"
     runs_root.mkdir(parents=True, exist_ok=True)
 
@@ -251,17 +272,6 @@ def main():
     used_frames = int(used_end_idx - used_start_idx + 1)
     tail_drop = int(max(0, frames_avail - (used_end_idx + 1)))
     mean_deploy_gap = float(_mean([int(seg["deploy_gap"]) for seg in execution_segments]))
-    write_json_atomic(
-        execution_plan_path,
-        {
-            "version": 1,
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-            "schedule_source": str(schedule_source),
-            "execution_backend": str(schedule_backend),
-            "segments": list(execution_segments),
-        },
-        indent=2,
-    )
     if tail_drop > 0:
         log_warn(
             "segment has {} frames (plan {}/{}); uses {} frames [{}->{}], tail_drop={}".format(
@@ -327,12 +337,18 @@ def main():
 
     prompt_file_for_runtime = Path(str(prompt_resolution.get("prompt_file_path", prompt_file_std))).resolve()
     ensure_file(prompt_file_for_runtime, "infer prompt manifest")
+    runtime_execution_plan_path = _write_runtime_execution_plan(
+        infer_dir=infer_dir,
+        schedule_source=str(schedule_source),
+        schedule_backend=str(schedule_backend),
+        execution_segments=execution_segments,
+    )
 
     request = InferRequest(
         frames_dir=frames_dir,
         exp_dir=exp_dir,
         prompt_file_path=prompt_file_for_runtime,
-        execution_plan_path=execution_plan_path,
+        execution_plan_path=runtime_execution_plan_path,
         fps=int(fps),
         kf_gap=int(kf_gap),
         base_idx=int(used_start_idx),
@@ -371,7 +387,14 @@ def main():
     )
 
     t0 = time.time()
-    backend_result = dict(backend.run(request) or {})
+    try:
+        backend_result = dict(backend.run(request) or {})
+    finally:
+        try:
+            if runtime_execution_plan_path.is_file():
+                runtime_execution_plan_path.unlink()
+        except Exception:
+            pass
     dt = time.time() - t0
 
     runs_plan = ensure_file(infer_dir / "runs_plan.json", "runs_plan")
@@ -386,19 +409,10 @@ def main():
     plan_obj["prompt_source_counts"] = dict(prompt_resolution.get("prompt_source_counts", {}) or {})
     plan_obj["state_motion_trend_counts"] = dict(prompt_resolution.get("state_motion_trend_counts", {}) or {})
     write_json_atomic(runs_plan, plan_obj, indent=2)
-    plan_bytes = runs_plan.read_bytes()
     plan_segment_items = list(plan_obj.get("segments", []) or [])
     plan_segments = int(len(plan_segment_items))
-    prompt_manifest_path = ensure_file(prompt_file_for_runtime, "infer prompt manifest")
-    prompt_manifest_bytes = prompt_manifest_path.read_bytes()
-    prompt_resolution_path = ensure_file(
-        Path(str(prompt_resolution.get("prompt_resolution_path", infer_dir / "prompt_resolution.json"))).resolve(),
-        "prompt_resolution",
-    )
-    prompt_resolution_bytes = prompt_resolution_path.read_bytes()
-
-    step_meta = {
-        "step": "infer_i2v",
+    ensure_file(prompt_file_for_runtime, "infer prompt manifest")
+    infer_report = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "gpus": int(args.gpus),
         "fps": int(fps),
@@ -411,17 +425,6 @@ def main():
         "schedule_source": str(schedule_source),
         "execution_backend": str(schedule_backend),
         "mean_deploy_gap": float(mean_deploy_gap),
-        "runs_plan_path": str(runs_plan),
-        "runs_plan_size": int(len(plan_bytes)),
-        "runs_plan_sha1": hashlib.sha1(plan_bytes).hexdigest(),
-        "execution_plan_path": str(execution_plan_path),
-        "execution_plan_segments": int(len(execution_segments)),
-        "prompt_manifest_path": str(prompt_manifest_path),
-        "prompt_manifest_size": int(len(prompt_manifest_bytes)),
-        "prompt_manifest_sha1": hashlib.sha1(prompt_manifest_bytes).hexdigest(),
-        "prompt_resolution_path": str(prompt_resolution_path),
-        "prompt_resolution_size": int(len(prompt_resolution_bytes)),
-        "prompt_resolution_sha1": hashlib.sha1(prompt_resolution_bytes).hexdigest(),
         "prompt_manifest_mode": str(prompt_resolution.get("prompt_manifest_mode", "global_only")),
         "state_prompt_enabled": bool(prompt_resolution.get("state_prompt_enabled", False)),
         "state_prompt_files_detected": bool(prompt_resolution.get("state_prompt_files_detected", False)),
@@ -432,12 +435,19 @@ def main():
         "prompt_source_counts": _count_by_key(plan_segment_items, "prompt_source"),
         "state_motion_trend_counts": dict(prompt_resolution.get("state_motion_trend_counts", {}) or {}),
     }
-    step_meta.update(backend_meta)
-    step_meta.update(backend_result)
-    write_json_atomic(infer_dir / "step_meta.json", step_meta, indent=2)
+    infer_report = build_infer_report(
+        infer_dir=infer_dir,
+        runs_plan_obj=plan_obj,
+        prompt_resolution=prompt_resolution,
+        backend_meta=backend_meta,
+        backend_result=backend_result,
+        runtime_summary=infer_report,
+    )
+    report_path = write_infer_report(infer_dir, infer_report)
+    cleanup_legacy_infer_outputs(infer_dir)
 
     log_info("infer finished: {:.2f}s".format(dt))
-    log_info("step meta written: {}".format(infer_dir / "step_meta.json"))
+    log_info("report written: {}".format(report_path))
 
 
 if __name__ == "__main__":

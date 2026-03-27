@@ -521,11 +521,9 @@ def run_image_eval(exp_dir, out_dir):
     metrics_obj["lpips"] = metric_stats([item.get("lpips") for item in records if item.get("lpips") is not None])
     _update_status(metrics_obj)
     keyframe_context = load_final_keyframe_context([exp_root], metrics_obj=metrics_obj, warning_prefix="image plot keyframes")
-    write_image_outputs(out_path, metrics_obj, records, keyframe_context=keyframe_context)
 
     return {
         "metrics": metrics_obj,
         "records": records,
-        "metrics_path": out_path / "image_metrics.json",
-        "plot_path": out_path / "plots" / "image_metrics_curve.png",
+        "keyframe_context": keyframe_context,
     }

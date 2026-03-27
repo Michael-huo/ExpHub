@@ -168,6 +168,10 @@ class ExperimentContext:
         return self.prompt_dir / "profile.json"
 
     @property
+    def prompt_report_path(self):
+        return self.prompt_dir / "report.json"
+
+    @property
     def prompt_final_path(self):
         return self.prompt_dir / "final_prompt.json"
 
@@ -178,6 +182,10 @@ class ExperimentContext:
     @property
     def infer_runs_plan_path(self):
         return self.infer_dir / "runs_plan.json"
+
+    @property
+    def infer_report_path(self):
+        return self.infer_dir / "report.json"
 
     @property
     def merge_frames_dir(self):

@@ -120,7 +120,6 @@ def build_prompt_resolution_for_infer(prompt_dir, infer_dir, execution_segments)
     state_manifest_path = (prompt_dir / "state_prompt_manifest.json").resolve()
     deploy_map_path = (prompt_dir / "deploy_to_state_prompt_map.json").resolve()
     derived_manifest_path = (infer_dir / "prompt_manifest_resolved.json").resolve()
-    resolution_debug_path = (infer_dir / "prompt_resolution.json").resolve()
 
     final_payload, final_err = _load_json_object(final_prompt_path)
     if final_err:
@@ -290,11 +289,8 @@ def build_prompt_resolution_for_infer(prompt_dir, infer_dir, execution_segments)
             for item in resolution_items
         ],
     }
-    write_json_atomic(resolution_debug_path, debug_payload, indent=2)
-
     return {
         "prompt_file_path": derived_manifest_path,
-        "prompt_resolution_path": resolution_debug_path,
         "base_prompt_path": final_prompt_path,
         "state_prompt_manifest_path": state_manifest_path,
         "deploy_to_state_prompt_map_path": deploy_map_path,
@@ -305,6 +301,7 @@ def build_prompt_resolution_for_infer(prompt_dir, infer_dir, execution_segments)
         "mapped_execution_segment_count": int(mapped_execution_segment_count),
         "prompt_source_counts": dict(prompt_source_counts),
         "state_motion_trend_counts": dict(state_motion_trend_counts),
+        "prompt_resolution": dict(debug_payload),
         "segment_resolutions": list(debug_payload.get("segments", [])),
         "warnings": list(warnings),
     }

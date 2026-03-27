@@ -12,15 +12,9 @@ from .extract import DEFAULT_PLOT_SMOOTH_WINDOW, REPRESENTATIVE_SIGNALS, SIGNAL_
 
 
 _FAMILY_TITLES = {
-    "image": "Signal Extraction: Image Family",
-    "motion": "Signal Extraction: Motion Family",
-    "semantic": "Signal Extraction: Semantic Family",
-}
-
-_FAMILY_OUTPUT_NAMES = {
-    "image": "signal_image_family.png",
-    "motion": "signal_motion_family.png",
-    "semantic": "signal_semantic_family.png",
+    "image": "Image Family",
+    "motion": "Motion Family",
+    "semantic": "Semantic Family",
 }
 
 _SIGNAL_LABELS = {
@@ -64,9 +58,8 @@ def _plot_values(values, smooth_window):
     return norm_values, actual_window
 
 
-def _save_signal_group_plot(rows, signal_names, output_path, title, smooth_window):
+def _plot_group(ax, rows, signal_names, title, smooth_window):
     x = _frame_indices(rows)
-    fig, ax = plt.subplots(figsize=(12, 4.8), dpi=150)
     actual_window = 1
 
     for signal_name in signal_names:
@@ -75,7 +68,7 @@ def _save_signal_group_plot(rows, signal_names, output_path, title, smooth_windo
         ax.plot(
             x,
             plot_values,
-            linewidth=1.9,
+            linewidth=1.8,
             label=_SIGNAL_LABELS.get(signal_name, signal_name),
             color=_SIGNAL_COLORS.get(signal_name),
         )
@@ -84,37 +77,46 @@ def _save_signal_group_plot(rows, signal_names, output_path, title, smooth_windo
     ax.set_xlabel("frame_idx")
     ax.set_ylabel("normalized magnitude")
     ax.grid(True, alpha=0.25)
-    ax.legend(loc="upper right", fontsize=9, ncol=2)
-    fig.tight_layout()
-    fig.savefig(str(output_path))
-    plt.close(fig)
-    return actual_window
+    ax.legend(loc="upper right", fontsize=8, ncol=2)
+    return int(actual_window)
 
 
-def save_signal_plots(output_dir, rows, smooth_window=DEFAULT_PLOT_SMOOTH_WINDOW):
+def save_signal_overview(output_dir, rows, smooth_window=DEFAULT_PLOT_SMOOTH_WINDOW):
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    overview_path = output_dir / "signal_overview.png"
 
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9), dpi=150, sharex=True)
     actual_window = 1
-    for family_name in ("image", "motion", "semantic"):
-        actual_window = _save_signal_group_plot(
-            rows=rows,
-            signal_names=SIGNAL_FAMILIES[family_name],
-            output_path=output_dir / _FAMILY_OUTPUT_NAMES[family_name],
-            title=_FAMILY_TITLES[family_name],
-            smooth_window=smooth_window,
+    panel_order = [
+        ("image", SIGNAL_FAMILIES["image"], _FAMILY_TITLES["image"]),
+        ("motion", SIGNAL_FAMILIES["motion"], _FAMILY_TITLES["motion"]),
+        ("semantic", SIGNAL_FAMILIES["semantic"], _FAMILY_TITLES["semantic"]),
+        ("representatives", REPRESENTATIVE_SIGNALS, "Representative Signals"),
+    ]
+
+    for idx, panel in enumerate(panel_order):
+        family_name, signal_names, title = panel
+        row_idx = int(idx / 2)
+        col_idx = int(idx % 2)
+        actual_window = max(
+            int(actual_window),
+            int(_plot_group(axes[row_idx][col_idx], rows, signal_names, title, smooth_window)),
         )
 
-    representatives_window = _save_signal_group_plot(
-        rows=rows,
-        signal_names=REPRESENTATIVE_SIGNALS,
-        output_path=output_dir / "signal_representatives.png",
-        title="Signal Extraction: Representative Signals",
-        smooth_window=smooth_window,
-    )
-    actual_window = max(int(actual_window), int(representatives_window))
-
+    fig.suptitle("Signal Extraction Overview", fontsize=14)
+    fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
+    fig.savefig(str(overview_path))
+    plt.close(fig)
     return {
+        "overview_path": overview_path,
+        "panels": [
+            {
+                "panel_name": str(panel[0]),
+                "signals": list(panel[1]),
+            }
+            for panel in panel_order
+        ],
         "smoothing_used_for_plot": {
             "enabled": True,
             "method": "moving_average",
@@ -126,3 +128,7 @@ def save_signal_plots(output_dir, rows, smooth_window=DEFAULT_PLOT_SMOOTH_WINDOW
             "scope": "each plotted signal independently",
         },
     }
+
+
+def save_signal_plots(output_dir, rows, smooth_window=DEFAULT_PLOT_SMOOTH_WINDOW):
+    return save_signal_overview(output_dir=output_dir, rows=rows, smooth_window=smooth_window)

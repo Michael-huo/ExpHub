@@ -6,7 +6,7 @@
 
 当前主链路的 prompt 系统已经收敛为：
 
-`PromptProfile v1 -> prompt/final_prompt.json`
+`PromptProfile v1 -> prompt/final_prompt.json + prompt/report.json`
 
 设计目标只有四个：
 
@@ -26,16 +26,16 @@
 3. 对每张图做闭集 `PromptProfile` 分类
 4. 多帧投票聚合为单个 clip-level profile
 5. 用固定模板生成全局 `prompt / negative_prompt`
-6. 保持写出 `profile.json` 与 `final_prompt.json`
+6. 写出 `final_prompt.json`
 7. 若 `segment/state_segmentation/state_segments.json` 可用，则按 state 区间附加生成 `state_prompt_manifest.json`
 8. 若 `segment/deploy_schedule.json` 可用，则附加生成 `deploy_to_state_prompt_map.json`
-9. `step_meta.json` 汇总全局 prompt 与 state prompt 产物摘要
+9. `report.json` 汇总 profile 摘要、backend/sampling、state prompt 统计与 deploy 映射统计
 
 它不再把旧的 `manifest_v2 / structured / base_only / delta_prompt` 当作当前默认输出。
 
 ## 3. `PromptProfile v1` 字段
 
-`prompt/profile.json` 当前使用的闭集字段是：
+`final_prompt.json.profile` 与 `prompt/report.json.profile` 当前使用的闭集字段是：
 
 - `version`
 - `scene_type`
@@ -170,7 +170,7 @@
 执行边界来自：
 
 - `segment/deploy_schedule.json`
-- 或 `infer/execution_plan.json`
+- 或 `infer` 前端生成的临时 runtime execution plan
 
 而不是来自 prompt 文件本身。
 

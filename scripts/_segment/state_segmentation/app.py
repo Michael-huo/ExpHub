@@ -67,19 +67,17 @@ def run_state_segmentation_cli(argv=None):
         enter_th=args.enter_th,
         exit_th=args.exit_th,
     )
-    log_info("state segmentation csv: {}".format(io_paths["csv_path"]))
+    log_info("state segmentation timeline: {}".format(io_paths["timeline_path"]))
     log_info("state segmentation json: {}".format(io_paths["json_path"]))
-    log_info("state segmentation meta: {}".format(io_paths["meta_path"]))
+    log_info("state segmentation report: {}".format(io_paths["report_path"]))
     log_info("state segmentation overview: {}".format(plot_paths["overview_path"]))
-    log_info("state segmentation overlay: {}".format(plot_paths["overlay_path"]))
     log_prog("state segmentation done: {}".format(result["output_dir"]))
     return {
         "output_dir": str(result["output_dir"]),
-        "csv_path": str(io_paths["csv_path"]),
+        "timeline_path": str(io_paths["timeline_path"]),
         "json_path": str(io_paths["json_path"]),
-        "meta_path": str(io_paths["meta_path"]),
+        "report_path": str(io_paths["report_path"]),
         "overview_path": str(plot_paths["overview_path"]),
-        "overlay_path": str(plot_paths["overlay_path"]),
     }
 
 

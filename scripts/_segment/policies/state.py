@@ -708,14 +708,6 @@ def build_policy_plan(context):
         glitch_merge_len=DEFAULT_GLITCH_MERGE_LEN,
         weights=dict(DEFAULT_WEIGHTS),
     )
-    state_io = write_state_segmentation_outputs(state_result)
-    state_plots = save_state_segmentation_plots(
-        output_dir=state_result["output_dir"],
-        frame_rows=state_result["frame_rows"],
-        segments=state_result["segments"],
-        enter_th=DEFAULT_ENTER_TH,
-        exit_th=DEFAULT_EXIT_TH,
-    )
 
     density_rows = _build_density_schedule_rows(
         frame_rows=state_result["frame_rows"],
@@ -743,19 +735,6 @@ def build_policy_plan(context):
     transition_band_count = _transition_band_count(schedule_runs)
     min_final_gap = int(_min_gap(final_indices))
     min_final_segment_frames = int(short_segment_meta.get("min_final_segment_frames", 0) or 0)
-
-    density_schedule_csv_path = _write_density_schedule_csv(
-        state_output_dir / "density_schedule.csv",
-        density_rows,
-    )
-    density_schedule_overview_path = _save_density_schedule_overview(
-        state_output_dir / "density_schedule_overview.png",
-        frame_rows=state_result["frame_rows"],
-        segments=state_result["segments"],
-        density_rows=density_rows,
-        schedule_runs=schedule_runs,
-        final_indices=final_indices,
-    )
 
     keyframe_items, allocation_meta = _build_state_items(
         context["build_item"],
@@ -794,6 +773,98 @@ def build_policy_plan(context):
         ) if safe_base_indices else 0.0,
     }
 
+    timeline_schedule_runs = []
+    for run in list(schedule_runs or []):
+        anchor_count = 0
+        start_frame = int(run.get("start_frame", 0) or 0)
+        end_frame = int(run.get("end_frame", 0) or 0)
+        for frame_idx in list(final_indices or []):
+            if start_frame <= int(frame_idx) <= end_frame:
+                anchor_count += 1
+        timeline_schedule_runs.append(
+            {
+                "run_id": int(run.get("run_id", 0) or 0),
+                "schedule_zone": str(run.get("schedule_zone", ZONE_LOW)),
+                "target_gap": int(run.get("target_gap", 0) or 0),
+                "start_frame": int(start_frame),
+                "end_frame": int(end_frame),
+                "duration_frames": int(run.get("duration_frames", 0) or 0),
+                "anchor_count": int(anchor_count),
+            }
+        )
+
+    policy_meta = {
+        "policy_name": STATE_POLICY_NAME,
+        "safe_gap": int(safe_gap),
+        "transition_gap": int(transition_gap),
+        "high_gap": int(high_gap),
+        "pre_transition_frames": int(pre_transition_frames),
+        "post_transition_frames": int(post_transition_frames),
+        "min_anchor_spacing": int(min_anchor_spacing),
+        "min_segment_frames": int(min_segment_frames),
+        "state_segment_count": int(len(state_frame_ranges)),
+        "high_state_count": int(high_state_count),
+        "low_state_count": int(low_state_count),
+        "transition_band_count": int(transition_band_count),
+        "final_keyframe_count": int(len(final_indices)),
+        "min_final_gap": int(min_final_gap),
+        "min_final_segment_frames": int(min_final_segment_frames),
+        "short_segment_merge_count": int(short_segment_meta.get("merge_count", 0) or 0),
+        "state_frame_ranges": state_frame_ranges,
+        "density_schedule_summary": density_schedule_summary,
+        "state_segmentation_params": {
+            "input_signals": ["motion_velocity", "feature_motion"],
+            "normalization_method": DEFAULT_NORMALIZATION_METHOD,
+            "smoothing_window": int(DEFAULT_SMOOTHING_WINDOW),
+            "weights": dict(DEFAULT_WEIGHTS),
+            "enter_th": float(DEFAULT_ENTER_TH),
+            "exit_th": float(DEFAULT_EXIT_TH),
+            "min_high_len": int(DEFAULT_MIN_HIGH_LEN),
+            "min_low_len": int(DEFAULT_MIN_LOW_LEN),
+        },
+        "scheduling_rules": {
+            "scan_strategy": "global_left_to_right_density_scan",
+            "spacing_rule": str(spacing_meta.get("tie_break_rule", "")),
+            "short_segment_merge_rule": str(short_segment_meta.get("tie_break_rule", "")),
+        },
+        "spacing_merge_meta": spacing_meta,
+        "short_segment_merge_meta": short_segment_meta,
+        "signal_artifacts": {
+            "csv_path": str(signal_io["csv_path"]),
+            "report_path": str(signal_io["report_path"]),
+            "overview_path": str(signal_io["plot_paths"]["overview"]),
+        },
+        "state_segmentation_artifacts": {},
+        "signal_extraction_report": dict(signal_io["report"]),
+        "state_segmentation_meta": dict(state_result["meta"]),
+    }
+
+    state_io = write_state_segmentation_outputs(
+        state_result,
+        schedule_runs=timeline_schedule_runs,
+        final_indices=final_indices,
+        policy_meta=policy_meta,
+        signal_report=signal_io["report"],
+    )
+    state_plots = save_state_segmentation_plots(
+        output_dir=state_result["output_dir"],
+        frame_rows=state_result["frame_rows"],
+        segments=state_result["segments"],
+        enter_th=DEFAULT_ENTER_TH,
+        exit_th=DEFAULT_EXIT_TH,
+        density_rows=density_rows,
+        schedule_runs=timeline_schedule_runs,
+        final_indices=final_indices,
+        uniform_indices=safe_base_indices,
+        signal_rows=signal_payload["rows"],
+    )
+    policy_meta["state_segmentation_artifacts"] = {
+        "timeline_path": str(state_io["timeline_path"]),
+        "json_path": str(state_io["json_path"]),
+        "report_path": str(state_io["report_path"]),
+        "overview_path": str(state_plots["overview_path"]),
+    }
+
     log_info(
         "state policy selected: safe_base={} segments={} transition_bands={} final={} min_gap={} short_merge={}".format(
             int(len(safe_base_indices)),
@@ -812,61 +883,5 @@ def build_policy_plan(context):
         "keyframe_indices": list(final_indices),
         "keyframe_items": keyframe_items,
         "summary": summary,
-        "policy_meta": {
-            "policy_name": STATE_POLICY_NAME,
-            "safe_gap": int(safe_gap),
-            "transition_gap": int(transition_gap),
-            "high_gap": int(high_gap),
-            "pre_transition_frames": int(pre_transition_frames),
-            "post_transition_frames": int(post_transition_frames),
-            "min_anchor_spacing": int(min_anchor_spacing),
-            "min_segment_frames": int(min_segment_frames),
-            "state_segment_count": int(len(state_frame_ranges)),
-            "high_state_count": int(high_state_count),
-            "low_state_count": int(low_state_count),
-            "transition_band_count": int(transition_band_count),
-            "final_keyframe_count": int(len(final_indices)),
-            "min_final_gap": int(min_final_gap),
-            "min_final_segment_frames": int(min_final_segment_frames),
-            "short_segment_merge_count": int(short_segment_meta.get("merge_count", 0) or 0),
-            "state_frame_ranges": state_frame_ranges,
-            "density_schedule_summary": density_schedule_summary,
-            "state_segmentation_params": {
-                "input_signals": ["motion_velocity", "feature_motion"],
-                "normalization_method": DEFAULT_NORMALIZATION_METHOD,
-                "smoothing_window": int(DEFAULT_SMOOTHING_WINDOW),
-                "weights": dict(DEFAULT_WEIGHTS),
-                "enter_th": float(DEFAULT_ENTER_TH),
-                "exit_th": float(DEFAULT_EXIT_TH),
-                "min_high_len": int(DEFAULT_MIN_HIGH_LEN),
-                "min_low_len": int(DEFAULT_MIN_LOW_LEN),
-            },
-            "scheduling_rules": {
-                "scan_strategy": "global_left_to_right_density_scan",
-                "spacing_rule": str(spacing_meta.get("tie_break_rule", "")),
-                "short_segment_merge_rule": str(short_segment_meta.get("tie_break_rule", "")),
-            },
-            "density_schedule_artifacts": {
-                "csv_path": str(density_schedule_csv_path),
-                "overview_path": str(density_schedule_overview_path),
-            },
-            "spacing_merge_meta": spacing_meta,
-            "short_segment_merge_meta": short_segment_meta,
-            "signal_artifacts": {
-                "csv_path": str(signal_io["csv_path"]),
-                "meta_path": str(signal_io["meta_path"]),
-                "plot_paths": dict((key, str(value)) for key, value in signal_io["plot_paths"].items()),
-            },
-            "state_segmentation_artifacts": {
-                "csv_path": str(state_io["csv_path"]),
-                "json_path": str(state_io["json_path"]),
-                "meta_path": str(state_io["meta_path"]),
-                "overview_path": str(state_plots["overview_path"]),
-                "overlay_path": str(state_plots["overlay_path"]),
-                "density_schedule_csv_path": str(density_schedule_csv_path),
-                "density_schedule_overview_path": str(density_schedule_overview_path),
-            },
-            "signal_extraction_meta": dict(signal_io["meta"]),
-            "state_segmentation_meta": dict(state_result["meta"]),
-        },
+        "policy_meta": policy_meta,
     }

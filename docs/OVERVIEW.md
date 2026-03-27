@@ -12,9 +12,12 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 
 当前主链路的默认口径是：
 
-- `prompt` 默认使用 `smolvlm2`，稳定产出 `prompt/profile.json` 与 `prompt/final_prompt.json`，并可附加产出 `prompt/state_prompt_manifest.json` 与 `prompt/deploy_to_state_prompt_map.json`
-- `infer` 默认使用 `wan_fun_5b_inp`，优先消费 `segment/deploy_schedule.json`，并在存在 state prompt 附加产物时派生 `infer/prompt_manifest_resolved.json` 供 runtime 直接消费
-- `segment` 成功后会默认触发一次 `segment_analyze.py` 旁路分析；它只写 `segment/analysis/`，不改写主链路产物
+- `segment` 当前正式 policy 只保留 `uniform` 与 `state`
+- `prompt` 默认使用 `smolvlm2`，默认收敛产物到 `prompt/final_prompt.json`、`prompt/state_prompt_manifest.json`、`prompt/deploy_to_state_prompt_map.json` 与 `prompt/report.json`
+- `infer` 默认使用 `wan_fun_5b_inp`，优先消费 `segment/deploy_schedule.json`，并默认收敛产物到 `infer/runs_plan.json`、`infer/prompt_manifest_resolved.json` 与 `infer/report.json`
+- `segment` 会默认收敛研究产物到 `segment/signal_extraction/` 与 `segment/state_segmentation/`：前者默认保留 `signal_report.json`、`signal_timeseries.csv`、`signal_overview.png`，后者默认保留 `state_report.json`、`state_timeline.csv`、`state_overview.png`，并继续保留 `state_segments.json` 作为 state 事实源
+- `eval` 会默认收敛评测产物到 `eval/report.json`、`eval/details.csv`、`eval/plots/traj_xy.png` 与 `eval/plots/metrics_overview.png`，不再默认散落多份独立 metrics json/csv/curve png
+- `segment_analyze.py` 仍是旁路研究步骤，但默认不再额外散落独立 `segment/analysis/` 目录；它只会刷新上述聚合研究产物并清理旧遗留文件
 
 如果你只需要把握当前系统，先记住三个核心事实：
 
@@ -23,7 +26,9 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 - `prompt/final_prompt.json` 是 infer prompt 的 base scene 输入
 - `prompt/state_prompt_manifest.json` 是按 state 区间生成的局部 motion prompt
 - `prompt/deploy_to_state_prompt_map.json` 只负责把 execution segment 映射到 state prompt，不直接生成新 prompt
+- `prompt/report.json` 是 prompt 默认元信息与摘要的聚合出口
 - `infer/prompt_manifest_resolved.json` 是 infer 运行时真正消费的派生 prompt manifest；它会把 global prompt 与 state local prompt 对齐到 execution segments
+- `infer/report.json` 是 infer 默认元信息与执行摘要的聚合出口
 
 ## 核心文档导航
 

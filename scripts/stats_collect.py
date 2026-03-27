@@ -41,6 +41,24 @@ def _meta_created_at(meta):
     return None
 
 
+def _read_stage_meta(preferred_paths):
+    # type: (list) -> tuple
+    for path_obj in list(preferred_paths or []):
+        meta = read_step_meta(Path(path_obj))
+        if meta:
+            return meta, Path(path_obj)
+    return {}, None
+
+
+def _first_existing_path(paths):
+    # type: (list) -> Path
+    for path_obj in list(paths or []):
+        path = Path(path_obj)
+        if path.is_file():
+            return path
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--exp_dir", required=True)
@@ -53,13 +71,15 @@ def main():
     warnings = []
 
     segment_meta_path = exp_dir / "segment" / "step_meta.json"
-    prompt_meta_path = exp_dir / "prompt" / "step_meta.json"
-    infer_meta_path = exp_dir / "infer" / "step_meta.json"
+    prompt_report_path = exp_dir / "prompt" / "report.json"
+    prompt_meta_legacy_path = exp_dir / "prompt" / "step_meta.json"
+    infer_report_path = exp_dir / "infer" / "report.json"
+    infer_meta_legacy_path = exp_dir / "infer" / "step_meta.json"
     merge_meta_path = exp_dir / "merge" / "step_meta.json"
 
     segment_meta = read_step_meta(segment_meta_path)
-    prompt_meta = read_step_meta(prompt_meta_path)
-    infer_meta = read_step_meta(infer_meta_path)
+    prompt_meta, prompt_meta_used_path = _read_stage_meta([prompt_report_path, prompt_meta_legacy_path])
+    infer_meta, infer_meta_used_path = _read_stage_meta([infer_report_path, infer_meta_legacy_path])
     merge_meta = read_step_meta(merge_meta_path)
 
     if not segment_meta_path.is_file():
@@ -71,12 +91,12 @@ def main():
         warnings.append(msg)
         log_warn(msg)
 
-    if not prompt_meta_path.is_file():
-        msg = "missing prompt/step_meta.json; prompt bytes set to null"
+    if not _first_existing_path([prompt_report_path, prompt_meta_legacy_path]):
+        msg = "missing prompt/report.json; prompt bytes set to null"
         warnings.append(msg)
         log_warn(msg)
     elif not prompt_meta:
-        msg = "invalid or empty prompt/step_meta.json; prompt bytes set to null"
+        msg = "invalid or empty prompt/report.json; prompt bytes set to null"
         warnings.append(msg)
         log_warn(msg)
 
@@ -151,7 +171,7 @@ def main():
         ],
     )
     if prompt_bytes is None:
-        msg = "missing prompt bytes_sum in prompt/step_meta.json; prompt_bytes set to null"
+        msg = "missing prompt bytes_sum in prompt/report.json; prompt_bytes set to null"
         warnings.append(msg)
         log_warn(msg)
 
@@ -165,13 +185,15 @@ def main():
 
     segment_frames = exp_dir / "segment" / "frames"
     keyframes_dir = exp_dir / "segment" / "keyframes"
-    prompt_profile = exp_dir / "prompt" / "profile.json"
     prompt_final = exp_dir / "prompt" / "final_prompt.json"
+    prompt_state_manifest = exp_dir / "prompt" / "state_prompt_manifest.json"
+    prompt_deploy_map = exp_dir / "prompt" / "deploy_to_state_prompt_map.json"
+    prompt_report = exp_dir / "prompt" / "report.json"
 
     inputs = {
         "segment_step_meta": str(segment_meta_path.resolve()) if segment_meta_path.is_file() else None,
-        "prompt_step_meta": str(prompt_meta_path.resolve()) if prompt_meta_path.is_file() else None,
-        "infer_step_meta": str(infer_meta_path.resolve()) if infer_meta_path.is_file() else None,
+        "prompt_report": str(prompt_meta_used_path.resolve()) if prompt_meta_used_path is not None else None,
+        "infer_report": str(infer_meta_used_path.resolve()) if infer_meta_used_path is not None else None,
         "merge_step_meta": str(merge_meta_path.resolve()) if merge_meta_path.is_file() else None,
     }
 
@@ -215,11 +237,15 @@ def main():
             "keyframe_bytes_sum": keyframes_bytes,
             "prompt_files": [
                 str(path.resolve())
-                for path in [prompt_profile, prompt_final]
+                for path in [prompt_report, prompt_final, prompt_state_manifest, prompt_deploy_map]
                 if prompt_bytes is not None and path.is_file()
             ],
             "prompt_file_count": len(
-                [path for path in [prompt_profile, prompt_final] if prompt_bytes is not None and path.is_file()]
+                [
+                    path
+                    for path in [prompt_report, prompt_final, prompt_state_manifest, prompt_deploy_map]
+                    if prompt_bytes is not None and path.is_file()
+                ]
             ),
             "prompt_bytes_sum": prompt_bytes,
             "total_bytes_sum": (keyframes_bytes + prompt_bytes) if (keyframes_bytes is not None and prompt_bytes is not None) else None,

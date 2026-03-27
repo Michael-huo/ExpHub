@@ -113,7 +113,12 @@ def write_compression_stats(ctx: ExperimentContext) -> None:
     frames_dir = ctx.segment_frames_dir
     keyframes_dir = ctx.segment_keyframes_dir
 
-    prompt_files = [ctx.prompt_profile_path, ctx.prompt_final_path]
+    prompt_files = [
+        ctx.prompt_report_path,
+        ctx.prompt_final_path,
+        ctx.prompt_dir / "state_prompt_manifest.json",
+        ctx.prompt_dir / "deploy_to_state_prompt_map.json",
+    ]
 
     ori_n, ori_b = _sum_files(frames_dir, "*.png", follow_symlinks=True)
     kf_n, kf_b = _sum_files(keyframes_dir, "*.png", follow_symlinks=True)
@@ -393,9 +398,16 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
     phase_names = ["segment", "prompt", "infer", "merge", "slam", "eval", "stats"]
     total_time = sum(float(x) for x in step_times.values())
 
-    traj_metrics = _read_json_dict(exp_dir / "eval" / "traj_metrics.json")
-    image_metrics = _read_json_dict(exp_dir / "eval" / "image_metrics.json")
-    slam_metrics = _read_json_dict(exp_dir / "eval" / "slam_metrics.json")
+    eval_report = _read_json_dict(exp_dir / "eval" / "report.json")
+    traj_metrics = dict(eval_report.get("traj_eval") or {}) if isinstance(eval_report.get("traj_eval"), dict) else {}
+    image_metrics = dict(eval_report.get("image_eval") or {}) if isinstance(eval_report.get("image_eval"), dict) else {}
+    slam_metrics = dict(eval_report.get("slam_friendly_eval") or {}) if isinstance(eval_report.get("slam_friendly_eval"), dict) else {}
+    if not traj_metrics:
+        traj_metrics = _read_json_dict(exp_dir / "eval" / "traj_metrics.json")
+    if not image_metrics:
+        image_metrics = _read_json_dict(exp_dir / "eval" / "image_metrics.json")
+    if not slam_metrics:
+        slam_metrics = _read_json_dict(exp_dir / "eval" / "slam_metrics.json")
     stats_report = _read_json_dict(exp_dir / "stats" / "report.json")
     stats_legacy = _read_json_dict(exp_dir / "stats" / "compression.json")
     infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
@@ -1118,8 +1130,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         ]
 
         step_runner.run_env_python(cmd, phase_name=prompt_phase, log_name="prompt.log", cwd=exphub_root)
-        _ensure(ctx.prompt_profile_path, "file")
+        _ensure(ctx.prompt_report_path, "file")
         _ensure(ctx.prompt_final_path, "file")
+        _ensure(ctx.prompt_dir / "state_prompt_manifest.json", "file")
+        _ensure(ctx.prompt_dir / "deploy_to_state_prompt_map.json", "file")
 
     def step_stats() -> None:
         cmd = [
@@ -1183,6 +1197,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         step_runner.run_env_python(cmd_infer, phase_name=infer_phase, log_name="infer.log", cwd=exphub_root)
         _ensure(ctx.infer_runs_dir, "dir")
         _ensure(ctx.infer_runs_plan_path, "file")
+        _ensure(ctx.infer_dir / "prompt_manifest_resolved.json", "file")
+        _ensure(ctx.infer_report_path, "file")
 
     def step_merge() -> None:
         _ensure(segment_dir, "dir")
@@ -1316,21 +1332,21 @@ def main(argv: Optional[List[str]] = None) -> None:
             check=False,
         )
 
-        metrics_path = ctx.eval_artifact_path("traj_metrics.json")
-        image_metrics_path = ctx.eval_artifact_path("image_metrics.json")
-        summary_path = ctx.eval_artifact_path("summary.txt")
-        if metrics_path.is_file():
-            _debug_info("STEP eval: metrics={}".format(metrics_path))
+        report_path = ctx.eval_artifact_path("report.json")
+        details_path = ctx.eval_artifact_path("details.csv")
+        metrics_plot_path = eval_dir / "plots" / "metrics_overview.png"
+        if report_path.is_file():
+            _debug_info("STEP eval: report={}".format(report_path))
         else:
-            _warn("eval metrics missing: {}".format(metrics_path))
-        if image_metrics_path.is_file():
-            _debug_info("STEP eval: image_metrics={}".format(image_metrics_path))
+            _warn("eval report missing: {}".format(report_path))
+        if details_path.is_file():
+            _debug_info("STEP eval: details={}".format(details_path))
         else:
-            _warn("eval image metrics missing: {}".format(image_metrics_path))
-        if summary_path.is_file():
-            _debug_info("STEP eval: summary={}".format(summary_path))
+            _warn("eval details missing: {}".format(details_path))
+        if metrics_plot_path.is_file():
+            _debug_info("STEP eval: metrics_overview={}".format(metrics_plot_path))
         else:
-            _warn("eval summary missing: {}".format(summary_path))
+            _warn("eval metrics overview missing: {}".format(metrics_plot_path))
 
     def maybe_run_post_analyze() -> None:
         if args.mode not in ("segment", "all"):
@@ -1339,7 +1355,8 @@ def main(argv: Optional[List[str]] = None) -> None:
             _debug_info("post analyze skipped: --skip_analyze")
             return
 
-        analysis_dir = exp_dir / "segment" / "analysis"
+        signal_dir = exp_dir / "segment" / "signal_extraction"
+        state_dir = exp_dir / "segment" / "state_segmentation"
         segment_python = _phase_python("segment")
         cmd = [
             str(segment_python),
@@ -1362,7 +1379,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             log_path = str(e.log_path) if e.log_path else str(logs_dir / "segment_analyze.log")
             _warn("post analyze failed: rc={} log={}".format(rc, log_path))
             return
-        _debug_info("post analyze done: {}".format(analysis_dir))
+        _debug_info("post analyze done: signal_dir={} state_dir={}".format(signal_dir, state_dir))
 
 
     # Execute mode
@@ -1371,9 +1388,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             _run_step("segment", step_segment, str(segment_dir))
             maybe_run_post_analyze()
         elif args.mode == "prompt":
-            _run_step("prompt", step_prompt, str(ctx.prompt_final_path))
+            _run_step("prompt", step_prompt, str(ctx.prompt_report_path))
         elif args.mode == "infer":
-            _run_step("infer", step_infer, str(ctx.infer_runs_plan_path))
+            _run_step("infer", step_infer, str(ctx.infer_report_path))
         elif args.mode == "merge":
             _run_step("merge", step_merge, str(merge_dir))
         elif args.mode == "slam":
@@ -1385,8 +1402,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         else:  # all
             _run_step("segment", step_segment, str(segment_dir))
             maybe_run_post_analyze()
-            _run_step("prompt", step_prompt, str(ctx.prompt_final_path))
-            _run_step("infer", step_infer, str(ctx.infer_runs_plan_path))
+            _run_step("prompt", step_prompt, str(ctx.prompt_report_path))
+            _run_step("infer", step_infer, str(ctx.infer_report_path))
             _run_step("merge", step_merge, str(merge_dir))
             _run_step("slam", step_slam, str(slam_root))
             _run_step("eval", step_eval, str(eval_dir))
