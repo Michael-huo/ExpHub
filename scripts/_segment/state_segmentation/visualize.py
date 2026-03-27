@@ -27,12 +27,24 @@ ZONE_COLORS = {
 
 SIGNAL_COLORS = {
     "motion_velocity_state_signal": "#1f77b4",
-    "feature_motion_state_signal": "#2ca02c",
-    "state_score": "#d62728",
-    "appearance_delta": "#1f3c88",
-    "motion_velocity": "#2a9d8f",
-    "semantic_velocity": "#bcbd22",
+    "semantic_velocity_state_signal": "#bcbd22",
+    "state_score": "#ef6c00",
+    "blur_score_raw": "#6c757d",
+    "appearance_delta": "#2ca02c",
+    "feature_motion": "#8c564b",
 }
+
+CANDIDATE_COLORS = {
+    "official_current": "#ef6c00",
+    "candidate_blur": "#d62728",
+    "candidate_appearance": "#6a4c93",
+}
+
+CANDIDATE_ORDER = [
+    "official_current",
+    "candidate_blur",
+    "candidate_appearance",
+]
 
 
 def _frame_indices(frame_rows):
@@ -93,6 +105,14 @@ def _signal_row_y_map(signal_rows, key):
     return out
 
 
+def _candidate_track_label(candidate_name, candidate_row):
+    display_name = str(candidate_row.get("display_name", candidate_name) or candidate_name)
+    high_ratio = float(candidate_row.get("summary", {}).get("high_state_frame_ratio", 0.0) or 0.0)
+    if bool(candidate_row.get("is_formal_mainline", False)):
+        return "{} (formal mainline, high={:.2f})".format(display_name, high_ratio)
+    return "{} (validation sidecar, high={:.2f})".format(display_name, high_ratio)
+
+
 def save_state_overview(
     output_path,
     frame_rows,
@@ -115,7 +135,7 @@ def save_state_overview(
 
     x = _frame_indices(frame_rows)
     motion_values = _values(frame_rows, "motion_velocity_state_signal")
-    feature_values = _values(frame_rows, "feature_motion_state_signal")
+    semantic_values = _values(frame_rows, "semantic_velocity_state_signal")
     state_scores = _values(frame_rows, "state_score")
     state_level = _state_level(frame_rows)
 
@@ -139,16 +159,16 @@ def save_state_overview(
     overlay_ax = axes[1]
     timeline_ax = axes[2]
 
-    signal_ax.plot(x, motion_values, color=SIGNAL_COLORS["motion_velocity_state_signal"], linewidth=1.8, label="motion_velocity (normalized + smoothed)")
-    signal_ax.plot(x, feature_values, color=SIGNAL_COLORS["feature_motion_state_signal"], linewidth=1.8, label="feature_motion (normalized + smoothed)")
-    signal_ax.plot(x, state_scores, color=SIGNAL_COLORS["state_score"], linewidth=2.1, label="state_score")
+    signal_ax.plot(x, motion_values, color=SIGNAL_COLORS["motion_velocity_state_signal"], linewidth=1.8, label="motion_velocity (processed)")
+    signal_ax.plot(x, semantic_values, color=SIGNAL_COLORS["semantic_velocity_state_signal"], linewidth=1.8, label="semantic_velocity (processed)")
+    signal_ax.plot(x, state_scores, color=SIGNAL_COLORS["state_score"], linewidth=2.1, label="state_score (compatibility-calibrated)")
     signal_ax.set_ylabel("score")
-    signal_ax.set_title("State Overview")
+    signal_ax.set_title("State Overview: official processed state inputs + state_score")
     signal_ax.grid(True, alpha=0.25)
     signal_ax.legend(loc="upper right", fontsize=9)
 
     _shade_segments(overlay_ax, segments, 0.30)
-    overlay_ax.plot(x, state_scores, color=SIGNAL_COLORS["state_score"], linewidth=2.1, label="state_score")
+    overlay_ax.plot(x, state_scores, color=SIGNAL_COLORS["state_score"], linewidth=2.1, label="state_score (compatibility-calibrated)")
     overlay_ax.axhline(float(enter_th), color="#ef6c00", linestyle="--", linewidth=1.2, label="enter_th")
     overlay_ax.axhline(float(exit_th), color="#546e7a", linestyle="--", linewidth=1.2, label="exit_th")
     ymin = float(np.min(np.asarray(state_scores, dtype=np.float32))) if state_scores else -1.0
@@ -189,21 +209,21 @@ def save_state_overview(
     if signal_rows:
         detail_ax = axes[3]
         signal_x = [int(row.get("frame_idx", 0) or 0) for row in signal_rows]
-        appearance = _normalize(_values(signal_rows, "appearance_delta"))
-        motion_velocity = _normalize(_values(signal_rows, "motion_velocity"))
-        semantic_velocity = _normalize(_values(signal_rows, "semantic_velocity"))
-        detail_ax.plot(signal_x, appearance, color=SIGNAL_COLORS["appearance_delta"], linewidth=1.6, label="appearance_delta")
-        detail_ax.plot(signal_x, motion_velocity, color=SIGNAL_COLORS["motion_velocity"], linewidth=1.6, label="motion_velocity")
-        detail_ax.plot(signal_x, semantic_velocity, color=SIGNAL_COLORS["semantic_velocity"], linewidth=1.6, label="semantic_velocity")
+        blur_raw = _normalize(_values(signal_rows, "blur_score"))
+        appearance_delta = _normalize(_values(signal_rows, "appearance_delta"))
+        feature_motion = _normalize(_values(signal_rows, "feature_motion"))
+        detail_ax.plot(signal_x, blur_raw, color=SIGNAL_COLORS["blur_score_raw"], linewidth=1.6, label="blur_score_raw (sharpness proxy)")
+        detail_ax.plot(signal_x, appearance_delta, color=SIGNAL_COLORS["appearance_delta"], linewidth=1.6, label="appearance_delta")
+        detail_ax.plot(signal_x, feature_motion, color=SIGNAL_COLORS["feature_motion"], linewidth=1.6, label="feature_motion")
 
-        motion_y_map = _signal_row_y_map(
-            [{"frame_idx": signal_x[idx], "marker_value": motion_velocity[idx]} for idx in range(len(signal_x))],
+        blur_y_map = _signal_row_y_map(
+            [{"frame_idx": signal_x[idx], "marker_value": blur_raw[idx]} for idx in range(len(signal_x))],
             "marker_value",
         )
         if uniform_indices:
             detail_ax.scatter(
                 uniform_indices,
-                [float(motion_y_map.get(int(frame_idx), 0.0)) for frame_idx in uniform_indices],
+                [float(blur_y_map.get(int(frame_idx), 0.0)) for frame_idx in uniform_indices],
                 color="#7f7f7f",
                 marker="|",
                 s=120,
@@ -213,7 +233,7 @@ def save_state_overview(
         if final_indices:
             detail_ax.scatter(
                 final_indices,
-                [float(motion_y_map.get(int(frame_idx), 0.0)) for frame_idx in final_indices],
+                [float(blur_y_map.get(int(frame_idx), 0.0)) for frame_idx in final_indices],
                 color="#111111",
                 marker="o",
                 s=22,
@@ -221,6 +241,7 @@ def save_state_overview(
                 zorder=5,
             )
         detail_ax.set_ylabel("norm signal")
+        detail_ax.set_title("Analysis Sidecar Signals (raw/observed; not used by official state score)")
         detail_ax.grid(True, alpha=0.22)
         detail_ax.legend(loc="upper right", fontsize=8, ncol=3)
         detail_ax.set_xlabel("frame_idx")
@@ -230,6 +251,91 @@ def save_state_overview(
     fig.tight_layout()
     fig.savefig(str(output_path))
     plt.close(fig)
+
+
+def save_state_candidate_comparison(
+    output_path,
+    candidate_sidecar,
+    enter_th,
+    exit_th,
+):
+    candidate_sidecar = dict(candidate_sidecar or {})
+    candidates = dict(candidate_sidecar.get("candidates", {}) or {})
+    frame_indices = [int(value) for value in list(candidate_sidecar.get("frame_indices", []) or [])]
+    if not frame_indices or not candidates:
+        return None
+
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(13.5, 7.8),
+        dpi=150,
+        sharex=True,
+        gridspec_kw={"height_ratios": [3.0, 1.6]},
+    )
+    score_ax = axes[0]
+    band_ax = axes[1]
+
+    for candidate_name in CANDIDATE_ORDER:
+        candidate_row = dict(candidates.get(candidate_name, {}) or {})
+        if not candidate_row:
+            continue
+        score_ax.plot(
+            frame_indices,
+            [float(value) for value in list(candidate_row.get("score", []) or [])],
+            color=CANDIDATE_COLORS.get(candidate_name, "#444444"),
+            linewidth=2.0 if candidate_name == "official_current" else 1.8,
+            label=_candidate_track_label(candidate_name, candidate_row),
+        )
+
+    score_ax.axhline(float(enter_th), color="#ef6c00", linestyle="--", linewidth=1.1, label="enter_th")
+    score_ax.axhline(float(exit_th), color="#546e7a", linestyle="--", linewidth=1.1, label="exit_th")
+    score_ax.set_ylabel("state_score")
+    score_ax.set_title("State Score Candidate Comparison (official_current remains the formal mainline)")
+    score_ax.grid(True, alpha=0.24)
+    score_ax.legend(loc="upper right", fontsize=8)
+
+    y_positions = {
+        "official_current": 2.0,
+        "candidate_blur": 1.0,
+        "candidate_appearance": 0.0,
+    }
+    min_frame = int(frame_indices[0])
+    max_frame = int(frame_indices[-1])
+    for candidate_name in CANDIDATE_ORDER:
+        candidate_row = dict(candidates.get(candidate_name, {}) or {})
+        if not candidate_row:
+            continue
+        y_value = float(y_positions.get(candidate_name, 0.0))
+        band_ax.hlines(y_value, min_frame, max_frame, color="#d0d7de", linewidth=4.0, zorder=1)
+        for segment in list(candidate_row.get("segments", []) or []):
+            if str(segment.get("state_label", "")) != "high_state":
+                continue
+            start_frame = int(segment.get("start_frame", 0) or 0)
+            end_frame = int(segment.get("end_frame", 0) or 0)
+            band_ax.broken_barh(
+                [(start_frame, max(1, int(end_frame - start_frame + 1)))],
+                (y_value - 0.28, 0.56),
+                facecolors=CANDIDATE_COLORS.get(candidate_name, "#444444"),
+                alpha=0.72 if candidate_name == "official_current" else 0.55,
+            )
+
+    band_ax.set_yticks([2.0, 1.0, 0.0])
+    band_ax.set_yticklabels([
+        "official_current",
+        "candidate_blur",
+        "candidate_appearance",
+    ])
+    band_ax.set_ylim(-0.6, 2.6)
+    band_ax.set_ylabel("high-state band")
+    band_ax.set_title("High-State Coverage Under Current Threshold/State Machine (validation sidecar only)")
+    band_ax.grid(True, axis="x", alpha=0.18)
+    band_ax.set_xlabel("frame_idx")
+
+    fig.tight_layout()
+    fig.savefig(str(output_path))
+    plt.close(fig)
+    return output_path
 
 
 def save_state_segmentation_plots(
@@ -243,9 +349,11 @@ def save_state_segmentation_plots(
     final_indices=None,
     uniform_indices=None,
     signal_rows=None,
+    candidate_sidecar=None,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     overview_path = output_dir / "state_overview.png"
+    comparison_path = output_dir / "state_signal_candidate_compare.png"
     save_state_overview(
         output_path=overview_path,
         frame_rows=frame_rows,
@@ -258,6 +366,13 @@ def save_state_segmentation_plots(
         uniform_indices=uniform_indices,
         signal_rows=signal_rows,
     )
+    comparison_path = save_state_candidate_comparison(
+        output_path=comparison_path,
+        candidate_sidecar=candidate_sidecar,
+        enter_th=enter_th,
+        exit_th=exit_th,
+    )
     return {
         "overview_path": overview_path,
+        "candidate_compare_path": comparison_path,
     }

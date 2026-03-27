@@ -68,7 +68,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 
 | 阶段 | 主要脚本 | 系统职责 |
 |---|---|---|
-| `segment` | `scripts/segment_make.py` | 读取原始数据，按正式 `uniform | state` 口径输出标准帧序列、raw keyframes、deploy schedule 与研究产物 |
+| `segment` | `scripts/segment_make.py` | 读取原始数据，按正式 `uniform | state` 口径输出标准帧序列、raw keyframes、deploy schedule 与研究产物；当前 `state` 正式主线只消费 `motion_velocity`、`semantic_velocity` 两信号，`blur_score` / `appearance_delta` 仅保留为 sidecar 观察 |
 | `prompt` | `scripts/prompt_gen.py` | 从 `segment/frames/` 抽代表帧，基于 `segment/state_segmentation/state_segments.json` 与 `segment/deploy_schedule.json` 生成 `final_prompt`、state prompt 产物与聚合 `report.json` |
 | `infer` | `scripts/infer_i2v.py` | 读取 prompt 与执行计划，路由到具体 Wan backend |
 | `merge` | `scripts/merge_seq.py` | 按 `runs_plan.json` 的真实边界合并生成结果 |

@@ -34,8 +34,8 @@ DEFAULT_MIN_SEGMENT_FRAMES = 16
 DEFAULT_NORMALIZATION_METHOD = "robust_zscore_per_signal"
 DEFAULT_SMOOTHING_WINDOW = 9
 DEFAULT_WEIGHTS = {
-    "motion_velocity": 0.6,
-    "feature_motion": 0.4,
+    "motion_velocity": 0.75,
+    "semantic_velocity": 0.25,
 }
 DEFAULT_ENTER_TH = 0.65
 DEFAULT_EXIT_TH = 0.45
@@ -735,6 +735,7 @@ def build_policy_plan(context):
     transition_band_count = _transition_band_count(schedule_runs)
     min_final_gap = int(_min_gap(final_indices))
     min_final_segment_frames = int(short_segment_meta.get("min_final_segment_frames", 0) or 0)
+    state_segmentation_meta = dict(state_result.get("meta", {}) or {})
 
     keyframe_items, allocation_meta = _build_state_items(
         context["build_item"],
@@ -813,14 +814,16 @@ def build_policy_plan(context):
         "state_frame_ranges": state_frame_ranges,
         "density_schedule_summary": density_schedule_summary,
         "state_segmentation_params": {
-            "input_signals": ["motion_velocity", "feature_motion"],
-            "normalization_method": DEFAULT_NORMALIZATION_METHOD,
-            "smoothing_window": int(DEFAULT_SMOOTHING_WINDOW),
-            "weights": dict(DEFAULT_WEIGHTS),
-            "enter_th": float(DEFAULT_ENTER_TH),
-            "exit_th": float(DEFAULT_EXIT_TH),
-            "min_high_len": int(DEFAULT_MIN_HIGH_LEN),
-            "min_low_len": int(DEFAULT_MIN_LOW_LEN),
+            "input_signals": list(state_segmentation_meta.get("input_signals", []) or []),
+            "formal_state_inputs": dict(state_segmentation_meta.get("formal_state_inputs", {}) or {}),
+            "normalization_method": dict(state_segmentation_meta.get("normalization_method", {}) or {}),
+            "smoothing": dict(state_segmentation_meta.get("smoothing", {}) or {}),
+            "weights": dict(state_segmentation_meta.get("weights", {}) or {}),
+            "score_calibration": dict(state_segmentation_meta.get("score_calibration", {}) or {}),
+            "enter_th": float(state_segmentation_meta.get("enter_th", DEFAULT_ENTER_TH) or DEFAULT_ENTER_TH),
+            "exit_th": float(state_segmentation_meta.get("exit_th", DEFAULT_EXIT_TH) or DEFAULT_EXIT_TH),
+            "min_high_len": int(state_segmentation_meta.get("min_high_len", DEFAULT_MIN_HIGH_LEN) or DEFAULT_MIN_HIGH_LEN),
+            "min_low_len": int(state_segmentation_meta.get("min_low_len", DEFAULT_MIN_LOW_LEN) or DEFAULT_MIN_LOW_LEN),
         },
         "scheduling_rules": {
             "scan_strategy": "global_left_to_right_density_scan",
@@ -836,7 +839,7 @@ def build_policy_plan(context):
         },
         "state_segmentation_artifacts": {},
         "signal_extraction_report": dict(signal_io["report"]),
-        "state_segmentation_meta": dict(state_result["meta"]),
+        "state_segmentation_meta": state_segmentation_meta,
     }
 
     state_io = write_state_segmentation_outputs(
@@ -857,12 +860,13 @@ def build_policy_plan(context):
         final_indices=final_indices,
         uniform_indices=safe_base_indices,
         signal_rows=signal_payload["rows"],
+        candidate_sidecar=state_result.get("validation_sidecar"),
     )
     policy_meta["state_segmentation_artifacts"] = {
-        "timeline_path": str(state_io["timeline_path"]),
         "json_path": str(state_io["json_path"]),
         "report_path": str(state_io["report_path"]),
         "overview_path": str(state_plots["overview_path"]),
+        "candidate_compare_path": str(state_plots["candidate_compare_path"]) if state_plots.get("candidate_compare_path") is not None else "",
     }
 
     log_info(

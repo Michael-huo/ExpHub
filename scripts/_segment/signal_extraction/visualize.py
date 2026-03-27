@@ -8,20 +8,27 @@ import matplotlib.pyplot as plt
 
 from scripts._segment.research.kinematics import minmax_normalize, moving_average
 
-from .extract import DEFAULT_PLOT_SMOOTH_WINDOW, REPRESENTATIVE_SIGNALS, SIGNAL_FAMILIES
+from .extract import (
+    DEFAULT_PLOT_SMOOTH_WINDOW,
+    FORMAL_STATE_INPUT_COLUMNS,
+    FORMAL_STATE_INPUT_DISPLAY_NAMES,
+    RAW_SIGNAL_DISPLAY_NAMES,
+    REPRESENTATIVE_SIGNALS,
+    SIGNAL_FAMILIES,
+)
 
 
 _FAMILY_TITLES = {
-    "image": "Image Family",
-    "motion": "Motion Family",
-    "semantic": "Semantic Family",
+    "image": "Image Family (analysis sidecar / raw observed)",
+    "motion": "Motion Family (analysis sidecar / raw observed)",
+    "semantic": "Semantic Family (analysis sidecar / raw observed)",
 }
 
 _SIGNAL_LABELS = {
     "feature_motion": "feature_motion",
     "appearance_delta": "appearance_delta",
     "brightness_jump": "brightness_jump",
-    "blur_score": "blur_score",
+    "blur_score": RAW_SIGNAL_DISPLAY_NAMES["blur_score"],
     "motion_displacement": "motion_displacement",
     "motion_velocity": "motion_velocity",
     "motion_acceleration": "motion_acceleration",
@@ -44,6 +51,12 @@ _SIGNAL_COLORS = {
 }
 
 
+_FORMAL_SIGNAL_LABELS = {
+    "motion_velocity": FORMAL_STATE_INPUT_DISPLAY_NAMES["motion_velocity"],
+    "semantic_velocity": FORMAL_STATE_INPUT_DISPLAY_NAMES["semantic_velocity"],
+}
+
+
 def _series(rows, key):
     return [float(row.get(key, 0.0) or 0.0) for row in rows]
 
@@ -58,18 +71,22 @@ def _plot_values(values, smooth_window):
     return norm_values, actual_window
 
 
-def _plot_group(ax, rows, signal_names, title, smooth_window):
+def _plot_group(ax, rows, signal_names, title, smooth_window, processed=False):
     x = _frame_indices(rows)
     actual_window = 1
 
     for signal_name in signal_names:
-        values = _series(rows, signal_name)
-        plot_values, actual_window = _plot_values(values, smooth_window)
+        source_key = FORMAL_STATE_INPUT_COLUMNS.get(signal_name, signal_name) if processed else signal_name
+        values = _series(rows, source_key)
+        if processed:
+            plot_values = values
+        else:
+            plot_values, actual_window = _plot_values(values, smooth_window)
         ax.plot(
             x,
             plot_values,
             linewidth=1.8,
-            label=_SIGNAL_LABELS.get(signal_name, signal_name),
+            label=_FORMAL_SIGNAL_LABELS.get(signal_name, signal_name) if processed else _SIGNAL_LABELS.get(signal_name, signal_name),
             color=_SIGNAL_COLORS.get(signal_name),
         )
 
@@ -89,22 +106,22 @@ def save_signal_overview(output_dir, rows, smooth_window=DEFAULT_PLOT_SMOOTH_WIN
     fig, axes = plt.subplots(2, 2, figsize=(14, 9), dpi=150, sharex=True)
     actual_window = 1
     panel_order = [
-        ("image", SIGNAL_FAMILIES["image"], _FAMILY_TITLES["image"]),
-        ("motion", SIGNAL_FAMILIES["motion"], _FAMILY_TITLES["motion"]),
-        ("semantic", SIGNAL_FAMILIES["semantic"], _FAMILY_TITLES["semantic"]),
-        ("representatives", REPRESENTATIVE_SIGNALS, "Representative Signals"),
+        ("image", SIGNAL_FAMILIES["image"], _FAMILY_TITLES["image"], False),
+        ("motion", SIGNAL_FAMILIES["motion"], _FAMILY_TITLES["motion"], False),
+        ("semantic", SIGNAL_FAMILIES["semantic"], _FAMILY_TITLES["semantic"], False),
+        ("formal_state_inputs", REPRESENTATIVE_SIGNALS, "Official State Inputs (processed formal inputs)", True),
     ]
 
     for idx, panel in enumerate(panel_order):
-        family_name, signal_names, title = panel
+        family_name, signal_names, title, processed = panel
         row_idx = int(idx / 2)
         col_idx = int(idx % 2)
         actual_window = max(
             int(actual_window),
-            int(_plot_group(axes[row_idx][col_idx], rows, signal_names, title, smooth_window)),
+            int(_plot_group(axes[row_idx][col_idx], rows, signal_names, title, smooth_window, processed=processed)),
         )
 
-    fig.suptitle("Signal Extraction Overview", fontsize=14)
+    fig.suptitle("Signal Extraction Overview: raw/observed sidecar signals vs processed official state inputs", fontsize=14)
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.97])
     fig.savefig(str(overview_path))
     plt.close(fig)
@@ -114,6 +131,7 @@ def save_signal_overview(output_dir, rows, smooth_window=DEFAULT_PLOT_SMOOTH_WIN
             {
                 "panel_name": str(panel[0]),
                 "signals": list(panel[1]),
+                "view_kind": "formal_state_input" if bool(panel[3]) else "analysis_sidecar",
             }
             for panel in panel_order
         ],
@@ -121,11 +139,14 @@ def save_signal_overview(output_dir, rows, smooth_window=DEFAULT_PLOT_SMOOTH_WIN
             "enabled": True,
             "method": "moving_average",
             "window_size": int(actual_window),
+            "analysis_sidecar_note": "analysis sidecar families are normalized and smoothed only for visualization",
+            "formal_state_input_note": "formal state input panel uses persisted normalized + smoothed columns from signal_timeseries.csv",
         },
         "normalization_used_for_plot": {
             "enabled": True,
             "method": "minmax_per_signal",
             "scope": "each plotted signal independently",
+            "formal_state_input_note": "formal state input panel uses persisted processed values directly",
         },
     }
 

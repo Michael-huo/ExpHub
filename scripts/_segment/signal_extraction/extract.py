@@ -9,12 +9,47 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
+
 from scripts._common import ensure_dir, ensure_file, list_frames_sorted, log_info, log_warn, write_json_atomic
 from scripts._segment.policies.naming import normalize_policy_name
+from scripts._segment.research.kinematics import minmax_normalize, moving_average
 from scripts._segment.research import compute_frame_signal_rows, compute_motion_rows, compute_semantic_rows
 
 
 REPORT_SCHEMA_VERSION = "signal_report.v1"
+
+FORMAL_STATE_INPUT_SIGNALS = [
+    "motion_velocity",
+    "semantic_velocity",
+]
+
+FORMAL_STATE_INPUT_COLUMNS = {
+    "motion_velocity": "motion_velocity_state_input",
+    "semantic_velocity": "semantic_velocity_state_input",
+}
+
+RAW_SIGNAL_DISPLAY_NAMES = {
+    "blur_score": "blur_score_raw (sharpness proxy)",
+}
+
+FORMAL_STATE_INPUT_DISPLAY_NAMES = {
+    "motion_velocity": "motion_velocity (processed)",
+    "semantic_velocity": "semantic_velocity (processed)",
+}
+
+FORMAL_STATE_INPUT_PREPROCESSING = {
+    "motion_velocity": {
+        "clip_quantiles": [0.02, 0.98],
+        "smoothing_window": 9,
+        "invert_after_normalize": False,
+    },
+    "semantic_velocity": {
+        "clip_quantiles": [0.02, 0.98],
+        "smoothing_window": 7,
+        "invert_after_normalize": False,
+    },
+}
 
 SELECTED_SIGNALS = [
     "feature_motion",
@@ -49,7 +84,6 @@ SIGNAL_FAMILIES = {
 }
 
 REPRESENTATIVE_SIGNALS = [
-    "feature_motion",
     "motion_velocity",
     "semantic_velocity",
 ]
@@ -60,7 +94,7 @@ _SIGNAL_DESCRIPTIONS = {
     "feature_motion": "Visual feature drift estimated from adjacent frames.",
     "appearance_delta": "Appearance change magnitude between adjacent frames.",
     "brightness_jump": "Frame-to-frame brightness variation magnitude.",
-    "blur_score": "Blur or sharpness proxy derived from frame content.",
+    "blur_score": "Raw sharpness proxy from grayscale Laplacian variance; higher means sharper, not higher blur risk.",
     "motion_displacement": "Motion displacement magnitude from the motion estimator.",
     "motion_velocity": "Velocity-like motion signal used by current state segmentation.",
     "motion_acceleration": "Acceleration-like motion signal derived from velocity changes.",
@@ -86,7 +120,22 @@ _LEGACY_SIGNAL_OUTPUT_NAMES = [
 _TIMESERIES_COLUMNS = [
     "frame_idx",
     "timestamp",
-] + list(SELECTED_SIGNALS)
+] + list(SELECTED_SIGNALS) + [FORMAL_STATE_INPUT_COLUMNS[name] for name in FORMAL_STATE_INPUT_SIGNALS]
+
+
+def _raw_signal_display_name(signal_name):
+    return str(RAW_SIGNAL_DISPLAY_NAMES.get(signal_name, signal_name))
+
+
+def _formal_state_input_display_name(signal_name):
+    return str(FORMAL_STATE_INPUT_DISPLAY_NAMES.get(signal_name, "{} (processed)".format(signal_name)))
+
+
+def _formal_state_input_description(signal_name):
+    return (
+        "Processed official state mainline input derived from {} after robust clipping, "
+        "min-max normalization, and light smoothing."
+    ).format(str(signal_name))
 
 
 @contextmanager
@@ -258,6 +307,130 @@ def _build_selected_rows(frame_rows):
     return selected_rows
 
 
+def _series_stats(values):
+    if not values:
+        return {
+            "min": 0.0,
+            "mean": 0.0,
+            "max": 0.0,
+        }
+    arr = np.asarray(values, dtype=np.float32)
+    return {
+        "min": float(arr.min()),
+        "mean": float(arr.mean()),
+        "max": float(arr.max()),
+    }
+
+
+def _robust_clip(values, low_quantile, high_quantile):
+    arr = np.asarray(list(values or []), dtype=np.float32)
+    if arr.size <= 0:
+        return [], {
+            "low_quantile": float(low_quantile),
+            "high_quantile": float(high_quantile),
+            "lower_bound": 0.0,
+            "upper_bound": 0.0,
+            "degenerated": True,
+        }
+
+    lower_bound = float(np.quantile(arr, float(low_quantile)))
+    upper_bound = float(np.quantile(arr, float(high_quantile)))
+    if upper_bound < lower_bound:
+        lower_bound, upper_bound = upper_bound, lower_bound
+    clipped = np.clip(arr, lower_bound, upper_bound)
+    return [float(x) for x in clipped.tolist()], {
+        "low_quantile": float(low_quantile),
+        "high_quantile": float(high_quantile),
+        "lower_bound": float(lower_bound),
+        "upper_bound": float(upper_bound),
+        "degenerated": bool(abs(float(upper_bound) - float(lower_bound)) < 1e-12),
+    }
+
+
+def build_formal_state_input_rows(rows):
+    rows = list(rows or [])
+    if not rows:
+        return [], {
+            "signal_names": list(FORMAL_STATE_INPUT_SIGNALS),
+            "processed_columns": dict(FORMAL_STATE_INPUT_COLUMNS),
+            "display_names": dict((signal_name, _formal_state_input_display_name(signal_name)) for signal_name in FORMAL_STATE_INPUT_SIGNALS),
+            "raw_display_names": dict((signal_name, _raw_signal_display_name(signal_name)) for signal_name in FORMAL_STATE_INPUT_SIGNALS),
+            "pipeline": [
+                "robust_clip",
+                "minmax_normalize",
+                "moving_average",
+            ],
+            "signals": {},
+            "analysis_only_note": (
+                "Signals outside formal_state_inputs may still be extracted and plotted for analysis, "
+                "but they do not enter the current official state mainline score."
+            ),
+        }
+
+    processed_values = {}
+    signal_meta = {}
+    for signal_name in FORMAL_STATE_INPUT_SIGNALS:
+        config = dict(FORMAL_STATE_INPUT_PREPROCESSING.get(signal_name, {}) or {})
+        clip_quantiles = list(config.get("clip_quantiles", [0.02, 0.98]) or [0.02, 0.98])
+        raw_values = [float(row.get(signal_name, 0.0) or 0.0) for row in rows]
+        clipped_values, clip_meta = _robust_clip(raw_values, clip_quantiles[0], clip_quantiles[1])
+        normalized_values = minmax_normalize(clipped_values)
+        invert_after_normalize = bool(config.get("invert_after_normalize", False))
+        if invert_after_normalize:
+            normalized_values = [float(1.0 - float(value)) for value in normalized_values]
+        smoothed_values, actual_window = moving_average(
+            normalized_values,
+            int(config.get("smoothing_window", 1) or 1),
+        )
+        processed_column = FORMAL_STATE_INPUT_COLUMNS[signal_name]
+        processed_values[processed_column] = [float(value) for value in smoothed_values]
+        signal_meta[signal_name] = {
+            "raw_column": str(signal_name),
+            "processed_column": str(processed_column),
+            "display_name": _formal_state_input_display_name(signal_name),
+            "raw_display_name": _raw_signal_display_name(signal_name),
+            "clip": clip_meta,
+            "normalization": {
+                "method": "minmax_after_robust_clip",
+                "range": [0.0, 1.0],
+                "invert_after_normalize": invert_after_normalize,
+            },
+            "smoothing": {
+                "method": "moving_average",
+                "window_size": int(actual_window),
+            },
+            "raw_semantics": str(_SIGNAL_DESCRIPTIONS.get(signal_name, "")),
+            "processed_semantics": _formal_state_input_description(signal_name),
+            "raw_stats": _series_stats(raw_values),
+            "processed_stats": _series_stats(processed_values[processed_column]),
+        }
+
+    processed_rows = []
+    for idx, row in enumerate(rows):
+        item = dict(row)
+        for signal_name in FORMAL_STATE_INPUT_SIGNALS:
+            processed_column = FORMAL_STATE_INPUT_COLUMNS[signal_name]
+            item[processed_column] = float(processed_values[processed_column][idx])
+        processed_rows.append(item)
+
+    return processed_rows, {
+        "signal_names": list(FORMAL_STATE_INPUT_SIGNALS),
+        "processed_columns": dict(FORMAL_STATE_INPUT_COLUMNS),
+        "display_names": dict((signal_name, _formal_state_input_display_name(signal_name)) for signal_name in FORMAL_STATE_INPUT_SIGNALS),
+        "raw_display_names": dict((signal_name, _raw_signal_display_name(signal_name)) for signal_name in FORMAL_STATE_INPUT_SIGNALS),
+        "pipeline": [
+            "robust_clip",
+            "minmax_normalize",
+            "moving_average",
+        ],
+        "signals": signal_meta,
+        "analysis_only_note": (
+            "Signals outside formal_state_inputs may still be extracted and plotted for analysis, "
+            "but they do not enter the current official state mainline score."
+        ),
+    }
+
+
 def _mean(values):
     if not values:
         return 0.0
@@ -281,15 +454,18 @@ def _top_frame_records(rows, signal_name, limit):
 def _representative_signal_summary(rows):
     summary = []
     for signal_name in REPRESENTATIVE_SIGNALS:
-        values = [float(row.get(signal_name, 0.0) or 0.0) for row in list(rows or [])]
+        source_column = str(FORMAL_STATE_INPUT_COLUMNS.get(signal_name, signal_name))
+        values = [float(row.get(source_column, 0.0) or 0.0) for row in list(rows or [])]
         summary.append(
             {
                 "signal_name": str(signal_name),
+                "value_source": str(source_column),
+                "display_name": _formal_state_input_display_name(signal_name),
                 "family": _signal_family(signal_name),
-                "description": str(_SIGNAL_DESCRIPTIONS.get(signal_name, "")),
+                "description": _formal_state_input_description(signal_name),
                 "mean": float(_mean(values)),
                 "max": float(max(values)) if values else 0.0,
-                "top_frames": _top_frame_records(rows, signal_name, limit=5),
+                "top_frames": _top_frame_records(rows, source_column, limit=5),
             }
         )
     return summary
@@ -326,7 +502,18 @@ def _signal_columns():
                 "name": str(signal_name),
                 "dtype": "float",
                 "family": _signal_family(signal_name),
+                "display_name": _raw_signal_display_name(signal_name),
                 "description": str(_SIGNAL_DESCRIPTIONS.get(signal_name, "")),
+            }
+        )
+    for signal_name in FORMAL_STATE_INPUT_SIGNALS:
+        rows.append(
+            {
+                "name": str(FORMAL_STATE_INPUT_COLUMNS[signal_name]),
+                "dtype": "float",
+                "family": "formal_state_input",
+                "display_name": _formal_state_input_display_name(signal_name),
+                "description": _formal_state_input_description(signal_name),
             }
         )
     return rows
@@ -439,6 +626,12 @@ def extract_signal_timeseries_from_frames(
         motion_rows=motion_rows,
     )
     selected_rows = _build_selected_rows(frame_rows)
+    log_info(
+        "signal extraction preprocess official state inputs: {}".format(
+            ", ".join(FORMAL_STATE_INPUT_SIGNALS)
+        )
+    )
+    selected_rows, formal_state_input_meta = build_formal_state_input_rows(selected_rows)
     return {
         "exp_dir": exp_dir,
         "segment_dir": segment_dir,
@@ -449,6 +642,7 @@ def extract_signal_timeseries_from_frames(
         "semantic_meta": semantic_meta,
         "motion_meta": motion_meta,
         "frame_signal_meta": frame_signal_meta,
+        "formal_state_input_meta": formal_state_input_meta,
     }
 
 
@@ -465,6 +659,15 @@ def build_signal_report(payload, plot_meta):
         "frame_count": int(len(payload["rows"])),
         "timestamp_range": timestamp_range,
         "selected_signals": list(SELECTED_SIGNALS),
+        "formal_state_inputs": {
+            "signal_names": list(payload.get("formal_state_input_meta", {}).get("signal_names", []) or []),
+            "processed_columns": dict(payload.get("formal_state_input_meta", {}).get("processed_columns", {}) or {}),
+            "display_names": dict(payload.get("formal_state_input_meta", {}).get("display_names", {}) or {}),
+            "raw_display_names": dict(payload.get("formal_state_input_meta", {}).get("raw_display_names", {}) or {}),
+            "pipeline": list(payload.get("formal_state_input_meta", {}).get("pipeline", []) or []),
+            "signals": dict(payload.get("formal_state_input_meta", {}).get("signals", {}) or {}),
+            "analysis_only_note": str(payload.get("formal_state_input_meta", {}).get("analysis_only_note", "") or ""),
+        },
         "signal_columns": _signal_columns(),
         "family_groups": _family_groups(),
         "representative_signals": {

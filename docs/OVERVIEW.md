@@ -13,9 +13,11 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 当前主链路的默认口径是：
 
 - `segment` 当前正式 policy 只保留 `uniform` 与 `state`，其中 `state` 是当前正式研究主线
+- `state` 当前正式主线只使用两类输入信号：`motion_velocity`、`semantic_velocity`；`blur_score`、`appearance_delta` 等其它已提取信号只保留为 analysis / validation sidecar 观察，不进入正式 state score
 - `prompt` 默认使用 `smolvlm2`，默认收敛产物到 `prompt/final_prompt.json`、`prompt/state_prompt_manifest.json`、`prompt/deploy_to_state_prompt_map.json` 与 `prompt/report.json`
 - `infer` 默认使用 `wan_fun_5b_inp`，优先消费 `segment/deploy_schedule.json`，并默认收敛产物到 `infer/runs_plan.json`、`infer/prompt_manifest_resolved.json` 与 `infer/report.json`
-- `segment` 会默认收敛正式研究产物到 `segment/signal_extraction/` 与 `segment/state_segmentation/`：前者默认保留 `signal_report.json`、`signal_timeseries.csv`、`signal_overview.png`，后者默认保留 `state_report.json`、`state_timeline.csv`、`state_overview.png`，并继续保留 `state_segments.json` 作为 state 区间事实源
+- `segment` 会默认收敛正式研究产物到 `segment/signal_extraction/` 与 `segment/state_segmentation/`：前者默认保留 `signal_report.json`、`signal_timeseries.csv`、`signal_overview.png`，其中 `signal_timeseries.csv` 同时保留 observed raw signals 与两信号的 processed formal state inputs；后者默认保留 `state_report.json`、`state_overview.png`，并继续保留 `state_segments.json` 作为 state 区间事实源
+- `segment/state_segmentation/` 允许附带轻量 validation sidecar 产物，例如候选 state score 对照图；它们只用于分析，不是正式事实源，也不参与后续 prompt/infer 消费
 - `eval` 会默认收敛评测产物到 `eval/report.json`、`eval/details.csv`、`eval/plots/traj_xy.png` 与 `eval/plots/metrics_overview.png`，不再默认散落多份独立 metrics json/csv/curve png
 - `segment` 后的 analyze 旁路仍会执行研究刷新，但默认不再额外散落独立 `segment/analysis/` 目录；它只会刷新上述聚合研究产物并清理旧遗留文件
 

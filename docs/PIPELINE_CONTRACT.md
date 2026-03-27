@@ -49,6 +49,16 @@
 - `uniform`
 - `state`（当前正式研究主线）
 
+当前 `state` 正式主线输入固定为：
+
+- `motion_velocity`
+- `semantic_velocity`
+
+补充约束：
+
+- 这两者在 `segment/signal_extraction/signal_timeseries.csv` 中除了 observed raw 列，还应提供轻量的 processed formal state input 列，供正式 state score 直接消费
+- `blur_score`、`appearance_delta` 等其它已提取信号可继续保留在 `signal_report.json`、`signal_overview.png` 或其它 analysis / validation sidecar 旁路观察中，但不能再作为当前正式 state score 输入集合
+
 ### `prompt`
 
 必须保证：
@@ -147,9 +157,16 @@
 - `segment/signal_extraction/signal_timeseries.csv`
 - `segment/signal_extraction/signal_overview.png`
 - `segment/state_segmentation/state_report.json`
-- `segment/state_segmentation/state_timeline.csv`
 - `segment/state_segmentation/state_overview.png`
 - `segment/state_segmentation/state_segments.json`（事实源，继续保留）
+- 可附带 validation sidecar，例如 `state_signal_candidate_compare.png`（仅分析，不是事实源）
+
+其中当前 state 旁路/主线边界应满足：
+
+- `signal_overview.png` 与 `state_overview.png` 需要明确标出当前正式主线输入是 `motion_velocity`、`semantic_velocity`
+- 这些正式输入曲线应反映已经完成 robust clipping、normalization 与 smoothing 的 processed 结果
+- 若图中继续展示 raw `blur_score` 或 `appearance_delta`，必须明确标出它们属于 analysis / validation sidecar，而不是正式 state score 输入
+- 其它曲线若继续展示，必须明确它们属于 analysis sidecar，而不是正式 state score 输入
 
 当前默认不再独立生成旧 `segment/analysis/` 目录中的 `segment_summary.json`、`segment_timeseries.csv`、`kinematics_overview.png`、`allocation_overview.png`、`comparison_overview.png`、`projection_overview.png` 以及历史 `risk_*` / `proposed_schedule*` 研究文件。
 
