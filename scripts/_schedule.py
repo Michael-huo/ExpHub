@@ -85,6 +85,12 @@ def _allocate_wan_r4_units(raw_gaps, total_units):
 
 
 def build_wan_r4_deploy_schedule(keyframes_meta):
+    """Project raw keyframe facts into a Wan-compatible deploy schedule.
+
+    The input keyframes_meta remains the raw keyframe fact source. The returned
+    deploy schedule is an execution projection and must not overwrite the raw
+    schedule semantics.
+    """
     if not isinstance(keyframes_meta, dict):
         raise ValueError("keyframes_meta must be a JSON object")
 

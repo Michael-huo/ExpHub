@@ -231,6 +231,9 @@ def build_state_prompt_artifacts(
     segment_dir=None,
 ):
     # type: (Path, int, Path, Path, Optional[Path], Optional[Path]) -> Dict[str, object]
+    # state_segments.json is the state-interval fact source for prompt.
+    # deploy_schedule.json is only used to align execution segments onto those
+    # state intervals; it does not replace the raw/state facts.
     prompt_dir = Path(prompt_dir).resolve()
     frames_dir = Path(frames_dir).resolve()
     global_prompt_path = Path(global_prompt_path).resolve()

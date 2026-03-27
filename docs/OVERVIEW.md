@@ -12,23 +12,25 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 
 当前主链路的默认口径是：
 
-- `segment` 当前正式 policy 只保留 `uniform` 与 `state`
+- `segment` 当前正式 policy 只保留 `uniform` 与 `state`，其中 `state` 是当前正式研究主线
 - `prompt` 默认使用 `smolvlm2`，默认收敛产物到 `prompt/final_prompt.json`、`prompt/state_prompt_manifest.json`、`prompt/deploy_to_state_prompt_map.json` 与 `prompt/report.json`
 - `infer` 默认使用 `wan_fun_5b_inp`，优先消费 `segment/deploy_schedule.json`，并默认收敛产物到 `infer/runs_plan.json`、`infer/prompt_manifest_resolved.json` 与 `infer/report.json`
-- `segment` 会默认收敛研究产物到 `segment/signal_extraction/` 与 `segment/state_segmentation/`：前者默认保留 `signal_report.json`、`signal_timeseries.csv`、`signal_overview.png`，后者默认保留 `state_report.json`、`state_timeline.csv`、`state_overview.png`，并继续保留 `state_segments.json` 作为 state 事实源
+- `segment` 会默认收敛正式研究产物到 `segment/signal_extraction/` 与 `segment/state_segmentation/`：前者默认保留 `signal_report.json`、`signal_timeseries.csv`、`signal_overview.png`，后者默认保留 `state_report.json`、`state_timeline.csv`、`state_overview.png`，并继续保留 `state_segments.json` 作为 state 区间事实源
 - `eval` 会默认收敛评测产物到 `eval/report.json`、`eval/details.csv`、`eval/plots/traj_xy.png` 与 `eval/plots/metrics_overview.png`，不再默认散落多份独立 metrics json/csv/curve png
-- `segment_analyze.py` 仍是旁路研究步骤，但默认不再额外散落独立 `segment/analysis/` 目录；它只会刷新上述聚合研究产物并清理旧遗留文件
+- `segment` 后的 analyze 旁路仍会执行研究刷新，但默认不再额外散落独立 `segment/analysis/` 目录；它只会刷新上述聚合研究产物并清理旧遗留文件
 
 如果你只需要把握当前系统，先记住三个核心事实：
 
-- `segment/keyframes/keyframes_meta.json` 是 raw keyframe schedule 的事实源
-- `segment/deploy_schedule.json` 是当前 Wan 执行投影
+- `segment/keyframes/keyframes_meta.json` 是 raw keyframe 事实源
+- `segment/deploy_schedule.json` 是当前 Wan 执行投影；`infer` 优先消费它，但它不能回写覆盖 raw schedule
+- `segment/state_segmentation/state_segments.json` 是 state 区间事实源；`prompt` 基于它生成 `state_prompt_manifest.json`
 - `prompt/final_prompt.json` 是 infer prompt 的 base scene 输入
 - `prompt/state_prompt_manifest.json` 是按 state 区间生成的局部 motion prompt
 - `prompt/deploy_to_state_prompt_map.json` 只负责把 execution segment 映射到 state prompt，不直接生成新 prompt
 - `prompt/report.json` 是 prompt 默认元信息与摘要的聚合出口
 - `infer/prompt_manifest_resolved.json` 是 infer 运行时真正消费的派生 prompt manifest；它会把 global prompt 与 state local prompt 对齐到 execution segments
 - `infer/report.json` 是 infer 默认元信息与执行摘要的聚合出口
+- analysis 类脚本与产物只属于旁路分析，不回写主链 schedule 或 raw keyframe 事实源
 
 ## 核心文档导航
 
@@ -43,10 +45,10 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 
 ## 推荐阅读顺序
 
-1. 先读 [ARCHITECTURE.md](./ARCHITECTURE.md)
-2. 再读 [PIPELINE_CONTRACT.md](./PIPELINE_CONTRACT.md)
-3. 按任务需要补读 [RESEARCH_DEV_GUIDE.md](./RESEARCH_DEV_GUIDE.md) 或 [LOGGING.md](./LOGGING.md)
-4. 如果任务涉及 prompt 语义编码，再读 [PROMPT_PROFILE_SYSTEM.md](./PROMPT_PROFILE_SYSTEM.md)
+1. 先读本文
+2. 再读 [ARCHITECTURE.md](./ARCHITECTURE.md)
+3. 再读 [PIPELINE_CONTRACT.md](./PIPELINE_CONTRACT.md)
+4. 按任务需要补读 [LOGGING.md](./LOGGING.md)、[PROMPT_PROFILE_SYSTEM.md](./PROMPT_PROFILE_SYSTEM.md)、[RESEARCH_DEV_GUIDE.md](./RESEARCH_DEV_GUIDE.md)
 5. 如果任务涉及方法设计、实验方向或论文贡献映射，再读 [TITS_METHODOLOGY.md](./TITS_METHODOLOGY.md)
 
 ## 关于 `archive/`

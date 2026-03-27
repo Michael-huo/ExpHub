@@ -68,19 +68,20 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 
 | 阶段 | 主要脚本 | 系统职责 |
 |---|---|---|
-| `segment` | `scripts/segment_make.py` | 读取原始数据，输出标准帧序列、raw keyframes 和 deploy schedule |
-| `prompt` | `scripts/prompt_gen.py` | 从 `segment/frames/` 抽代表帧，生成 `final_prompt`、state prompt 事实源与聚合 `report.json` |
+| `segment` | `scripts/segment_make.py` | 读取原始数据，按正式 `uniform | state` 口径输出标准帧序列、raw keyframes、deploy schedule 与研究产物 |
+| `prompt` | `scripts/prompt_gen.py` | 从 `segment/frames/` 抽代表帧，基于 `segment/state_segmentation/state_segments.json` 与 `segment/deploy_schedule.json` 生成 `final_prompt`、state prompt 产物与聚合 `report.json` |
 | `infer` | `scripts/infer_i2v.py` | 读取 prompt 与执行计划，路由到具体 Wan backend |
 | `merge` | `scripts/merge_seq.py` | 按 `runs_plan.json` 的真实边界合并生成结果 |
 | `slam` | `scripts/slam_droid.py` | 在 `ori` 或 `gen` 轨道上估计位姿 |
 | `eval` | `scripts/eval_main.py` | 调度 `_eval/` 后端，对 `ori/gen` 轨迹做 APE/RPE 评估，并补充 merge-vs-ori 的图像指标与两视图几何型 SLAM-friendly 指标评估 |
 | `stats` | `scripts/stats_collect.py` | 汇总 `segment/merge step_meta.json`、`prompt/infer report.json` 与日志，生成最终统计 |
 
-`segment` 之后默认还会触发一次 `segment_analyze.py`：
+`segment` 之后默认还会触发一次 analyze 旁路：
 
 - 它是研究旁路，不属于主链路强依赖
 - 默认在 `--mode segment` 和 `--mode all` 后执行
 - 默认只刷新 `segment/signal_extraction/` 与 `segment/state_segmentation/` 下的聚合研究产物，不再独立扩张 `segment/analysis/`
+- 它只刷新旁路研究产物，不回写 `segment/keyframes/keyframes_meta.json` 或 `segment/deploy_schedule.json`
 - 失败时只报 `WARN`，不阻断 `prompt / infer / merge / slam`
 
 ## 4. 时间计划与 prompt 语义边界
@@ -97,6 +98,8 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 当前默认行为是：
 
 - `segment` 产出 raw keyframes，并投影出 `wan_r4` deploy schedule
+- `segment/keyframes/keyframes_meta.json` 是 raw keyframe 事实源
+- `segment/deploy_schedule.json` 是执行投影，不回写覆盖 raw schedule
 - `infer` 优先从 `deploy_schedule.json` 派生 execution segments
 - 如果 deploy schedule 缺失，`infer` 才回退到 `legacy_kf_gap` slicing
 - `merge` 只信任 `runs_plan.json` 中的真实 `start_idx / end_idx`
@@ -110,7 +113,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 - `prompt/deploy_to_state_prompt_map.json`
 - `prompt/report.json`
 
-`infer` 仍以 `final_prompt.json` 里的全局 `prompt / negative_prompt` 作为 base scene prompt，但当前会在前端把它与 `state_prompt_manifest.json` / `deploy_to_state_prompt_map.json` 派生为 `infer/prompt_manifest_resolved.json`。runtime 继续只理解“prompt manifest + per-segment override”，不直接理解 state 文件本身。
+`prompt/state_prompt_manifest.json` 的语义单位以 `segment/state_segmentation/state_segments.json` 为准，`prompt/deploy_to_state_prompt_map.json` 只负责把 deploy execution segments 对齐到 state prompt。`infer` 仍以 `final_prompt.json` 里的全局 `prompt / negative_prompt` 作为 base scene prompt，但当前会在前端把它与 `state_prompt_manifest.json` / `deploy_to_state_prompt_map.json` 派生为 `infer/prompt_manifest_resolved.json`。runtime 继续只理解“prompt manifest + per-segment override”，不直接理解 state 文件本身。
 
 专题细节见 [PROMPT_PROFILE_SYSTEM.md](./PROMPT_PROFILE_SYSTEM.md)。
 
@@ -123,6 +126,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 目录按阶段隔离，常见布局如下：
 
 - `segment/`：`frames/`、`keyframes/`、`keyframes_meta.json`、`deploy_schedule.json`
+- `segment/` 还会收敛正式研究产物 `signal_extraction/` 与 `state_segmentation/`
 - `prompt/`：`final_prompt.json`、`state_prompt_manifest.json`、`deploy_to_state_prompt_map.json`、`report.json`
 - `infer/`：`prompt_manifest_resolved.json`、`runs/`、`runs_plan.json`、`report.json`
 - `merge/`：`frames/`、`timestamps.txt`、`calib.txt`、`step_meta.json`

@@ -316,6 +316,7 @@ def build_arg_parser():
     ap.add_argument("--strategy", default="nearest", choices=["nearest"], help="resample strategy (v1: nearest)")
 
     # keyframes（为后续压缩率统计准备）：每隔 kf_gap 取一帧（包含 0）
+    # keyframes_meta.json 是 raw keyframe 事实源；deploy_schedule.json 只是在此基础上的执行投影。
     # 当 (N-1) 不能被 kf_gap 整除时，末尾会有少量 tail_drop 帧不参与后续 infer/merge。
     ap.add_argument("--kf_gap", type=int, default=0, help="keyframe gap in frames. if >0, will create keyframes/ folder under dataset root")
     ap.add_argument(
@@ -327,7 +328,7 @@ def build_arg_parser():
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        help="keyframe policy: uniform anchors or state density schedule",
+        help="official segment policy: uniform | state",
     )
 
     ap.add_argument("--dry_run", action="store_true", help="print plan and exit")

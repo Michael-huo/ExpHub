@@ -75,7 +75,7 @@ def _build_task_parser():
         "--task",
         default=TASK_SEGMENT,
         choices=list(TASK_NAMES),
-        help="segment internal task entry: segment | signal_extract | state_segment | analyze",
+        help="segment internal task entry: segment | signal_extract | state_segment | analyze(sidecar only)",
     )
     return parser
 

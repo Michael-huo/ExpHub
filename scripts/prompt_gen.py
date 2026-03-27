@@ -94,7 +94,11 @@ def main():
     default_qwen_model = _resolve_default_qwen_model()
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--segment_dir", default="", help="segment dir (contains frames/) OR frames dir")
+    ap.add_argument(
+        "--segment_dir",
+        default="",
+        help="segment dir used to resolve frames/, state_segmentation/state_segments.json, and deploy_schedule.json",
+    )
     ap.add_argument("--frames_dir", default="", help="direct frames dir override")
     ap.add_argument("--exp_dir", default="", help="if set, outputs go under <exp_dir>/prompt")
     ap.add_argument("--fps", type=int, default=0, help="dataset fps, used only for metadata")
@@ -285,6 +289,12 @@ def main():
 
     log_prog("prompt profile generated from {} representative frames".format(int(len(selected_paths))))
     log_info("state prompt detected state_segments={}".format(bool(state_prompt_summary.get("has_state_segments", False))))
+    log_info(
+        "state prompt sources: state_segments={} deploy_schedule={}".format(
+            str(((state_prompt_summary.get("source_files") or {}).get("state_segments", "")) or "<missing>"),
+            str(((state_prompt_summary.get("source_files") or {}).get("deploy_schedule", "")) or "<missing>"),
+        )
+    )
     log_info("state prompt manifest generated: count={}".format(int(state_prompt_summary.get("state_segment_count", 0) or 0)))
     log_info(
         "deploy to state prompt map generated: count={}".format(

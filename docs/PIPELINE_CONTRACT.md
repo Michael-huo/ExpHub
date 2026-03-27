@@ -9,8 +9,9 @@
 以下内容属于当前主链路的强契约。
 
 - 主链路顺序固定为 `segment -> prompt -> infer -> merge -> slam -> eval -> stats`
-- `segment/keyframes/keyframes_meta.json` 是 raw keyframe schedule 的事实源
+- `segment/keyframes/keyframes_meta.json` 是 raw keyframe 事实源
 - `segment/deploy_schedule.json` 是当前 Wan 执行投影；它不能回写覆盖 raw schedule
+- `segment/state_segmentation/state_segments.json` 是 state 区间事实源；`prompt` 基于它生成 state prompt manifest
 - `prompt` 当前默认强承诺输出 `final_prompt.json`、`state_prompt_manifest.json`、`deploy_to_state_prompt_map.json` 与 `report.json`
 - `infer` 当前以 `prompt/final_prompt.json` 作为 base prompt 输入，并在可用时派生 `infer/prompt_manifest_resolved.json` 给 runtime 消费
 - `infer` 当前默认强承诺输出 `runs_plan.json`、`prompt_manifest_resolved.json` 与 `report.json`
@@ -38,13 +39,15 @@
 
 - `segment/frames/` 可供 `prompt` 与 `infer` 直接读取
 - `segment/keyframes/keyframes_meta.json` 存在，并表达正式 raw keyframe 结果
-- `segment/deploy_schedule.json` 存在时，`infer` 会优先使用它
+- `segment/deploy_schedule.json` 存在时，`infer` 会优先使用它；它是执行投影，不回写 raw schedule
+- `segment/signal_extraction/*` 与 `segment/state_segmentation/*` 属于当前正式研究产物
+- `segment/state_segmentation/state_segments.json` 是 state 区间事实源
 - `segment/step_meta.json` 至少能支撑 `stats/report.json` 的压缩字段汇总
 
 当前正式 `segment_policy` 口径是：
 
 - `uniform`
-- `state`
+- `state`（当前正式研究主线）
 
 ### `prompt`
 
@@ -52,8 +55,8 @@
 
 - 输入来自 `segment/frames/`
 - 输出至少包含 `final_prompt.json`、`state_prompt_manifest.json`、`deploy_to_state_prompt_map.json` 与 `report.json`
-- 若可读到 `state_segments.json`，应按 state 区间额外产出 `state_prompt_manifest.json`
-- 若可读到 `deploy_schedule.json`，应额外产出 `deploy_to_state_prompt_map.json`，把 execution segment 映射到 state prompt，而不是再生成新的 local prompt
+- 若可读到 `segment/state_segmentation/state_segments.json`，应按 state 区间额外产出 `state_prompt_manifest.json`
+- 若可读到 `segment/deploy_schedule.json`，应额外产出 `deploy_to_state_prompt_map.json`，把 execution segment 映射到 state prompt，而不是再生成新的 local prompt
 - `final_prompt.json` 中有可直接被 `infer` 消费的 `prompt`
 - `report.json` 记录 backend、采样方式、代表帧、profile 摘要、state prompt 统计与输出摘要
 
@@ -128,9 +131,9 @@
 - 对缺失的 `segment/step_meta.json`、`merge/step_meta.json`、`prompt/report.json` 或 `infer/report.json` 给出 `WARN`，而不是直接崩溃
 - 实验结束后终端统一打印单块 `EXPERIMENT REPORT`，汇总 time / quality / compression 三类关键指标；其中 quality 区块当前也包含 `ori_path_length_m` / `gen_path_length_m` 的展示
 
-## 4. `segment_analyze` 的旁路契约
+## 4. `segment` 后分析旁路契约
 
-`segment_analyze.py` 不是主链路阶段，但当前系统默认会在 `segment` 后触发。
+`segment` 后的 analyze 旁路不是主链路阶段，但当前系统默认会在 `segment` 后触发；当前内部入口为 `scripts/_segment/analysis/app.py`。
 
 它的边界是：
 

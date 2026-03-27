@@ -50,7 +50,9 @@ STALE_ANALYSIS_OUTPUT_NAMES = [
 
 
 def build_arg_parser():
-    ap = argparse.ArgumentParser(description="Analyze an existing segment directory and emit current uniform/state artifacts.")
+    ap = argparse.ArgumentParser(
+        description="Analyze an existing segment directory and refresh current uniform/state sidecar artifacts only."
+    )
     ap.add_argument("--exp_dir", default="", help="existing experiment directory; if set, overrides dataset/sequence/tag-based resolution")
     ap.add_argument("--exphub", default=str(_REPO_ROOT), help="ExpHub root used when resolving exp_dir from experiment parameters")
     ap.add_argument("--exp_root", default="", help="override experiments root when resolving from experiment parameters")

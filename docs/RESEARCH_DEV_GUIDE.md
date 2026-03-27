@@ -43,9 +43,13 @@ ExpHub 服务的核心问题是：
 
 当前系统的研究口径应按下面理解：
 
-- `segment` 正式策略聚焦 `uniform / motion / semantic`
-- raw keyframe 事实源在 `keyframes_meta.json`
-- 执行投影在 `deploy_schedule.json`
+- `segment` 正式策略只保留 `uniform` 与 `state`
+- `state` 是当前正式研究主线
+- raw keyframe 事实源在 `segment/keyframes/keyframes_meta.json`
+- 执行投影在 `segment/deploy_schedule.json`
+- `segment/state_segmentation/state_segments.json` 是 state 区间事实源
+- `segment/signal_extraction/*` 与 `segment/state_segmentation/*` 是当前正式研究产物
+- analysis 类脚本与产物只用于旁路分析，不回写 raw keyframe 事实源或 deploy schedule
 - `prompt` 当前默认使用 `SmolVLM2`，保留 `Qwen` 作为显式回退/对照
 - prompt 主链路已经收敛到 `PromptProfile v1 -> final_prompt.json`
 - `infer` 当前默认 backend 是 `wan_fun_5b_inp`

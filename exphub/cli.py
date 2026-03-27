@@ -620,7 +620,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--segment_policy",
         default="uniform",
-        help="segment keyframe policy: uniform | state",
+        help="official segment keyframe policy for the current mainline: uniform | state",
     )
     ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")

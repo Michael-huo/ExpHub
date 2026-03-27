@@ -144,7 +144,11 @@ def main():
     default_videox_repo = cfg.get("repos", {}).get("videox_fun", "")
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--segment_dir", required=True, help="ExpHub segment dir (contains frames/) or frames dir")
+    ap.add_argument(
+        "--segment_dir",
+        required=True,
+        help="ExpHub segment dir (contains frames/ and preferred deploy_schedule.json) or frames dir",
+    )
     ap.add_argument("--exp_dir", required=True, help="ExpHub experiment dir (will create infer/ subdir inside)")
     ap.add_argument("--videox_root", default=default_videox_repo, help="VideoX-Fun repo root")
     ap.add_argument("--gpus", type=int, default=1)
@@ -164,7 +168,7 @@ def main():
     ap.add_argument(
         "--prompt_file",
         default="",
-        help="Optional final_prompt.json; archived under <exp_dir>/prompt/final_prompt.json",
+        help="Optional base final_prompt.json; archived under <exp_dir>/prompt/final_prompt.json",
     )
     ap.add_argument(
         "--infer_backend",
@@ -261,7 +265,7 @@ def main():
         execution_segments = build_legacy_execution_segments(frames_avail, base_idx, kf_gap, int(args.num_segments))
         schedule_source = "legacy_kf_gap"
         schedule_backend = "legacy_uniform"
-        log_warn("execution schedule fallback: deploy_schedule.json missing, using legacy kf_gap slicing")
+        log_warn("execution schedule fallback: segment/deploy_schedule.json missing, using legacy kf_gap slicing")
 
     segments = int(len(execution_segments))
     if segments <= 0:
