@@ -870,32 +870,18 @@ def _generate_plots(args, plot_dir, eval_payload, metrics_obj):
             keyframe_sample_indices=_traj_keyframe_sample_indices(ref_timestamps, keyframe_context, ref_timestamps.shape[0]),
         )
 
-    ape_curve = _curve_payload(ape_result)
-    if ape_curve is None:
+    if _curve_payload(ape_result) is None:
         append_warning(metrics_obj, "APE error curve unavailable")
-    else:
-        _plot_ape_curve(
-            plt,
-            plot_dir / "ape_curve.png",
-            ape_curve,
-            metrics_obj,
-            keyframe_xs=_curve_keyframe_positions(ape_curve, ref_timestamps, keyframe_context),
-        )
-
-    rpe_trans_curve = _curve_payload(rpe_trans_result)
-    if rpe_trans_curve is None:
+    if _curve_payload(rpe_trans_result) is None:
         append_warning(metrics_obj, "RPE translation curve unavailable")
-    else:
-        rpe_rot_curve = _curve_payload(eval_payload.get("rpe_rot"))
-        _plot_rpe_curve(
-            plt,
-            plot_dir / "rpe_curve.png",
-            rpe_trans_curve,
-            rpe_rot_curve,
-            metrics_obj,
-            trans_keyframe_xs=_curve_keyframe_positions(rpe_trans_curve, ref_timestamps, keyframe_context),
-            rot_keyframe_xs=_curve_keyframe_positions(rpe_rot_curve, ref_timestamps, keyframe_context),
-        )
+
+
+def _build_overview_payload(eval_payload):
+    return {
+        "ape_curve": _curve_payload((eval_payload or {}).get("ape")),
+        "rpe_trans_curve": _curve_payload((eval_payload or {}).get("rpe_trans")),
+        "rpe_rot_curve": _curve_payload((eval_payload or {}).get("rpe_rot")),
+    }
 
 
 def update_traj_eval_status(metrics_obj):
@@ -946,9 +932,11 @@ def run_traj_eval(args, emit_terminal_summary=True):
     )
 
     eval_payload = None
+    overview_payload = {}
     try:
         eval_payload = _evaluate(args, metrics_obj)
         if eval_payload is not None:
+            overview_payload = _build_overview_payload(eval_payload)
             try:
                 _generate_plots(args, plot_dir, eval_payload, metrics_obj)
             except Exception as exc:
@@ -960,12 +948,11 @@ def run_traj_eval(args, emit_terminal_summary=True):
         append_warning(metrics_obj, "unexpected eval failure: {}".format(exc))
 
     update_traj_eval_status(metrics_obj)
-    write_traj_outputs(out_dir, metrics_obj)
     if emit_terminal_summary:
         log_traj_terminal_summary(metrics_obj, out_dir)
 
     return {
         "metrics": metrics_obj,
-        "metrics_path": out_dir / "traj_metrics.json",
         "plot_dir": plot_dir,
+        "overview": overview_payload,
     }

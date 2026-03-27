@@ -25,7 +25,7 @@ def run_signal_extraction(argv=None):
     log_info("signal extraction done: output_dir={}".format(payload["output_dir"]))
     return {
         "csv_path": str(payload["csv_path"]),
-        "meta_path": str(payload["meta_path"]),
+        "report_path": str(payload["report_path"]),
         "output_dir": str(payload["output_dir"]),
     }
 

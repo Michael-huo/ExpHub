@@ -30,10 +30,20 @@ DEFAULT_MIN_HIGH_LEN = 24
 DEFAULT_MIN_LOW_LEN = 24
 DEFAULT_GLITCH_MERGE_LEN = 12
 
+REPORT_SCHEMA_VERSION = "state_report.v1"
 _INPUT_CSV_NAME = "signal_timeseries.csv"
-_OUTPUT_CSV_NAME = "state_segments.csv"
 _OUTPUT_JSON_NAME = "state_segments.json"
-_OUTPUT_META_NAME = "state_segmentation_meta.json"
+_OUTPUT_TIMELINE_NAME = "state_timeline.csv"
+_OUTPUT_REPORT_NAME = "state_report.json"
+
+_LEGACY_STATE_OUTPUT_NAMES = [
+    "density_schedule.csv",
+    "density_schedule_overview.png",
+    "state_segments.csv",
+    "state_segmentation_meta.json",
+    "state_segmentation_overview.png",
+    "state_signal_overlay.png",
+]
 
 
 def _float_list(values):
@@ -355,6 +365,256 @@ def _build_summary(segments, frame_count):
     }
 
 
+def _frame_time_lookup(frame_rows):
+    out = {}
+    for row in list(frame_rows or []):
+        out[int(row.get("frame_idx", 0) or 0)] = float(row.get("timestamp", 0.0) or 0.0)
+    return out
+
+
+def _segment_digest(segments):
+    rows = []
+    for segment in list(segments or []):
+        rows.append(
+            {
+                "segment_id": int(segment.get("segment_id", 0) or 0),
+                "state_label": str(segment.get("state_label", STATE_LOW)),
+                "start_frame": int(segment.get("start_frame", 0) or 0),
+                "end_frame": int(segment.get("end_frame", 0) or 0),
+                "duration_frames": int(segment.get("duration_frames", 0) or 0),
+                "duration_sec": float(segment.get("duration_sec", 0.0) or 0.0),
+                "state_score_mean": float(segment.get("state_score_mean", 0.0) or 0.0),
+                "state_score_peak": float(segment.get("state_score_peak", 0.0) or 0.0),
+            }
+        )
+    return rows
+
+
+def _state_frame_statistics(segments, frame_count):
+    high_frames = 0
+    low_frames = 0
+    for segment in list(segments or []):
+        frames = int(segment.get("duration_frames", 0) or 0)
+        if str(segment.get("state_label", STATE_LOW)) == STATE_HIGH:
+            high_frames += frames
+        else:
+            low_frames += frames
+    total_frames = max(0, int(frame_count))
+    return {
+        "frame_count": int(total_frames),
+        "high_state_frames": int(high_frames),
+        "low_state_frames": int(low_frames),
+        "high_state_ratio": float(float(high_frames) / float(total_frames)) if total_frames > 0 else 0.0,
+        "low_state_ratio": float(float(low_frames) / float(total_frames)) if total_frames > 0 else 0.0,
+    }
+
+
+def _density_window_statistics(schedule_runs):
+    zone_frames = {
+        "low": 0,
+        "transition": 0,
+        "high": 0,
+    }
+    for run in list(schedule_runs or []):
+        zone_name = str(run.get("schedule_zone", "low") or "low")
+        zone_frames[zone_name] = int(zone_frames.get(zone_name, 0)) + int(run.get("duration_frames", 0) or 0)
+    total_frames = int(sum(zone_frames.values()))
+    return {
+        "window_count": int(len(list(schedule_runs or []))),
+        "low_window_count": int(len([row for row in list(schedule_runs or []) if str(row.get("schedule_zone", "low") or "low") == "low"])),
+        "transition_window_count": int(len([row for row in list(schedule_runs or []) if str(row.get("schedule_zone", "low") or "low") == "transition"])),
+        "high_window_count": int(len([row for row in list(schedule_runs or []) if str(row.get("schedule_zone", "low") or "low") == "high"])),
+        "zone_frames": zone_frames,
+        "zone_ratios": {
+            "low": float(float(zone_frames["low"]) / float(total_frames)) if total_frames > 0 else 0.0,
+            "transition": float(float(zone_frames["transition"]) / float(total_frames)) if total_frames > 0 else 0.0,
+            "high": float(float(zone_frames["high"]) / float(total_frames)) if total_frames > 0 else 0.0,
+        },
+    }
+
+
+def build_state_timeline_rows(result, schedule_runs=None):
+    frame_lookup = _frame_time_lookup(result.get("frame_rows", []))
+    rows = []
+    for segment in list(result.get("segments", []) or []):
+        rows.append(
+            {
+                "row_type": "state_segment",
+                "row_id": int(segment.get("segment_id", 0) or 0),
+                "start_frame": int(segment.get("start_frame", 0) or 0),
+                "end_frame": int(segment.get("end_frame", 0) or 0),
+                "start_time": float(segment.get("start_time", 0.0) or 0.0),
+                "end_time": float(segment.get("end_time", 0.0) or 0.0),
+                "duration_frames": int(segment.get("duration_frames", 0) or 0),
+                "duration_sec": float(segment.get("duration_sec", 0.0) or 0.0),
+                "state_label": str(segment.get("state_label", STATE_LOW)),
+                "schedule_zone": "",
+                "target_gap": "",
+                "anchor_count": "",
+                "state_score_mean": float(segment.get("state_score_mean", 0.0) or 0.0),
+                "state_score_peak": float(segment.get("state_score_peak", 0.0) or 0.0),
+            }
+        )
+
+    for run in list(schedule_runs or []):
+        start_frame = int(run.get("start_frame", 0) or 0)
+        end_frame = int(run.get("end_frame", 0) or 0)
+        rows.append(
+            {
+                "row_type": "density_window",
+                "row_id": int(run.get("run_id", 0) or 0),
+                "start_frame": int(start_frame),
+                "end_frame": int(end_frame),
+                "start_time": float(frame_lookup.get(int(start_frame), 0.0)),
+                "end_time": float(frame_lookup.get(int(end_frame), 0.0)),
+                "duration_frames": int(run.get("duration_frames", 0) or 0),
+                "duration_sec": float(max(0.0, float(frame_lookup.get(int(end_frame), 0.0)) - float(frame_lookup.get(int(start_frame), 0.0)))),
+                "state_label": "",
+                "schedule_zone": str(run.get("schedule_zone", "low") or "low"),
+                "target_gap": int(run.get("target_gap", 0) or 0),
+                "anchor_count": int(run.get("anchor_count", 0) or 0),
+                "state_score_mean": "",
+                "state_score_peak": "",
+            }
+        )
+    return rows
+
+
+def _timeline_fieldnames():
+    return [
+        "row_type",
+        "row_id",
+        "start_frame",
+        "end_frame",
+        "start_time",
+        "end_time",
+        "duration_frames",
+        "duration_sec",
+        "state_label",
+        "schedule_zone",
+        "target_gap",
+        "anchor_count",
+        "state_score_mean",
+        "state_score_peak",
+    ]
+
+
+def write_state_timeline_csv(path, rows):
+    path = Path(path).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = _timeline_fieldnames()
+    with open(str(path), "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in list(rows or []):
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+
+def build_state_report(result, schedule_runs=None, final_indices=None, policy_meta=None, analysis_summary=None, signal_report=None):
+    meta = dict(result.get("meta", {}) or {})
+    summary = dict(meta.get("summary", {}) or {})
+    segments = list(result.get("segments", []) or [])
+    frame_rows = list(result.get("frame_rows", []) or [])
+    schedule_runs = list(schedule_runs or [])
+    policy_meta = dict(policy_meta or {})
+    final_indices = [int(idx) for idx in list(final_indices or [])]
+
+    report = {
+        "report_schema_version": str(REPORT_SCHEMA_VERSION),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "source_exp_dir": str(meta.get("source_exp_dir", "") or ""),
+        "input_artifacts": {
+            "signal_timeseries_csv": "segment/signal_extraction/signal_timeseries.csv",
+            "state_segments_json": "segment/state_segmentation/{}".format(_OUTPUT_JSON_NAME),
+        },
+        "artifact_contract": {
+            "default_files": [
+                _OUTPUT_REPORT_NAME,
+                _OUTPUT_TIMELINE_NAME,
+                "state_overview.png",
+            ],
+            "factsource_files": [
+                _OUTPUT_JSON_NAME,
+            ],
+            "legacy_default_outputs_replaced": list(_LEGACY_STATE_OUTPUT_NAMES),
+        },
+        "state_segmentation": {
+            "summary": summary,
+            "frame_statistics": _state_frame_statistics(segments, len(frame_rows)),
+            "params": {
+                "input_signals": list(meta.get("input_signals", []) or []),
+                "normalization_method": dict(meta.get("normalization_method", {}) or {}),
+                "smoothing_window": int(meta.get("smoothing_window", 0) or 0),
+                "weights": dict(meta.get("weights", {}) or {}),
+                "enter_th": float(meta.get("enter_th", 0.0) or 0.0),
+                "exit_th": float(meta.get("exit_th", 0.0) or 0.0),
+                "min_high_len": int(meta.get("min_high_len", 0) or 0),
+                "min_low_len": int(meta.get("min_low_len", 0) or 0),
+                "merge_rule": dict(meta.get("merge_rule", {}) or {}),
+            },
+            "state_labels": list(meta.get("state_labels", []) or []),
+            "median_dt_sec": float(meta.get("median_dt_sec", 0.0) or 0.0),
+            "segments": _segment_digest(segments),
+        },
+    }
+
+    if schedule_runs or policy_meta:
+        report["density_schedule"] = {
+            "window_statistics": _density_window_statistics(schedule_runs),
+            "summary": list(policy_meta.get("density_schedule_summary", []) or []),
+            "rules": {
+                "safe_gap": int(policy_meta.get("safe_gap", 0) or 0),
+                "transition_gap": int(policy_meta.get("transition_gap", 0) or 0),
+                "high_gap": int(policy_meta.get("high_gap", 0) or 0),
+                "pre_transition_frames": int(policy_meta.get("pre_transition_frames", 0) or 0),
+                "post_transition_frames": int(policy_meta.get("post_transition_frames", 0) or 0),
+                "min_anchor_spacing": int(policy_meta.get("min_anchor_spacing", 0) or 0),
+                "min_segment_frames": int(policy_meta.get("min_segment_frames", 0) or 0),
+                "scheduling_rules": dict(policy_meta.get("scheduling_rules", {}) or {}),
+            },
+            "final_keyframes": {
+                "count": int(len(final_indices)),
+                "indices": list(final_indices),
+                "min_final_gap": int(policy_meta.get("min_final_gap", 0) or 0),
+                "min_final_segment_frames": int(policy_meta.get("min_final_segment_frames", 0) or 0),
+                "short_segment_merge_count": int(policy_meta.get("short_segment_merge_count", 0) or 0),
+            },
+            "zone_statistics": {
+                "high_state_count": int(policy_meta.get("high_state_count", 0) or 0),
+                "low_state_count": int(policy_meta.get("low_state_count", 0) or 0),
+                "transition_band_count": int(policy_meta.get("transition_band_count", 0) or 0),
+                "state_segment_count": int(policy_meta.get("state_segment_count", 0) or 0),
+            },
+        }
+
+    if isinstance(signal_report, dict) and signal_report:
+        report["signal_context"] = {
+            "signal_report_path": "segment/signal_extraction/signal_report.json",
+            "representative_signals": dict(signal_report.get("representative_signals", {}) or {}),
+            "family_groups": list(signal_report.get("family_groups", []) or []),
+        }
+
+    if isinstance(analysis_summary, dict) and analysis_summary:
+        report["segment_analysis_summary"] = dict(analysis_summary)
+
+    return report
+
+
+def write_state_report(path, report):
+    write_json_atomic(path, report, indent=2)
+
+
+def _remove_legacy_state_outputs(output_dir):
+    output_dir = Path(output_dir).resolve()
+    for name in _LEGACY_STATE_OUTPUT_NAMES:
+        path = output_dir / name
+        try:
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+        except Exception:
+            continue
+
+
 def compute_state_segments(
     rows,
     exp_dir=None,
@@ -505,38 +765,27 @@ def run_state_segmentation(
     )
 
 
-def write_state_segments_csv(path, segments):
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
-        "segment_id",
-        "start_frame",
-        "end_frame",
-        "start_time",
-        "end_time",
-        "duration_frames",
-        "duration_sec",
-        "state_label",
-        "state_score_mean",
-        "state_score_peak",
-    ]
-    with open(str(path), "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for item in segments:
-            writer.writerow({key: item.get(key) for key in fieldnames})
-
-
-def write_state_segmentation_outputs(result):
+def write_state_segmentation_outputs(result, schedule_runs=None, final_indices=None, policy_meta=None, analysis_summary=None, signal_report=None):
     output_dir = ensure_dir(result["output_dir"], name="state segmentation output dir")
-    csv_path = output_dir / _OUTPUT_CSV_NAME
+    timeline_rows = build_state_timeline_rows(result, schedule_runs=schedule_runs)
+    timeline_path = output_dir / _OUTPUT_TIMELINE_NAME
     json_path = output_dir / _OUTPUT_JSON_NAME
-    meta_path = output_dir / _OUTPUT_META_NAME
-    write_state_segments_csv(csv_path, result["segments"])
+    report_path = output_dir / _OUTPUT_REPORT_NAME
+    report = build_state_report(
+        result,
+        schedule_runs=schedule_runs,
+        final_indices=final_indices,
+        policy_meta=policy_meta,
+        analysis_summary=analysis_summary,
+        signal_report=signal_report,
+    )
+    write_state_timeline_csv(timeline_path, timeline_rows)
     write_json_atomic(json_path, result["json_payload"])
-    write_json_atomic(meta_path, result["meta"])
+    write_state_report(report_path, report)
+    _remove_legacy_state_outputs(output_dir)
     return {
-        "csv_path": csv_path,
+        "timeline_path": timeline_path,
         "json_path": json_path,
-        "meta_path": meta_path,
+        "report_path": report_path,
+        "report": report,
     }

@@ -11,14 +11,8 @@ from pathlib import Path
 from exphub.context import ExperimentContext
 from scripts._common import ensure_dir, ensure_file, list_frames_sorted, log_info, log_prog, log_warn, write_json_atomic
 from scripts._segment.policies.naming import OFFICIAL_POLICY_NAMES, normalize_policy_name, policy_display_name
-from scripts._segment.research import (
-    save_allocation_overview,
-    save_comparison_overview,
-    save_kinematics_overview,
-    save_projection_overview,
-)
 from scripts._segment.signal_extraction import extract_signal_timeseries
-from scripts._segment.state_segmentation import run_state_segmentation, save_state_segmentation_plots, write_state_segmentation_outputs
+from scripts._segment.state_segmentation import run_state_segmentation, write_state_segmentation_outputs
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -47,6 +41,7 @@ STALE_ANALYSIS_OUTPUT_NAMES = [
     "risk_windows.csv",
     "risk_curve.png",
     "risk_anchor_overview.png",
+    "projection_overview.png",
     "proposed_schedule.json",
     "proposed_schedule.csv",
     "proposed_schedule_overview.png",
@@ -187,6 +182,11 @@ def _remove_stale_outputs(analysis_dir):
                 path.unlink()
         except Exception:
             continue
+    try:
+        if analysis_dir.is_dir() and not list(analysis_dir.iterdir()):
+            analysis_dir.rmdir()
+    except Exception:
+        pass
 
 
 def _projection_maps(deploy_schedule):
@@ -380,30 +380,19 @@ def _build_summary(exp_dir, data, signal_rows, state_result=None):
     return summary
 
 
-def _write_state_outputs(state_result):
-    write_state_segmentation_outputs(state_result)
-    save_state_segmentation_plots(
-        output_dir=state_result["output_dir"],
-        frame_rows=state_result["frame_rows"],
-        segments=state_result["segments"],
-        enter_th=float((state_result.get("meta", {}) or {}).get("enter_th", 0.0) or 0.0),
-        exit_th=float((state_result.get("meta", {}) or {}).get("exit_th", 0.0) or 0.0),
-    )
-
-
-def _official_log(keyframes_meta, csv_rows, analysis_dir, state_result=None):
+def _official_log(keyframes_meta, signal_dir, state_dir=None, state_result=None):
     policy_name = _policy_name(keyframes_meta)
     uniform_indices, final_indices = _resolve_keyframe_sets(keyframes_meta)
-    log_info("analysis_dir: {}".format(analysis_dir))
-    log_info("segment_summary.json written")
-    log_info("segment_timeseries.csv rows: {}".format(len(csv_rows)))
+    log_info("signal research dir: {}".format(signal_dir))
     log_info("uniform base keyframes: {}".format(len(uniform_indices)))
     log_info("final keyframes: {}".format(len(final_indices)))
     log_info("policy analyzed: {}".format(policy_name))
+    if state_dir is not None:
+        log_info("state research dir: {}".format(state_dir))
     if state_result is not None:
         summary = dict((state_result.get("meta", {}) or {}).get("summary", {}) or {})
         log_info("state segments: {}".format(int(summary.get("segment_count", 0) or 0)))
-        log_info("high state frames: {}".format(int(summary.get("high_state_frames", 0) or 0)))
+        log_info("high state frames: {}".format(int(summary.get("high_state_frame_count", 0) or 0)))
 
 
 def run_segment_analyze(argv=None):
@@ -413,7 +402,6 @@ def run_segment_analyze(argv=None):
     exp_dir = _resolve_exp_dir(args)
     segment_dir = ensure_dir(exp_dir / "segment", name="segment dir")
     analysis_dir = exp_dir / "segment" / "analysis"
-    analysis_dir.mkdir(parents=True, exist_ok=True)
     _remove_stale_outputs(analysis_dir)
 
     log_prog("segment analyze start: exp_dir={}".format(exp_dir))
@@ -424,41 +412,42 @@ def run_segment_analyze(argv=None):
         return
 
     signal_payload = extract_signal_timeseries(exp_dir, plot_smooth_window=int(args.plot_smooth_window))
-    signal_rows = _read_signal_rows(signal_payload["csv_path"])
+    signal_rows = list(signal_payload.get("rows", []) or _read_signal_rows(signal_payload["csv_path"]))
 
     state_result = None
+    state_output_dir = None
     if policy_name == "state":
-        state_result = run_state_segmentation(exp_dir)
-        _write_state_outputs(state_result)
+        state_output_dir = segment_dir / "state_segmentation"
+        report_path = state_output_dir / "state_report.json"
+        summary = _build_summary(exp_dir, data, signal_rows, state_result=state_result)
+        if report_path.is_file():
+            report = _read_json(report_path)
+            if not isinstance(report, dict):
+                report = {}
+            report["segment_analysis_summary"] = summary
+            report["signal_context"] = {
+                "signal_report_path": "segment/signal_extraction/signal_report.json",
+                "representative_signals": dict((signal_payload.get("report", {}) or {}).get("representative_signals", {}) or {}),
+                "family_groups": list((signal_payload.get("report", {}) or {}).get("family_groups", []) or []),
+            }
+            write_json_atomic(str(report_path), report, indent=2)
+        else:
+            state_result = run_state_segmentation(exp_dir)
+            write_state_segmentation_outputs(
+                state_result,
+                analysis_summary=summary,
+                signal_report=signal_payload.get("report", {}),
+            )
+    else:
+        summary = _build_summary(exp_dir, data, signal_rows, state_result=state_result)
 
-    csv_rows = _build_timeseries_rows(signal_rows, data["keyframes_meta"], data.get("deploy_schedule"), state_result=state_result)
-    summary = _build_summary(exp_dir, data, signal_rows, state_result=state_result)
-    uniform_indices, final_indices = _resolve_keyframe_sets(data["keyframes_meta"])
-
-    csv_path = analysis_dir / "segment_timeseries.csv"
-    summary_path = analysis_dir / "segment_summary.json"
-    comparison_overview_path = analysis_dir / "comparison_overview.png"
-    allocation_overview_path = analysis_dir / "allocation_overview.png"
-    kinematics_overview_path = analysis_dir / "kinematics_overview.png"
-    projection_overview_path = analysis_dir / "projection_overview.png"
-
-    _write_csv(csv_path, csv_rows)
-    write_json_atomic(str(summary_path), summary, indent=2)
-    save_comparison_overview(csv_rows, comparison_overview_path, final_indices, policy_name=policy_name, uniform_indices=uniform_indices, keyframe_items=data["keyframes_meta"].get("keyframes", []))
-    save_allocation_overview(csv_rows, allocation_overview_path, final_indices, policy_name=policy_name, uniform_indices=uniform_indices, keyframe_items=data["keyframes_meta"].get("keyframes", []))
-    save_kinematics_overview(csv_rows, kinematics_overview_path, final_indices, keyframe_items=data["keyframes_meta"].get("keyframes", []), policy_name=policy_name, uniform_indices=uniform_indices)
-    deploy_schedule = data.get("deploy_schedule") or {}
-    save_projection_overview(
-        projection_overview_path,
-        policy_name=policy_name,
-        raw_keyframe_indices=list(deploy_schedule.get("raw_keyframe_indices") or final_indices),
-        deploy_keyframe_indices=list(deploy_schedule.get("deploy_keyframe_indices") or final_indices),
-        segments=list(deploy_schedule.get("segments") or []),
-        uniform_indices=uniform_indices,
+    _official_log(
+        data["keyframes_meta"],
+        signal_payload["output_dir"],
+        state_output_dir,
+        state_result=state_result,
     )
-
-    _official_log(data["keyframes_meta"], csv_rows, analysis_dir, state_result=state_result)
-    log_prog("segment analyze done: {}".format(analysis_dir))
+    log_prog("segment analyze done: signal_dir={} state_dir={}".format(signal_payload["output_dir"], state_output_dir or ""))
 
 
 if __name__ == "__main__":

@@ -11,23 +11,24 @@
 - 主链路顺序固定为 `segment -> prompt -> infer -> merge -> slam -> eval -> stats`
 - `segment/keyframes/keyframes_meta.json` 是 raw keyframe schedule 的事实源
 - `segment/deploy_schedule.json` 是当前 Wan 执行投影；它不能回写覆盖 raw schedule
-- `prompt` 当前默认强承诺输出 `profile.json` 与 `final_prompt.json`，并可附加输出 `state_prompt_manifest.json` 与 `deploy_to_state_prompt_map.json`
+- `prompt` 当前默认强承诺输出 `final_prompt.json`、`state_prompt_manifest.json`、`deploy_to_state_prompt_map.json` 与 `report.json`
 - `infer` 当前以 `prompt/final_prompt.json` 作为 base prompt 输入，并在可用时派生 `infer/prompt_manifest_resolved.json` 给 runtime 消费
+- `infer` 当前默认强承诺输出 `runs_plan.json`、`prompt_manifest_resolved.json` 与 `report.json`
 - `merge` 必须按 `infer/runs_plan.json` 的真实边界合并，不能再假设全局固定 `kf_gap`
-- `segment / prompt / infer / merge` 应持续写出稳定的 `step_meta.json`；`slam` 轨道元数据当前写在 `run_meta.json`
+- `segment / merge` 应持续写出稳定的 `step_meta.json`；`prompt / infer` 默认元信息已收敛到各自 `report.json`；`slam` 轨道元数据当前写在 `run_meta.json`
 - 下游阶段只能消费上游结果，不能回写上游目录
 
 ## 2. 阶段依赖总览
 
 | 阶段 | 主要脚本 | 关键输入 | 关键输出 | 下游依赖 |
 |---|---|---|---|---|
-| `segment` | `scripts/segment_make.py` | 数据集、标定、`platform.yaml` phase | `segment/frames/`, `segment/keyframes/keyframes_meta.json`, `segment/deploy_schedule.json`, `timestamps.txt`, `calib.txt`, `preprocess_meta.json`, `step_meta.json` | `prompt`, `infer`, `slam`, `segment_analyze` |
-| `prompt` | `scripts/prompt_gen.py` | `segment/frames/`, `segment/state_segmentation/state_segments.json`, `segment/deploy_schedule.json`（存在时） | `prompt/profile.json`, `prompt/final_prompt.json`, `prompt/state_prompt_manifest.json`, `prompt/deploy_to_state_prompt_map.json`, `prompt/step_meta.json` | `infer`, `stats` |
-| `infer` | `scripts/infer_i2v.py` | `segment/frames/`, `prompt/final_prompt.json`, `prompt/state_prompt_manifest.json`, `prompt/deploy_to_state_prompt_map.json`, `segment/deploy_schedule.json` | `infer/execution_plan.json`, `infer/prompt_manifest_resolved.json`, `infer/prompt_resolution.json`, `infer/runs/`, `infer/runs_plan.json`, `infer/step_meta.json` | `merge`, `stats` |
+| `segment` | `scripts/segment_make.py` | 数据集、标定、`platform.yaml` phase | `segment/frames/`, `segment/keyframes/keyframes_meta.json`, `segment/deploy_schedule.json`, `timestamps.txt`, `calib.txt`, `preprocess_meta.json`, `step_meta.json`，以及收敛后的研究产物 `segment/signal_extraction/*`、`segment/state_segmentation/*` | `prompt`, `infer`, `slam`, `segment_analyze` |
+| `prompt` | `scripts/prompt_gen.py` | `segment/frames/`, `segment/state_segmentation/state_segments.json`, `segment/deploy_schedule.json`（存在时） | `prompt/final_prompt.json`, `prompt/state_prompt_manifest.json`, `prompt/deploy_to_state_prompt_map.json`, `prompt/report.json` | `infer`, `stats` |
+| `infer` | `scripts/infer_i2v.py` | `segment/frames/`, `prompt/final_prompt.json`, `prompt/state_prompt_manifest.json`, `prompt/deploy_to_state_prompt_map.json`, `segment/deploy_schedule.json` | `infer/prompt_manifest_resolved.json`, `infer/runs/`, `infer/runs_plan.json`, `infer/report.json` | `merge`, `stats` |
 | `merge` | `scripts/merge_seq.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
 | `slam` | `scripts/slam_droid.py` | `segment/` 或 `merge/` 轨道数据 | `slam/<track>/traj_est.tum`, `traj_est.npz`, `run_meta.json` | `eval` |
-| `eval` | `scripts/eval_main.py` | `slam/ori/traj_est.tum`, `slam/gen/traj_est.tum`, `merge/frames/`, `segment/frames/` | `eval/traj_metrics.json`, `eval/image_metrics.json`, `eval/slam_metrics.json`, `eval/summary.txt`, `eval/image_per_frame.csv`, `eval/slam_pairs.csv`, `eval/plots/*.png` | 人工分析 |
-| `stats` | `scripts/stats_collect.py` | 各阶段 `step_meta.json` 与日志 | `stats/report.json`, `stats/compression.json` | 汇总出口 |
+| `eval` | `scripts/eval_main.py` | `slam/ori/traj_est.tum`, `slam/gen/traj_est.tum`, `merge/frames/`, `segment/frames/` | `eval/report.json`, `eval/details.csv`, `eval/plots/traj_xy.png`, `eval/plots/metrics_overview.png` | 人工分析 |
+| `stats` | `scripts/stats_collect.py` | `segment/step_meta.json`, `prompt/report.json`, `infer/report.json`, `merge/step_meta.json` 与日志 | `stats/report.json`, `stats/compression.json` | 汇总出口 |
 
 ## 3. 各阶段最小契约
 
@@ -43,20 +44,18 @@
 当前正式 `segment_policy` 口径是：
 
 - `uniform`
-- `motion`
-- `semantic`
-- `risk`
+- `state`
 
 ### `prompt`
 
 必须保证：
 
 - 输入来自 `segment/frames/`
-- 输出至少包含 `profile.json` 与 `final_prompt.json`
+- 输出至少包含 `final_prompt.json`、`state_prompt_manifest.json`、`deploy_to_state_prompt_map.json` 与 `report.json`
 - 若可读到 `state_segments.json`，应按 state 区间额外产出 `state_prompt_manifest.json`
 - 若可读到 `deploy_schedule.json`，应额外产出 `deploy_to_state_prompt_map.json`，把 execution segment 映射到 state prompt，而不是再生成新的 local prompt
 - `final_prompt.json` 中有可直接被 `infer` 消费的 `prompt`
-- `step_meta.json` 记录 backend、采样方式、代表帧与输出摘要
+- `report.json` 记录 backend、采样方式、代表帧、profile 摘要、state prompt 统计与输出摘要
 
 默认行为：
 
@@ -74,7 +73,8 @@
 - 缺失 deploy schedule 时，明确记录回退到 `legacy_kf_gap`
 - 若 `prompt/state_prompt_manifest.json` 与 `prompt/deploy_to_state_prompt_map.json` 存在且可解析，必须把 global prompt 与 state local prompt 派生为 execution-segment 级别的 prompt override
 - `runs_plan.json` 保存真实的 `start_idx / end_idx / num_frames`
-- `step_meta.json` 记录 backend、phase、schedule_source、prompt manifest mode 与 runs plan 摘要
+- `prompt_manifest_resolved.json` 是 runtime 真正消费的 prompt manifest
+- `report.json` 记录 backend、phase、schedule_source、prompt manifest mode、prompt source 统计、motion trend 统计与 runs plan 摘要
 
 兼容要求：
 
@@ -105,16 +105,18 @@
 必须保证：
 
 - 在 `slam` phase 环境中调度 `scripts/eval_main.py`；前端壳负责组织输入，后端 `_eval/` 统一执行 traj/image eval
-- 结构化输出至少包含 `eval/traj_metrics.json`、`eval/image_metrics.json`、`eval/slam_metrics.json` 与 `eval/summary.txt`
-- 轨迹图像输出收敛到 `eval/plots/`，当前至少包含 `traj_xy.png`、`ape_curve.png`、`rpe_curve.png`
+- 结构化输出至少包含聚合后的 `eval/report.json` 与 `eval/details.csv`
+- `eval/report.json` 至少聚合 `traj_eval`、`image_eval`、`slam_friendly_eval`、`summary_text`、`warnings`、`eval_status` 与 `artifact_contract`
+- 轨迹图像输出收敛到 `eval/plots/`，当前默认只保留 `traj_xy.png` 与 `metrics_overview.png`
 - 当 `segment/keyframes/keyframes_meta.json` 可用时，`eval/plots/` 中的主轨迹图与各类曲线图会以轻量标记标出最终关键帧位置；缺失时只降级为不标记，不影响图生成
 - `traj_xy.png` 保留历史文件名，但其主图语义已是“主二维投影视图”，不再强绑定真实世界固定 XY 平面
-- 图像评价默认统计 `infer -> merge` 生成帧与对应 `ori` 帧的逐帧比较，新增 `eval/image_metrics.json`、`eval/image_per_frame.csv` 与 `eval/plots/image_metrics_curve.png`
-- SLAM-friendly 图像评价默认只统计时间上连续的相邻生成帧对，输出 `eval/slam_metrics.json`、`eval/slam_pairs.csv` 与 `eval/plots/slam_metrics_curve.png`
-- `traj_metrics.json` 作为轨迹评价事实源，至少包含 APE translation、RPE translation、matched pose 数、`ori_path_length_m`、`gen_path_length_m`、`eval_status` 与 `warnings`
-- `image_metrics.json` 作为图像评价事实源，至少包含 `psnr`、`ms_ssim`、`lpips` 的聚合统计、`frame_count`、`eval_status` 与 `warnings`
-- `slam_metrics.json` 作为两视图几何型 SLAM-friendly 评价事实源，至少包含 `inlier_ratio`、`pose_success_rate`、`reference_source`、`uses_proxy_reference`、`valid_pair_count`、`valid_pose_pair_count` 与 `warnings`
-- `summary.txt` 汇总轨迹与图像评价的人类可读摘要，不再单独输出 `image_summary.txt`
+- 图像评价默认统计 `infer -> merge` 生成帧与对应 `ori` 帧的逐帧比较，其聚合指标并入 `eval/report.json`，逐帧明细并入 `eval/details.csv`
+- SLAM-friendly 图像评价默认只统计时间上连续的相邻生成帧对，其聚合指标并入 `eval/report.json`，pair 明细并入 `eval/details.csv`
+- `eval/details.csv` 使用 `row_type=image_frame|slam_pair` 同时承载 image per-frame 与 slam pair 明细
+- `traj_eval` 块至少包含 APE translation、RPE translation、matched pose 数、`ori_path_length_m`、`gen_path_length_m`、`eval_status` 与 `warnings`
+- `image_eval` 块至少包含 `psnr`、`ms_ssim`、`lpips` 的聚合统计、`frame_count`、`eval_status` 与 `warnings`
+- `slam_friendly_eval` 块至少包含 `inlier_ratio`、`pose_success_rate`、`reference_source`、`uses_proxy_reference`、`valid_pair_count`、`valid_pose_pair_count` 与 `warnings`
+- `summary_text` 汇总轨迹、图像与 slam-friendly 评价的人类可读摘要
 - 缺少轨迹文件或 `evo` 依赖时不能让主链路崩溃，应写出可理解的失败摘要，而不是只留下零散 txt
 
 ### `stats`
@@ -123,7 +125,7 @@
 
 - 输出 `stats/report.json`
 - 保留 `stats/compression.json` 兼容历史消费
-- 对缺失的 `step_meta.json` 给出 `WARN`，而不是直接崩溃
+- 对缺失的 `segment/step_meta.json`、`merge/step_meta.json`、`prompt/report.json` 或 `infer/report.json` 给出 `WARN`，而不是直接崩溃
 - 实验结束后终端统一打印单块 `EXPERIMENT REPORT`，汇总 time / quality / compression 三类关键指标；其中 quality 区块当前也包含 `ori_path_length_m` / `gen_path_length_m` 的展示
 
 ## 4. `segment_analyze` 的旁路契约
@@ -133,34 +135,22 @@
 它的边界是：
 
 - 只读取 `segment/` 既有产物
-- 只写 `segment/analysis/` 和 `segment/.segment_cache/`
+- 只刷新 `segment/signal_extraction/`、`segment/state_segmentation/` 与 `segment/.segment_cache/`
 - 失败时只能 warn-only，不能破坏主链路
 
 当前正式分析产物收敛为：
 
-- `segment_summary.json`
-- `segment_timeseries.csv`
-- `kinematics_overview.png`
-- `allocation_overview.png`
-- `comparison_overview.png`
-- `projection_overview.png`
-- `risk_bundle.json`
-- `risk_summary.json`
-- `risk_timeseries.csv`
-- `risk_windows.csv`
-- `risk_curve.png`
-- `risk_anchor_overview.png`
-- `proposed_schedule.json`
-- `proposed_schedule.csv`
-- `proposed_schedule_overview.png`
-- `proposed_window_comparison.csv`
+- `segment/signal_extraction/signal_report.json`
+- `segment/signal_extraction/signal_timeseries.csv`
+- `segment/signal_extraction/signal_overview.png`
+- `segment/state_segmentation/state_report.json`
+- `segment/state_segmentation/state_timeline.csv`
+- `segment/state_segmentation/state_overview.png`
+- `segment/state_segmentation/state_segments.json`（事实源，继续保留）
 
-其中 `proposed_schedule.*` / `proposed_window_comparison.csv` 属于 analysis-only research artifact：
+当前默认不再独立生成旧 `segment/analysis/` 目录中的 `segment_summary.json`、`segment_timeseries.csv`、`kinematics_overview.png`、`allocation_overview.png`、`comparison_overview.png`、`projection_overview.png` 以及历史 `risk_*` / `proposed_schedule*` 研究文件。
 
-- 它们只用于验证统一 risk bundle 下的“teacher dense -> risky keep / safe retreat”原型
-- 不回写 `segment/keyframes/keyframes_meta.json`
-- 不回写 `segment/deploy_schedule.json`
-- 不被 `infer` / `merge` / `slam` 当作正式输入消费
+其中仍有价值的旧摘要会被并入 `state_report.json`，与当前 state 研究强相关的图表信息会并入 `state_overview.png`；它们都不回写 `segment/keyframes/keyframes_meta.json`，也不回写 `segment/deploy_schedule.json`。
 
 ## 5. 最小验收检查点
 
@@ -169,7 +159,7 @@
 - `python -m exphub --mode doctor ...` 返回 `PASS`
 - 当前默认命令能读到 `prompt/final_prompt.json`，而不是旧 manifest 文档
 - `infer/runs_plan.json` 中的边界与 `merge` 实际合并边界一致
-- `stats/report.json` 能从各阶段 `step_meta.json` 汇总出结果
+- `stats/report.json` 能从 `segment/step_meta.json`、`prompt/report.json`、`infer/report.json` 与 `merge/step_meta.json` 汇总出结果
 - 日志前缀遵守 [LOGGING.md](./LOGGING.md) 中的约定
 
 快速静态验收命令：

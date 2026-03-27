@@ -22,6 +22,7 @@ from _prompt.profile import (
     default_prompt_profile,
     parse_profile_response,
 )
+from _prompt.reporting import build_prompt_report, cleanup_legacy_prompt_outputs, write_prompt_report
 from _prompt.sampling import list_images, sample_images
 from _prompt.state_prompt import build_state_prompt_artifacts
 
@@ -126,14 +127,14 @@ def main():
     exp_dir = Path(args.exp_dir).resolve() if args.exp_dir.strip() else None
     if exp_dir is not None:
         prompt_dir = exp_dir / "prompt"
-        out_profile = Path(args.out_profile).resolve() if args.out_profile else (prompt_dir / "profile.json")
+        legacy_profile_export_path = Path(args.out_profile).resolve() if args.out_profile else None
         out_final_prompt = (
             Path(args.out_final_prompt).resolve() if args.out_final_prompt else (prompt_dir / "final_prompt.json")
         )
     else:
-        if not args.out_profile or not args.out_final_prompt:
-            raise SystemExit("[ERR] without --exp_dir, you must provide --out_profile and --out_final_prompt")
-        out_profile = Path(args.out_profile).resolve()
+        if not args.out_final_prompt:
+            raise SystemExit("[ERR] without --exp_dir, you must provide --out_final_prompt")
+        legacy_profile_export_path = Path(args.out_profile).resolve() if args.out_profile else None
         out_final_prompt = Path(args.out_final_prompt).resolve()
 
     rep_count = _clamp_num_images(int(args.num_images))
@@ -238,76 +239,49 @@ def main():
     deploy_to_state_prompt_map = dict(state_prompt_result.get("deploy_to_state_prompt_map") or {})
     state_prompt_summary = dict(state_prompt_result.get("summary") or {})
 
-    write_json_atomic(out_profile, aggregated_profile, indent=2)
     write_json_atomic(out_final_prompt, final_prompt_payload, indent=2)
     write_json_atomic(state_prompt_manifest_path, state_prompt_manifest, indent=2)
     write_json_atomic(deploy_to_state_prompt_map_path, deploy_to_state_prompt_map, indent=2)
+    if legacy_profile_export_path is not None:
+        write_json_atomic(legacy_profile_export_path, aggregated_profile, indent=2)
 
-    profile_bytes = out_profile.read_bytes()
-    final_prompt_bytes = out_final_prompt.read_bytes()
-    state_prompt_manifest_bytes = state_prompt_manifest_path.read_bytes()
-    deploy_to_state_prompt_map_bytes = deploy_to_state_prompt_map_path.read_bytes()
-    outputs_bytes_sum = int(
-        len(profile_bytes) + len(final_prompt_bytes) + len(state_prompt_manifest_bytes) + len(deploy_to_state_prompt_map_bytes)
-    )
     avg_prompt_sec = float(sum(prompt_times) / float(len(prompt_times))) if prompt_times else 0.0
 
     model_record = str(backend_meta.get("model_dir", "") or backend_meta.get("model_id", "") or model_ref)
-    step_meta = {
-        "step": "prompt",
-        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "backend": str(args.backend),
-        "model_dir": str(backend_meta.get("model_dir", "") or ""),
-        "model_id": str(backend_meta.get("model_id", "") or ""),
-        "dtype": str(backend_meta.get("dtype", "") or ""),
-        "processor_load_sec": float(backend_meta.get("processor_load_sec", 0.0) or 0.0),
-        "model_load_sec": float(backend_meta.get("model_load_sec", 0.0) or 0.0),
-        "prompt_gen_total_sec": float(time.time() - total_t0),
-        "avg_prompt_sec_per_frame": avg_prompt_sec,
-        "backend_python_phase": str(args.backend_python_phase or ""),
-        "sample_mode": str(args.sample_mode),
-        "num_images_requested": int(args.num_images),
-        "num_images_used": int(len(selected_paths)),
-        "frames_count": int(len(frame_files)),
-        "fps": int(args.fps) if int(args.fps) > 0 else None,
-        "profile_version": int(PROMPT_PROFILE_VERSION),
-        "prompt_source": str(final_prompt_payload.get("source", "") or ""),
-        "representative_frames": [Path(path_text).name for path_text in selected_paths],
-        "representative_indices": [idx for idx in [_extract_frame_index(path_text) for path_text in selected_paths] if idx is not None],
-        "frame_candidates": frame_records,
-        "errors": errors,
-        "profile_path": str(out_profile),
-        "profile_size": int(len(profile_bytes)),
-        "profile_sha1": hashlib.sha1(profile_bytes).hexdigest(),
-        "final_prompt_path": str(out_final_prompt),
-        "final_prompt_size": int(len(final_prompt_bytes)),
-        "final_prompt_sha1": hashlib.sha1(final_prompt_bytes).hexdigest(),
-        "state_prompt_manifest_path": str(state_prompt_manifest_path),
-        "state_prompt_manifest_size": int(len(state_prompt_manifest_bytes)),
-        "state_prompt_manifest_sha1": hashlib.sha1(state_prompt_manifest_bytes).hexdigest(),
-        "deploy_to_state_prompt_map_path": str(deploy_to_state_prompt_map_path),
-        "deploy_to_state_prompt_map_size": int(len(deploy_to_state_prompt_map_bytes)),
-        "deploy_to_state_prompt_map_sha1": hashlib.sha1(deploy_to_state_prompt_map_bytes).hexdigest(),
-        "outputs": {
-            "bytes_sum": int(outputs_bytes_sum),
-            "profile_bytes_sum": int(len(profile_bytes)),
-            "final_prompt_bytes_sum": int(len(final_prompt_bytes)),
-            "state_prompt_manifest_bytes_sum": int(len(state_prompt_manifest_bytes)),
-            "deploy_to_state_prompt_map_bytes_sum": int(len(deploy_to_state_prompt_map_bytes)),
-            "profile_file_count": 1,
-            "final_prompt_file_count": 1,
-            "state_prompt_manifest_file_count": 1,
-            "deploy_to_state_prompt_map_file_count": 1,
-        },
-        "profile": aggregated_profile,
-        "rules_hit": list(final_prompt_payload.get("rules_hit", []) or []),
-        "final_prompt_preview": str(final_prompt_payload.get("prompt", "") or ""),
-        "negative_prompt_preview": str(final_prompt_payload.get("negative_prompt", "") or ""),
-        "state_prompt_summary": state_prompt_summary,
-        "model": model_record,
-        "frames_dir": str(frames_dir),
-    }
-    write_json_atomic(out_final_prompt.parent / "step_meta.json", step_meta, indent=2)
+    prompt_report = build_prompt_report(
+        prompt_dir=out_final_prompt.parent,
+        aggregated_profile=aggregated_profile,
+        final_prompt_payload=final_prompt_payload,
+        state_prompt_manifest=state_prompt_manifest,
+        deploy_to_state_prompt_map=deploy_to_state_prompt_map,
+        state_prompt_summary=state_prompt_summary,
+        backend_meta=backend_meta,
+        backend_name=str(args.backend),
+        backend_python_phase=str(args.backend_python_phase or ""),
+        model_record=model_record,
+        dtype=str(args.dtype),
+        sample_mode=str(args.sample_mode),
+        num_images_requested=int(args.num_images),
+        selected_paths=selected_paths,
+        frame_files_count=len(frame_files),
+        fps=(int(args.fps) if int(args.fps) > 0 else None),
+        frame_records=frame_records,
+        errors=errors,
+        total_sec=float(time.time() - total_t0),
+        avg_prompt_sec=avg_prompt_sec,
+    )
+    prompt_report["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    prompt_report["profile_version"] = int(PROMPT_PROFILE_VERSION)
+    prompt_report["frames_dir"] = str(frames_dir)
+    if legacy_profile_export_path is not None:
+        profile_bytes = legacy_profile_export_path.read_bytes()
+        prompt_report["legacy_profile_export"] = {
+            "profile_path": str(legacy_profile_export_path),
+            "profile_size": int(len(profile_bytes)),
+            "profile_sha1": hashlib.sha1(profile_bytes).hexdigest(),
+        }
+    report_path = write_prompt_report(out_final_prompt.parent, prompt_report)
+    cleanup_legacy_prompt_outputs(out_final_prompt.parent, preserve_paths=[legacy_profile_export_path] if legacy_profile_export_path is not None else [])
 
     log_prog("prompt profile generated from {} representative frames".format(int(len(selected_paths))))
     log_info("state prompt detected state_segments={}".format(bool(state_prompt_summary.get("has_state_segments", False))))
@@ -317,11 +291,12 @@ def main():
             int(state_prompt_summary.get("deploy_segment_count", 0) or 0)
         )
     )
-    log_info("wrote: {}".format(out_profile))
     log_info("wrote: {}".format(out_final_prompt))
     log_info("wrote: {}".format(state_prompt_manifest_path))
     log_info("wrote: {}".format(deploy_to_state_prompt_map_path))
-    log_info("wrote: {}".format(out_final_prompt.parent / "step_meta.json"))
+    log_info("wrote: {}".format(report_path))
+    if legacy_profile_export_path is not None:
+        log_info("wrote legacy profile export: {}".format(legacy_profile_export_path))
     if errors:
         log_warn("{} representative frames fell back to the safe default profile".format(int(len(errors))))
 

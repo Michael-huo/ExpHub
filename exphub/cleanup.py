@@ -82,17 +82,16 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir,
         exp_dir / "prompt",
         {
-            "profile.json",
             "final_prompt.json",
             "state_prompt_manifest.json",
             "deploy_to_state_prompt_map.json",
-            "step_meta.json",
+            "report.json",
         },
     )
     _prune_dir_keep_names(
         exp_dir,
         exp_dir / "infer",
-        {"step_meta.json", "runs_plan.json", "prompt_manifest_resolved.json", "prompt_resolution.json"},
+        {"report.json", "runs_plan.json", "prompt_manifest_resolved.json"},
     )
     _prune_dir_keep_names(exp_dir, exp_dir / "merge", {"step_meta.json", "calib.txt", "timestamps.txt"})
 

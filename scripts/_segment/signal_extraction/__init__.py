@@ -7,13 +7,17 @@ import importlib
 _EXPORTS = {
     "DEFAULT_PLOT_SMOOTH_WINDOW": ".extract",
     "REPRESENTATIVE_SIGNALS": ".extract",
+    "REPORT_SCHEMA_VERSION": ".extract",
     "SELECTED_SIGNALS": ".extract",
     "SIGNAL_FAMILIES": ".extract",
+    "build_signal_report": ".extract",
     "build_signal_extraction_meta": ".extract",
     "extract_signal_timeseries": ".extract",
     "extract_signal_timeseries_from_frames": ".extract",
     "materialize_signal_extraction_outputs": ".extract",
+    "write_signal_report": ".extract",
     "write_signal_extraction_meta": ".extract",
+    "save_signal_overview": ".visualize",
     "save_signal_plots": ".visualize",
 }
 

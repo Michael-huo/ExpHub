@@ -6,8 +6,9 @@ from pathlib import Path
 
 from _common import log_err, log_warn
 from _eval.image_eval import run_image_eval
+from _eval.reporting import write_eval_artifacts
 from _eval.slam_eval import run_slam_eval
-from _eval.summary import log_eval_terminal_summary, write_eval_summary
+from _eval.summary import build_summary_text, log_eval_terminal_summary
 from _eval.traj_eval import run_traj_eval
 
 
@@ -89,11 +90,17 @@ def run_eval(
     except Exception as exc:
         log_warn("slam-friendly eval backend failure: {}".format(exc))
 
-    write_eval_summary(
-        out_path,
+    summary_text = build_summary_text(
         (traj_result or {}).get("metrics", {}),
         (image_result or {}).get("metrics", {}),
         (slam_result or {}).get("metrics", {}),
+    )
+    artifacts = write_eval_artifacts(
+        out_path,
+        traj_result,
+        image_result,
+        slam_result,
+        summary_text,
     )
     log_eval_terminal_summary(
         (traj_result or {}).get("metrics", {}),
@@ -106,4 +113,5 @@ def run_eval(
         "traj": traj_result,
         "image": image_result,
         "slam": slam_result,
+        "artifacts": artifacts,
     }
