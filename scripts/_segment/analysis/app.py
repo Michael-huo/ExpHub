@@ -429,6 +429,7 @@ def run_segment_analyze(argv=None):
             report["segment_analysis_summary"] = summary
             report["signal_context"] = {
                 "signal_report_path": "segment/signal_extraction/signal_report.json",
+                "formal_state_inputs": dict((signal_payload.get("report", {}) or {}).get("formal_state_inputs", {}) or {}),
                 "representative_signals": dict((signal_payload.get("report", {}) or {}).get("representative_signals", {}) or {}),
                 "family_groups": list((signal_payload.get("report", {}) or {}).get("family_groups", []) or []),
             }
