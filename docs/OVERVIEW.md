@@ -16,8 +16,8 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 - `state` 当前正式主线只使用两类输入信号：`motion_velocity`、`semantic_velocity`；`blur_score`、`appearance_delta` 等其它已提取信号只保留为 analysis / validation sidecar 观察，不进入正式 state score。当前正式 `state_score` 先由这两条 processed signal 生成简洁的 `raw_state_score`，再估计慢变化的 historical baseline，提取相对 baseline 的 uplift，最后通过保留 shoulder 的轻量单调映射生成正式 score，使它既能兼容当前固定阈值，也更像适合状态区间识别的分布信号
 - `prompt` 默认使用 `smolvlm2`，默认收敛产物到 `prompt/final_prompt.json`、`prompt/state_prompt_manifest.json`、`prompt/deploy_to_state_prompt_map.json` 与 `prompt/report.json`
 - `infer` 默认使用 `wan_fun_5b_inp`，优先消费 `segment/deploy_schedule.json`，并默认收敛产物到 `infer/runs_plan.json`、`infer/prompt_manifest_resolved.json` 与 `infer/report.json`
-- `segment` 会默认收敛正式研究产物到 `segment/signal_extraction/` 与 `segment/state_segmentation/`：前者默认保留 `signal_report.json`、`signal_timeseries.csv`、`signal_overview.png`，其中 `signal_timeseries.csv` 同时保留 observed raw signals 与两信号的 processed formal state inputs；后者默认保留 `state_report.json`、`state_overview.png`，并继续保留 `state_segments.json` 作为 state 区间事实源
-- `segment/state_segmentation/` 允许附带轻量 validation sidecar 产物，例如候选 state score 对照图；它们只用于分析，不是正式事实源，也不参与后续 prompt/infer 消费
+- `segment` 会默认收敛正式研究产物到 `segment/signal_extraction/` 与 `segment/state_segmentation/`：前者默认保留 `signal_report.json`、`signal_timeseries.csv`、`signal_overview.png`，其中 `signal_timeseries.csv` 同时保留 observed raw signals 与两信号的 processed formal state inputs；后者默认只保留 `state_report.json`、`state_overview.png`、`state_segments.json` 三件套
+- `segment/state_segmentation/` 当前正式目标是直接做高风险区间检测：正式 score 只基于 `motion_velocity` 与 `semantic_velocity`，再用最小 online / changepoint-style detector 识别 `low_state / high_state` 区间序列；当前 detector 采用 regime-shift 风格的因果 local-mean / local-spread 状态响应，而不是逐波峰事件响应；`state_segments.json` 继续作为 state 区间事实源
 - `eval` 会默认收敛评测产物到 `eval/report.json`、`eval/details.csv`、`eval/plots/traj_xy.png` 与 `eval/plots/metrics_overview.png`，不再默认散落多份独立 metrics json/csv/curve png
 - `segment` 后的 analyze 旁路仍会执行研究刷新，但默认不再额外散落独立 `segment/analysis/` 目录；它只会刷新上述聚合研究产物并清理旧遗留文件
 
@@ -26,6 +26,7 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 - `segment/keyframes/keyframes_meta.json` 是 raw keyframe 事实源
 - `segment/deploy_schedule.json` 是当前 Wan 执行投影；`infer` 优先消费它，但它不能回写覆盖 raw schedule
 - `segment/state_segmentation/state_segments.json` 是 state 区间事实源；`prompt` 基于它生成 `state_prompt_manifest.json`
+- 当前默认 `state_segments.json` 语义是兼容下游的 `low_state / high_state` 区间序列；当前样例中某个 `high_state` 可能对应 turning high-risk interval，但正式主线不再绑定单一模板
 - `prompt/final_prompt.json` 是 infer prompt 的 base scene 输入
 - `prompt/state_prompt_manifest.json` 是按 state 区间生成的局部 motion prompt
 - `prompt/deploy_to_state_prompt_map.json` 只负责把 execution segment 映射到 state prompt，不直接生成新 prompt

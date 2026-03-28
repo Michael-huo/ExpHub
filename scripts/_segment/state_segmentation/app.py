@@ -40,11 +40,11 @@ def build_arg_parser():
         default=DEFAULT_SMOOTHING_WINDOW,
         help="legacy raw fallback knob only; current official state mainline consumes persisted processed formal state inputs when available",
     )
-    parser.add_argument("--enter_th", type=float, default=DEFAULT_ENTER_TH, help="enter threshold for low->high transition")
-    parser.add_argument("--exit_th", type=float, default=DEFAULT_EXIT_TH, help="exit threshold for high->low transition")
-    parser.add_argument("--min_high_len", type=int, default=DEFAULT_MIN_HIGH_LEN, help="consecutive frames required above enter_th before entering high_state")
-    parser.add_argument("--min_low_len", type=int, default=DEFAULT_MIN_LOW_LEN, help="consecutive frames required below exit_th before leaving high_state")
-    parser.add_argument("--glitch_merge_len", type=int, default=DEFAULT_GLITCH_MERGE_LEN, help="minimum segment length after segmentation; shorter runs are merged away")
+    parser.add_argument("--enter_th", type=float, default=DEFAULT_ENTER_TH, help="detector score threshold for entering a high-risk interval")
+    parser.add_argument("--exit_th", type=float, default=DEFAULT_EXIT_TH, help="detector score threshold for leaving a high-risk interval")
+    parser.add_argument("--min_high_len", type=int, default=DEFAULT_MIN_HIGH_LEN, help="minimum high-risk interval duration in frames")
+    parser.add_argument("--min_low_len", type=int, default=DEFAULT_MIN_LOW_LEN, help="minimum trailing baseline context in frames when detector statistics are built")
+    parser.add_argument("--glitch_merge_len", type=int, default=DEFAULT_GLITCH_MERGE_LEN, help="merge short detector gaps between nearby high-risk intervals")
     parser.add_argument("--motion_weight", type=float, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--feature_weight", type=float, default=None, help=argparse.SUPPRESS)
     return parser
@@ -70,20 +70,17 @@ def run_state_segmentation_cli(argv=None):
         segments=result["segments"],
         enter_th=args.enter_th,
         exit_th=args.exit_th,
-        candidate_sidecar=result.get("validation_sidecar"),
     )
     log_info("state segmentation json: {}".format(io_paths["json_path"]))
     log_info("state segmentation report: {}".format(io_paths["report_path"]))
     log_info("state segmentation overview: {}".format(plot_paths["overview_path"]))
-    if plot_paths.get("candidate_compare_path") is not None:
-        log_info("state segmentation candidate overview: {}".format(plot_paths["candidate_compare_path"]))
     log_prog("state segmentation done: {}".format(result["output_dir"]))
     return {
         "output_dir": str(result["output_dir"]),
         "json_path": str(io_paths["json_path"]),
         "report_path": str(io_paths["report_path"]),
         "overview_path": str(plot_paths["overview_path"]),
-        "candidate_compare_path": str(plot_paths["candidate_compare_path"]) if plot_paths.get("candidate_compare_path") is not None else "",
+        "candidate_compare_path": "",
     }
 
 

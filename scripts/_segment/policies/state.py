@@ -860,13 +860,11 @@ def build_policy_plan(context):
         final_indices=final_indices,
         uniform_indices=safe_base_indices,
         signal_rows=signal_payload["rows"],
-        candidate_sidecar=state_result.get("validation_sidecar"),
     )
     policy_meta["state_segmentation_artifacts"] = {
         "json_path": str(state_io["json_path"]),
         "report_path": str(state_io["report_path"]),
         "overview_path": str(state_plots["overview_path"]),
-        "candidate_compare_path": str(state_plots["candidate_compare_path"]) if state_plots.get("candidate_compare_path") is not None else "",
     }
 
     log_info(
