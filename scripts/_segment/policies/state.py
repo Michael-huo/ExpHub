@@ -31,7 +31,7 @@ DEFAULT_PRE_TRANSITION_FRAMES = 24
 DEFAULT_POST_TRANSITION_FRAMES = 12
 DEFAULT_MIN_ANCHOR_SPACING = 12
 DEFAULT_MIN_SEGMENT_FRAMES = 16
-DEFAULT_NORMALIZATION_METHOD = "robust_zscore_per_signal"
+DEFAULT_NORMALIZATION_METHOD = "processed_inputs_plus_local_robust_baseline"
 DEFAULT_SMOOTHING_WINDOW = 9
 DEFAULT_WEIGHTS = {
     "motion_velocity": 0.75,
@@ -819,7 +819,7 @@ def build_policy_plan(context):
             "normalization_method": dict(state_segmentation_meta.get("normalization_method", {}) or {}),
             "smoothing": dict(state_segmentation_meta.get("smoothing", {}) or {}),
             "weights": dict(state_segmentation_meta.get("weights", {}) or {}),
-            "score_calibration": dict(state_segmentation_meta.get("score_calibration", {}) or {}),
+            "score_pipeline": dict(state_segmentation_meta.get("score_pipeline", {}) or {}),
             "enter_th": float(state_segmentation_meta.get("enter_th", DEFAULT_ENTER_TH) or DEFAULT_ENTER_TH),
             "exit_th": float(state_segmentation_meta.get("exit_th", DEFAULT_EXIT_TH) or DEFAULT_EXIT_TH),
             "min_high_len": int(state_segmentation_meta.get("min_high_len", DEFAULT_MIN_HIGH_LEN) or DEFAULT_MIN_HIGH_LEN),

@@ -23,7 +23,9 @@ def build_arg_parser():
     parser = argparse.ArgumentParser(
         description=(
             "Build a simple, explainable state segmentation baseline from signal_extraction outputs. "
-            "The current official state mainline inputs are motion_velocity and semantic_velocity."
+            "The current official state mainline inputs are motion_velocity and semantic_velocity, "
+            "and the formal state_score is built from a raw weighted score, a slow historical baseline, "
+            "relative uplift above that baseline, and a light shoulder-preserving final mapping."
         )
     )
     parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir (expects segment/signal_extraction/signal_timeseries.csv)")

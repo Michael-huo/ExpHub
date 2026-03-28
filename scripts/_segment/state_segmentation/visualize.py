@@ -28,6 +28,7 @@ ZONE_COLORS = {
 SIGNAL_COLORS = {
     "motion_velocity_state_signal": "#1f77b4",
     "semantic_velocity_state_signal": "#bcbd22",
+    "state_score_raw": "#f4a261",
     "state_score": "#ef6c00",
     "blur_score_raw": "#6c757d",
     "appearance_delta": "#2ca02c",
@@ -136,6 +137,9 @@ def save_state_overview(
     x = _frame_indices(frame_rows)
     motion_values = _values(frame_rows, "motion_velocity_state_signal")
     semantic_values = _values(frame_rows, "semantic_velocity_state_signal")
+    state_scores_raw = _values(frame_rows, "state_score_raw")
+    state_scores_baseline = _values(frame_rows, "state_score_baseline")
+    state_scores_residual = _values(frame_rows, "state_score_residual")
     state_scores = _values(frame_rows, "state_score")
     state_level = _state_level(frame_rows)
 
@@ -161,21 +165,57 @@ def save_state_overview(
 
     signal_ax.plot(x, motion_values, color=SIGNAL_COLORS["motion_velocity_state_signal"], linewidth=1.8, label="motion_velocity (processed)")
     signal_ax.plot(x, semantic_values, color=SIGNAL_COLORS["semantic_velocity_state_signal"], linewidth=1.8, label="semantic_velocity (processed)")
-    signal_ax.plot(x, state_scores, color=SIGNAL_COLORS["state_score"], linewidth=2.1, label="state_score (compatibility-calibrated)")
+    signal_ax.plot(
+        x,
+        state_scores_raw,
+        color=SIGNAL_COLORS["state_score_raw"],
+        linewidth=1.4,
+        alpha=0.60,
+        label="raw_state_score (weighted sum)",
+    )
+    signal_ax.plot(x, state_scores, color=SIGNAL_COLORS["state_score"], linewidth=2.1, label="state_score (shoulder mix + uplift)")
     signal_ax.set_ylabel("score")
-    signal_ax.set_title("State Overview: official processed state inputs + state_score")
+    signal_ax.set_title("State Overview: processed inputs with raw and final state score")
     signal_ax.grid(True, alpha=0.25)
     signal_ax.legend(loc="upper right", fontsize=9)
 
     _shade_segments(overlay_ax, segments, 0.30)
-    overlay_ax.plot(x, state_scores, color=SIGNAL_COLORS["state_score"], linewidth=2.1, label="state_score (compatibility-calibrated)")
+    overlay_ax.plot(
+        x,
+        state_scores_raw,
+        color=SIGNAL_COLORS["state_score_raw"],
+        linewidth=1.2,
+        alpha=0.55,
+        label="raw_state_score",
+    )
+    overlay_ax.plot(
+        x,
+        state_scores_baseline,
+        color="#577590",
+        linewidth=1.5,
+        linestyle="--",
+        alpha=0.95,
+        label="baseline (slow historical)",
+    )
+    overlay_ax.fill_between(
+        x,
+        state_scores_baseline,
+        state_scores_raw,
+        where=np.asarray(state_scores_residual, dtype=np.float32) > 1e-9,
+        color="#f4a261",
+        alpha=0.18,
+        label="residual above baseline",
+    )
+    overlay_ax.plot(x, state_scores, color=SIGNAL_COLORS["state_score"], linewidth=2.1, label="state_score (shoulder mix + uplift)")
     overlay_ax.axhline(float(enter_th), color="#ef6c00", linestyle="--", linewidth=1.2, label="enter_th")
     overlay_ax.axhline(float(exit_th), color="#546e7a", linestyle="--", linewidth=1.2, label="exit_th")
-    ymin = float(np.min(np.asarray(state_scores, dtype=np.float32))) if state_scores else -1.0
-    ymax = float(np.max(np.asarray(state_scores, dtype=np.float32))) if state_scores else 1.0
+    score_extent = state_scores + state_scores_raw + state_scores_baseline
+    ymin = float(np.min(np.asarray(score_extent, dtype=np.float32))) if score_extent else -1.0
+    ymax = float(np.max(np.asarray(score_extent, dtype=np.float32))) if score_extent else 1.0
     padding = max(0.2, float((ymax - ymin) * 0.12))
     overlay_ax.set_ylim(ymin - padding, ymax + padding)
     overlay_ax.set_ylabel("state_score")
+    overlay_ax.set_title("Slow baseline, positive residual, and final state score")
     overlay_ax.grid(True, alpha=0.25)
     overlay_ax.legend(loc="upper right", fontsize=9)
 

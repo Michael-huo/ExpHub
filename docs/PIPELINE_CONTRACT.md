@@ -57,6 +57,7 @@
 补充约束：
 
 - 这两者在 `segment/signal_extraction/signal_timeseries.csv` 中除了 observed raw 列，还应提供轻量的 processed formal state input 列，供正式 state score 直接消费
+- 当前正式 `state_score` 必须先由这两条 processed formal state input 生成 `raw_state_score`，再估计偏历史窗口的慢背景 baseline，提取相对 baseline 的 residual / uplift，并通过保留 shoulder 的轻量单调映射生成最终 score；该信号处理既要继续兼容固定 threshold / state machine，也要保持对后续状态区间识别更友好
 - `blur_score`、`appearance_delta` 等其它已提取信号可继续保留在 `signal_report.json`、`signal_overview.png` 或其它 analysis / validation sidecar 旁路观察中，但不能再作为当前正式 state score 输入集合
 
 ### `prompt`
@@ -164,6 +165,7 @@
 其中当前 state 旁路/主线边界应满足：
 
 - `signal_overview.png` 与 `state_overview.png` 需要明确标出当前正式主线输入是 `motion_velocity`、`semantic_velocity`
+- `state_overview.png` 应能帮助解释正式 score 如何从 raw weighted score 经过局部稳健归一化得到，不应再把难解释的全局兼容校准写成当前默认逻辑
 - 这些正式输入曲线应反映已经完成 robust clipping、normalization 与 smoothing 的 processed 结果
 - 若图中继续展示 raw `blur_score` 或 `appearance_delta`，必须明确标出它们属于 analysis / validation sidecar，而不是正式 state score 输入
 - 其它曲线若继续展示，必须明确它们属于 analysis sidecar，而不是正式 state score 输入

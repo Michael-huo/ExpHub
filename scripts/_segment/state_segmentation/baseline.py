@@ -20,7 +20,7 @@ STATE_LOW = "low_state"
 STATE_HIGH = "high_state"
 
 DEFAULT_INPUT_SIGNALS = list(FORMAL_STATE_INPUT_SIGNALS)
-DEFAULT_NORMALIZATION_METHOD = "robust_zscore_per_signal"
+DEFAULT_NORMALIZATION_METHOD = "processed_inputs_plus_local_robust_baseline"
 DEFAULT_SMOOTHING_WINDOW = 9
 DEFAULT_WEIGHTS = {
     "motion_velocity": 0.75,
@@ -31,8 +31,15 @@ DEFAULT_EXIT_TH = 0.45
 DEFAULT_MIN_HIGH_LEN = 24
 DEFAULT_MIN_LOW_LEN = 24
 DEFAULT_GLITCH_MERGE_LEN = 12
-DEFAULT_SCORE_CALIBRATION_MARGIN = 0.10
 DEFAULT_VALIDATION_IMAGE_WEIGHT = 0.20
+DEFAULT_HISTORY_BASELINE_WINDOW = 241
+DEFAULT_RESIDUAL_SPREAD_WINDOW = 73
+DEFAULT_RESIDUAL_SPREAD_EPS = 1e-4
+DEFAULT_RESIDUAL_SPREAD_FLOOR_RATIO = 0.10
+DEFAULT_RELATIVE_SUPPORT_WINDOW = 33
+DEFAULT_RAW_SHOULDER_WEIGHT = 0.75
+DEFAULT_BASELINE_SHOULDER_WEIGHT = 0.25
+DEFAULT_RELATIVE_UPLIFT_SCALE = 0.18
 
 REPORT_SCHEMA_VERSION = "state_report.v1"
 _INPUT_CSV_NAME = "signal_timeseries.csv"
@@ -295,73 +302,260 @@ def _preprocess_validation_signal(values, clip_quantiles, smoothing_window, inve
     }
 
 
-def _compatibility_calibrate_scores(raw_scores, enter_th, exit_th, margin=DEFAULT_SCORE_CALIBRATION_MARGIN):
+def _series_stats(values):
+    arr = np.asarray(list(values or []), dtype=np.float32)
+    if arr.size <= 0:
+        return {
+            "count": 0,
+            "min": 0.0,
+            "p10": 0.0,
+            "median": 0.0,
+            "mean": 0.0,
+            "p90": 0.0,
+            "max": 0.0,
+        }
+    return {
+        "count": int(arr.size),
+        "min": float(arr.min()),
+        "p10": float(np.quantile(arr, 0.10)),
+        "median": float(np.median(arr)),
+        "mean": float(arr.mean()),
+        "p90": float(np.quantile(arr, 0.90)),
+        "max": float(arr.max()),
+    }
+
+
+def _resolve_trailing_window(window_size, value_count):
+    value_count = max(0, int(value_count))
+    if value_count <= 0:
+        return 1
+    window_size = max(1, int(window_size))
+    if window_size > value_count:
+        window_size = value_count
+    return max(1, int(window_size))
+
+
+def _trailing_median(values, window_size):
+    arr = np.asarray(list(values or []), dtype=np.float32)
+    if arr.size <= 0:
+        return [], {
+            "method": "trailing_median",
+            "window_size": 1,
+            "centered": False,
+            "causal": True,
+            "historical_style": True,
+        }
+
+    actual_window = _resolve_trailing_window(window_size, arr.size)
+    medians = []
+    for idx in range(arr.size):
+        start_idx = max(0, int(idx - actual_window + 1))
+        medians.append(float(np.median(arr[start_idx : idx + 1])))
+    return medians, {
+        "method": "trailing_median",
+        "window_size": int(actual_window),
+        "centered": False,
+        "causal": True,
+        "historical_style": True,
+    }
+
+
+def _trailing_mean(values, window_size):
+    arr = np.asarray(list(values or []), dtype=np.float32)
+    if arr.size <= 0:
+        return [], {
+            "method": "trailing_mean",
+            "window_size": 1,
+            "centered": False,
+            "causal": True,
+            "historical_style": True,
+        }
+
+    actual_window = _resolve_trailing_window(window_size, arr.size)
+    means = []
+    for idx in range(arr.size):
+        start_idx = max(0, int(idx - actual_window + 1))
+        means.append(float(np.mean(arr[start_idx : idx + 1])))
+    return means, {
+        "method": "trailing_mean",
+        "window_size": int(actual_window),
+        "centered": False,
+        "causal": True,
+        "historical_style": True,
+    }
+
+
+def _build_relative_score_track(raw_scores, enter_th, exit_th):
     raw_scores = [float(value) for value in list(raw_scores or [])]
     if not raw_scores:
-        return [], {
-            "method": "affine_iqr_compatibility",
-            "applied": False,
-            "reason": "empty_scores",
-        }
-
-    q25 = _quantile(raw_scores, 0.25)
-    q75 = _quantile(raw_scores, 0.75)
-    q90 = _quantile(raw_scores, 0.90)
-    raw_min = float(min(raw_scores))
-    raw_max = float(max(raw_scores))
-    raw_span = float(q75 - q25)
-    should_calibrate = bool(q75 < float(enter_th) or q90 < float(enter_th) + 0.05)
-
-    if not should_calibrate:
-        return list(raw_scores), {
-            "method": "affine_iqr_compatibility",
-            "applied": False,
-            "reason": "distribution_already_compatible",
-            "source_quantiles": {
-                "q25": float(q25),
-                "q75": float(q75),
-                "q90": float(q90),
-                "min": float(raw_min),
-                "max": float(raw_max),
+        return {
+            "score_raw": [],
+            "score": [],
+            "score_baseline": [],
+            "score_residual": [],
+            "score_spread": [],
+            "score_relative": [],
+            "score_relative_support": [],
+            "score_pipeline": {
+                "enabled": False,
+                "reason": "empty_scores",
+            },
+            "score_diagnostics": {
+                "rolling_robust_normalization_enabled": False,
+                "baseline_is_causal": False,
+                "shoulder_preserving_mix_enabled": False,
+                "raw_score": _series_stats([]),
+                "baseline": _series_stats([]),
+                "residual": _series_stats([]),
+                "spread": _series_stats([]),
+                "uplift": _series_stats([]),
+                "relative_score": _series_stats([]),
+                "uplift_support": _series_stats([]),
+                "relative_support": _series_stats([]),
+                "shoulder_mix": _series_stats([]),
+                "final_state_score": _series_stats([]),
             },
         }
 
-    target_q25 = float(exit_th) - float(margin)
-    target_q75 = float(enter_th) + float(margin)
-    if raw_span < 1e-6:
-        return list(raw_scores), {
-            "method": "affine_iqr_compatibility",
-            "applied": False,
-            "reason": "degenerate_iqr",
-            "source_quantiles": {
-                "q25": float(q25),
-                "q75": float(q75),
-                "q90": float(q90),
-                "min": float(raw_min),
-                "max": float(raw_max),
-            },
-        }
+    baseline_values, baseline_meta = _trailing_median(raw_scores, DEFAULT_HISTORY_BASELINE_WINDOW)
+    residual_values = []
+    for idx in range(len(raw_scores)):
+        residual_values.append(max(0.0, float(raw_scores[idx]) - float(baseline_values[idx])))
+    spread_base_values, spread_meta = _trailing_median(residual_values, DEFAULT_RESIDUAL_SPREAD_WINDOW)
+    global_residual_p90 = _quantile(residual_values, 0.90)
+    spread_floor = max(
+        float(DEFAULT_RESIDUAL_SPREAD_EPS),
+        float(1.4826 * float(global_residual_p90) * float(DEFAULT_RESIDUAL_SPREAD_FLOOR_RATIO)),
+    )
 
-    scale = float((target_q75 - target_q25) / raw_span)
-    offset = float(target_q25 - float(scale) * float(q25))
-    calibrated_scores = [float(scale * float(value) + offset) for value in raw_scores]
-    return calibrated_scores, {
-        "method": "affine_iqr_compatibility",
-        "applied": True,
-        "reason": "restore_fixed_threshold_compatibility",
-        "source_quantiles": {
-            "q25": float(q25),
-            "q75": float(q75),
-            "q90": float(q90),
-            "min": float(raw_min),
-            "max": float(raw_max),
+    spread_values = []
+    uplift_values = []
+    for idx in range(len(raw_scores)):
+        spread_value = max(
+            float(spread_floor),
+            float(DEFAULT_RESIDUAL_SPREAD_EPS),
+            float(1.4826 * float(spread_base_values[idx])),
+        )
+        uplift_value = float(residual_values[idx] / float(spread_value)) if spread_value > 0.0 else 0.0
+        spread_values.append(float(spread_value))
+        uplift_values.append(float(uplift_value))
+    uplift_support, uplift_support_meta = _trailing_mean(uplift_values, DEFAULT_RELATIVE_SUPPORT_WINDOW)
+    # Keep part of the raw shoulder while letting uplift emphasize the core anomaly.
+    final_scores = []
+    shoulder_values = []
+    for idx in range(len(raw_scores)):
+        shoulder_value = (
+            float(DEFAULT_RAW_SHOULDER_WEIGHT) * float(raw_scores[idx])
+            + float(DEFAULT_BASELINE_SHOULDER_WEIGHT) * float(baseline_values[idx])
+        )
+        final_value = float(shoulder_value) + float(DEFAULT_RELATIVE_UPLIFT_SCALE) * float(uplift_support[idx])
+        shoulder_values.append(float(shoulder_value))
+        final_scores.append(float(min(1.0, max(0.0, final_value))))
+    return {
+        "score_raw": list(raw_scores),
+        "score": list(final_scores),
+        "score_baseline": list(baseline_values),
+        "score_residual": list(residual_values),
+        "score_spread": list(spread_values),
+        "score_relative": list(uplift_values),
+        "score_relative_support": list(uplift_support),
+        "score_pipeline": {
+            "enabled": True,
+            "description": (
+                "Build a raw weighted score from processed motion_velocity + semantic_velocity, "
+                "estimate a slow historical trailing-median baseline, convert positive residual above "
+                "that baseline into a trailing uplift signal, then mix raw shoulder information with "
+                "the uplift to produce the formal state_score."
+            ),
+            "raw_score": {
+                "method": "weighted_sum",
+            },
+            "baseline": dict(baseline_meta),
+            "local_baseline": dict(baseline_meta),
+            "residual": {
+                "method": "positive_excess_over_baseline",
+                "formula": "max(raw_state_score - baseline, 0)",
+            },
+            "uplift": {
+                "method": "residual_over_trailing_residual_spread",
+                "spread_estimator": {
+                    "method": "trailing_residual_median",
+                    "window_size": int(spread_meta.get("window_size", 1) or 1),
+                    "centered": bool(spread_meta.get("centered", False)),
+                    "causal": bool(spread_meta.get("causal", True)),
+                    "historical_style": bool(spread_meta.get("historical_style", True)),
+                },
+                "spread": {
+                    "method": "scaled_trailing_residual_median",
+                    "scale_factor": 1.4826,
+                    "spread_floor": {
+                        "method": "global_residual_p90_times_ratio",
+                        "quantile": 0.90,
+                        "ratio": float(DEFAULT_RESIDUAL_SPREAD_FLOOR_RATIO),
+                        "global_residual_p90": float(global_residual_p90),
+                        "value": float(spread_floor),
+                    },
+                    "epsilon": float(DEFAULT_RESIDUAL_SPREAD_EPS),
+                },
+                "formula": "residual / residual_spread",
+            },
+            "local_spread": {
+                "method": "scaled_trailing_residual_median",
+                "window_size": int(spread_meta.get("window_size", 1) or 1),
+                "centered": bool(spread_meta.get("centered", False)),
+                "causal": bool(spread_meta.get("causal", True)),
+                "historical_style": bool(spread_meta.get("historical_style", True)),
+                "scale_factor": 1.4826,
+                "spread_floor": {
+                    "method": "global_residual_p90_times_ratio",
+                    "quantile": 0.90,
+                    "ratio": float(DEFAULT_RESIDUAL_SPREAD_FLOOR_RATIO),
+                    "global_residual_p90": float(global_residual_p90),
+                    "value": float(spread_floor),
+                },
+                "epsilon": float(DEFAULT_RESIDUAL_SPREAD_EPS),
+            },
+            "relative_score": {
+                "method": "uplift",
+                "formula": "residual / residual_spread",
+            },
+            "final_mapping": {
+                "method": "shoulder_preserving_mix_plus_trailing_uplift",
+                "shoulder_mix": {
+                    "enabled": True,
+                    "raw_state_score_weight": float(DEFAULT_RAW_SHOULDER_WEIGHT),
+                    "baseline_weight": float(DEFAULT_BASELINE_SHOULDER_WEIGHT),
+                    "formula": (
+                        "{0:.2f} * raw_state_score + {1:.2f} * baseline".format(
+                            float(DEFAULT_RAW_SHOULDER_WEIGHT),
+                            float(DEFAULT_BASELINE_SHOULDER_WEIGHT),
+                        )
+                    ),
+                },
+                "uplift_support": dict(uplift_support_meta),
+                "uplift_scale": float(DEFAULT_RELATIVE_UPLIFT_SCALE),
+                "formula": "clip(shoulder_mix + uplift_scale * trailing_uplift, 0, 1)",
+                "fixed_threshold_targets": {
+                    "enter_th": float(enter_th),
+                    "exit_th": float(exit_th),
+                },
+            },
         },
-        "target_quantiles": {
-            "q25": float(target_q25),
-            "q75": float(target_q75),
+        "score_diagnostics": {
+            "rolling_robust_normalization_enabled": True,
+            "baseline_is_causal": True,
+            "shoulder_preserving_mix_enabled": True,
+            "raw_score": _series_stats(raw_scores),
+            "baseline": _series_stats(baseline_values),
+            "residual": _series_stats(residual_values),
+            "spread": _series_stats(spread_values),
+            "uplift": _series_stats(uplift_values),
+            "relative_score": _series_stats(uplift_values),
+            "uplift_support": _series_stats(uplift_support),
+            "relative_support": _series_stats(uplift_support),
+            "shoulder_mix": _series_stats(shoulder_values),
+            "final_state_score": _series_stats(final_scores),
         },
-        "scale": float(scale),
-        "offset": float(offset),
     }
 
 
@@ -573,18 +767,19 @@ def _compute_candidate_track(
     glitch_merge_len,
     dt_sec,
 ):
-    score_raw = []
+    raw_scores = []
     for idx in range(len(rows)):
         value = 0.0
         for component in list(components or []):
             value += float(component.get("weight", 0.0) or 0.0) * float(component.get("values", [0.0])[idx])
-        score_raw.append(float(value))
+        raw_scores.append(float(value))
 
-    score_values, calibration_meta = _compatibility_calibrate_scores(
-        score_raw,
+    score_track = _build_relative_score_track(
+        raw_scores,
         enter_th=enter_th,
         exit_th=exit_th,
     )
+    score_values = list(score_track.get("score", []) or [])
     raw_states = _apply_state_machine(
         scores=score_values,
         enter_th=enter_th,
@@ -595,12 +790,18 @@ def _compute_candidate_track(
     merged_states, merge_meta = _merge_short_runs(raw_states, glitch_merge_len)
     segments = _build_segments(rows, merged_states, score_values, dt_sec)
     return {
-        "score_raw": list(score_raw),
+        "score_raw": list(score_track.get("score_raw", []) or []),
         "score": list(score_values),
+        "score_baseline": list(score_track.get("score_baseline", []) or []),
+        "score_residual": list(score_track.get("score_residual", []) or []),
+        "score_spread": list(score_track.get("score_spread", []) or []),
+        "score_relative": list(score_track.get("score_relative", []) or []),
+        "score_relative_support": list(score_track.get("score_relative_support", []) or []),
         "states": list(merged_states),
         "segments": list(segments),
         "summary": _build_summary(segments, len(rows)),
-        "score_calibration": dict(calibration_meta),
+        "score_pipeline": dict(score_track.get("score_pipeline", {}) or {}),
+        "score_diagnostics": dict(score_track.get("score_diagnostics", {}) or {}),
         "merge_rule": dict(merge_meta),
     }
 
@@ -659,7 +860,8 @@ def _build_validation_sidecar(
             "states": list(official_track.get("states", []) or []),
             "segments": list(official_track.get("segments", []) or []),
             "summary": dict(official_track.get("summary", {}) or {}),
-            "score_calibration": dict(official_track.get("score_calibration", {}) or {}),
+            "score_pipeline": dict(official_track.get("score_pipeline", {}) or {}),
+            "score_diagnostics": dict(official_track.get("score_diagnostics", {}) or {}),
             "merge_rule": dict(official_track.get("merge_rule", {}) or {}),
         },
         "candidate_blur": dict(
@@ -726,7 +928,7 @@ def _build_validation_sidecar(
             "high_frame_ratio": float(summary.get("high_state_frame_ratio", 0.0) or 0.0),
             "high_segment_count": int(summary.get("high_state_segment_count", 0) or 0),
             "high_segments": _candidate_high_segment_digest(track.get("segments", [])),
-            "score_calibration": dict(track.get("score_calibration", {}) or {}),
+            "score_pipeline": dict(track.get("score_pipeline", {}) or {}),
         }
         if "validation_preprocessing" in track:
             report_candidates[candidate_name]["validation_preprocessing"] = dict(track.get("validation_preprocessing", {}) or {})
@@ -741,7 +943,9 @@ def _build_validation_sidecar(
             },
             "description": (
                 "Validation sidecar comparison reuses the current state score pipeline, including processed inputs, "
-                "compatibility calibration, thresholding, and state-machine decoding. Only official_current drives "
+                "raw weighted scoring, slow historical baseline estimation, uplift extraction, thresholding, and "
+                "state-machine decoding. "
+                "Only official_current drives "
                 "formal state segmentation outputs; blur_score and appearance_delta remain validation-only sidecar signals."
             ),
             "candidates": report_candidates,
@@ -934,13 +1138,14 @@ def build_state_report(result, schedule_runs=None, final_indices=None, policy_me
                 "normalization_method": dict(meta.get("normalization_method", {}) or {}),
                 "smoothing": dict(meta.get("smoothing", {}) or {}),
                 "weights": dict(meta.get("weights", {}) or {}),
-                "score_calibration": dict(meta.get("score_calibration", {}) or {}),
+                "score_pipeline": dict(meta.get("score_pipeline", {}) or {}),
                 "enter_th": float(meta.get("enter_th", 0.0) or 0.0),
                 "exit_th": float(meta.get("exit_th", 0.0) or 0.0),
                 "min_high_len": int(meta.get("min_high_len", 0) or 0),
                 "min_low_len": int(meta.get("min_low_len", 0) or 0),
                 "merge_rule": dict(meta.get("merge_rule", {}) or {}),
             },
+            "score_diagnostics": dict(meta.get("score_diagnostics", {}) or {}),
             "state_labels": list(meta.get("state_labels", []) or []),
             "median_dt_sec": float(meta.get("median_dt_sec", 0.0) or 0.0),
             "segments": _segment_digest(segments),
@@ -1055,10 +1260,16 @@ def compute_state_segments(
     )
     state_scores_raw = list(official_track.get("score_raw", []) or [])
     state_scores = list(official_track.get("score", []) or [])
+    state_score_baseline = list(official_track.get("score_baseline", []) or [])
+    state_score_residual = list(official_track.get("score_residual", []) or [])
+    state_score_spread = list(official_track.get("score_spread", []) or [])
+    state_score_relative = list(official_track.get("score_relative", []) or [])
+    state_score_relative_support = list(official_track.get("score_relative_support", []) or [])
     merged_states = list(official_track.get("states", []) or [])
     segments = list(official_track.get("segments", []) or [])
     summary = dict(official_track.get("summary", {}) or {})
-    score_calibration_meta = dict(official_track.get("score_calibration", {}) or {})
+    score_pipeline_meta = dict(official_track.get("score_pipeline", {}) or {})
+    score_diagnostics = dict(official_track.get("score_diagnostics", {}) or {})
     merge_meta = dict(official_track.get("merge_rule", {}) or {})
     validation_sidecar = _build_validation_sidecar(
         rows=rows,
@@ -1085,6 +1296,11 @@ def compute_state_segments(
                 "motion_velocity_state_signal": float(motion_values[idx]),
                 "semantic_velocity_state_signal": float(semantic_values[idx]),
                 "state_score_raw": float(state_scores_raw[idx]),
+                "state_score_baseline": float(state_score_baseline[idx]),
+                "state_score_residual": float(state_score_residual[idx]),
+                "state_score_spread": float(state_score_spread[idx]),
+                "state_score_relative": float(state_score_relative[idx]),
+                "state_score_relative_support": float(state_score_relative_support[idx]),
                 "state_score": float(state_scores[idx]),
                 "state_label": str(merged_states[idx]),
             }
@@ -1110,7 +1326,8 @@ def compute_state_segments(
             "motion_velocity": float(weights.get("motion_velocity", 0.0) or 0.0),
             "semantic_velocity": float(weights.get("semantic_velocity", 0.0) or 0.0),
         },
-        "score_calibration": dict(score_calibration_meta),
+        "score_pipeline": dict(score_pipeline_meta),
+        "score_diagnostics": dict(score_diagnostics),
         "enter_th": float(enter_th),
         "exit_th": float(exit_th),
         "min_high_len": int(min_high_len),
