@@ -22,7 +22,6 @@ DEFAULT_PRE_TRANSITION_FRAMES = 24
 DEFAULT_POST_TRANSITION_FRAMES = 12
 DEFAULT_MIN_ANCHOR_SPACING = 12
 DEFAULT_MIN_SEGMENT_FRAMES = 16
-DEFAULT_NORMALIZATION_METHOD = "processed_inputs_plus_local_robust_baseline"
 DEFAULT_SMOOTHING_WINDOW = 9
 DEFAULT_WEIGHTS = {
     "motion_velocity": 0.75,
@@ -69,8 +68,10 @@ def _build_state_items(build_item, final_indices, density_rows, safe_base_indice
                     frame_idx,
                     source_type="uniform",
                     source_role="uniform",
-                    candidate_role="uniform",
-                    promotion_source="uniform",
+                    legacy_meta={
+                        "candidate_role": "uniform",
+                        "promotion_source": "uniform",
+                    },
                 )
             )
             continue
@@ -84,11 +85,13 @@ def _build_state_items(build_item, final_indices, density_rows, safe_base_indice
                 frame_idx,
                 source_type=STATE_POLICY_NAME,
                 source_role=source_role,
-                candidate_role=source_role,
-                is_inserted=is_inserted,
-                promotion_source="state_schedule",
-                promotion_reason="global_density_scan_anchor",
-                window_id=int(frame_idx),
+                legacy_meta={
+                    "candidate_role": source_role,
+                    "is_inserted": is_inserted,
+                    "promotion_source": "state_schedule",
+                    "promotion_reason": "global_density_scan_anchor",
+                    "window_id": int(frame_idx),
+                },
             )
         )
 
@@ -100,15 +103,10 @@ def _build_state_items(build_item, final_indices, density_rows, safe_base_indice
     }
 
 
-def _state_frame_ranges(segments, schedule_rows):
-    schedule_map = {}
-    for row in list(schedule_rows or []):
-        schedule_map[int(row.get("segment_id", 0) or 0)] = row
-
+def _segment_ranges(segments):
     rows = []
     for segment in list(segments or []):
         segment_id = int(segment.get("segment_id", 0) or 0)
-        schedule_row = schedule_map.get(segment_id, {})
         rows.append(
             {
                 "segment_id": int(segment_id),
@@ -116,8 +114,6 @@ def _state_frame_ranges(segments, schedule_rows):
                 "start_frame": int(segment.get("start_frame", 0) or 0),
                 "end_frame": int(segment.get("end_frame", 0) or 0),
                 "duration_frames": int(segment.get("duration_frames", 0) or 0),
-                "gap": int(schedule_row.get("gap", 0) or 0),
-                "anchor_count": int(schedule_row.get("anchor_count", 0) or 0),
             }
         )
     return rows
@@ -281,12 +277,12 @@ def _segment_zone_profile(start_frame, end_frame, density_rows):
     primary_zone = ZONE_LOW
     best_key = None
     for zone_name in (ZONE_LOW, ZONE_TRANSITION, ZONE_HIGH):
-        candidate_key = (
+        zone_rank_key = (
             int(counts.get(zone_name, 0)),
             int(_zone_priority(zone_name)),
         )
-        if best_key is None or candidate_key > best_key:
-            best_key = candidate_key
+        if best_key is None or zone_rank_key > best_key:
+            best_key = zone_rank_key
             primary_zone = str(zone_name)
     return {
         "primary_zone": str(primary_zone),
@@ -570,7 +566,6 @@ def build_policy_plan(context):
         exp_dir=exp_dir,
         input_csv=None,
         output_dir=state_output_dir,
-        normalization_method=DEFAULT_NORMALIZATION_METHOD,
         smoothing_window=DEFAULT_SMOOTHING_WINDOW,
         enter_th=DEFAULT_ENTER_TH,
         exit_th=DEFAULT_EXIT_TH,
@@ -606,7 +601,6 @@ def build_policy_plan(context):
     transition_band_count = _transition_band_count(schedule_runs)
     min_final_gap = int(_min_gap(final_indices))
     min_final_segment_frames = int(short_segment_meta.get("min_final_segment_frames", 0) or 0)
-    state_segmentation_meta = dict(state_result.get("meta", {}) or {})
 
     keyframe_items, allocation_meta = _build_state_items(
         context["build_item"],
@@ -615,7 +609,7 @@ def build_policy_plan(context):
         safe_base_indices,
     )
 
-    state_frame_ranges = _state_frame_ranges(state_result["segments"], [])
+    state_frame_ranges = _segment_ranges(state_result["segments"])
     high_state_count = len([row for row in state_frame_ranges if str(row.get("state_label")) == STATE_HIGH])
     low_state_count = len([row for row in state_frame_ranges if str(row.get("state_label")) == STATE_LOW])
     summary = {
@@ -664,15 +658,6 @@ def build_policy_plan(context):
         "short_segment_merge_count": int(short_segment_meta.get("merge_count", 0) or 0),
         "state_frame_ranges": state_frame_ranges,
         "density_schedule_summary": density_schedule_summary,
-        "state_segmentation_params": {
-            "input_signals": list(state_segmentation_meta.get("input_signals", []) or []),
-            "formal_state_inputs": dict(state_segmentation_meta.get("formal_state_inputs", {}) or {}),
-            "weights": dict(state_segmentation_meta.get("weights", {}) or {}),
-            "enter_th": float(state_segmentation_meta.get("enter_th", DEFAULT_ENTER_TH) or DEFAULT_ENTER_TH),
-            "exit_th": float(state_segmentation_meta.get("exit_th", DEFAULT_EXIT_TH) or DEFAULT_EXIT_TH),
-            "min_high_len": int(state_segmentation_meta.get("min_high_len", DEFAULT_MIN_HIGH_LEN) or DEFAULT_MIN_HIGH_LEN),
-            "min_low_len": int(state_segmentation_meta.get("min_low_len", DEFAULT_MIN_LOW_LEN) or DEFAULT_MIN_LOW_LEN),
-        },
         "scheduling_rules": {
             "scan_strategy": "global_left_to_right_density_scan",
             "spacing_rule": str(spacing_meta.get("tie_break_rule", "")),
@@ -680,16 +665,10 @@ def build_policy_plan(context):
         },
         "spacing_merge_meta": spacing_meta,
         "short_segment_merge_meta": short_segment_meta,
-        "formal_inputs": {
-            "signal_names": list((state_segmentation_meta.get("input_signals", []) or [])),
-            "source_mode": str((state_segmentation_meta.get("formal_state_inputs", {}) or {}).get("source_mode", "") or ""),
-            "processed_columns": dict((state_segmentation_meta.get("formal_state_inputs", {}) or {}).get("processed_columns", {}) or {}),
-        },
-        "state_segmentation_artifacts": {},
     }
 
-    state_io = write_state_segmentation_outputs(state_result)
-    state_plots = save_state_segmentation_plots(
+    write_state_segmentation_outputs(state_result)
+    save_state_segmentation_plots(
         output_dir=state_result["output_dir"],
         frame_rows=state_result["frame_rows"],
         segments=state_result["segments"],
@@ -700,11 +679,6 @@ def build_policy_plan(context):
         uniform_indices=safe_base_indices,
         signal_rows=signal_payload["rows"],
     )
-    policy_meta["state_segmentation_artifacts"] = {
-        "json_path": str(state_io["json_path"]),
-        "report_path": str(state_io["report_path"]),
-        "overview_path": str(state_plots["overview_path"]),
-    }
 
     log_info(
         "state policy selected: safe_base={} segments={} transition_bands={} final={} min_gap={} short_merge={}".format(

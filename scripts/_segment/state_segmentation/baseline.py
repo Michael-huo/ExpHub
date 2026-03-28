@@ -220,13 +220,6 @@ def _mean(values):
     return float(sum(float(v) for v in values) / float(len(values)))
 
 
-def _std(values, floor_value):
-    values = list(values or [])
-    if not values:
-        return float(floor_value)
-    return max(float(np.std(np.asarray(values, dtype=np.float32))), float(floor_value))
-
-
 def _clamp01(value):
     return float(min(1.0, max(0.0, float(value))))
 
@@ -770,7 +763,7 @@ def _build_high_risk_intervals(
         "interval_merge": interval_merge_meta,
         "short_interval_filter": filter_meta,
         "score_level_filter": score_filter_meta,
-        "candidate_interval_count": int(len(raw_intervals)),
+        "raw_interval_count": int(len(raw_intervals)),
         "final_interval_count": int(len(high_intervals)),
         "raw_active_frame_ratio": (
             float(sum(1 for flag in hysteresis_mask if bool(flag))) / float(len(hysteresis_mask))
@@ -893,7 +886,7 @@ def _state_frame_statistics(segments, frame_count):
     }
 
 
-def _build_summary(segments, frame_count):
+def _build_interval_summary(segments, frame_count):
     high_segments = [item for item in list(segments or []) if str(item.get("state_label", STATE_LOW)) == STATE_HIGH]
     low_segments = [item for item in list(segments or []) if str(item.get("state_label", STATE_LOW)) == STATE_LOW]
     high_frames = 0
@@ -909,7 +902,7 @@ def _build_summary(segments, frame_count):
     }
 
 
-def _sample_note(high_intervals, frame_count):
+def _build_interpretation(high_intervals, frame_count):
     high_intervals = list(high_intervals or [])
     if not high_intervals:
         return "No sustained high-risk interval detected in this sample."
@@ -1011,6 +1004,53 @@ def _remove_legacy_state_outputs(output_dir):
             continue
 
 
+def _build_detector_report_meta(detector_meta, detector_window_meta, enter_th, exit_th, min_high_len, glitch_merge_len):
+    return {
+        "detector_type": str(detector_meta.get("detector_type", _DETECTOR_TYPE) or _DETECTOR_TYPE),
+        "online": bool(detector_meta.get("online", True)),
+        "trailing_style": bool(detector_meta.get("trailing_style", True)),
+        "uses_local_mean": bool(detector_window_meta.get("uses_local_mean", True)),
+        "uses_local_spread": bool(detector_window_meta.get("uses_local_spread", True)),
+        "baseline_window_frames": int(detector_window_meta.get("baseline_window_frames", 0) or 0),
+        "recent_window_frames": int(detector_window_meta.get("recent_window_frames", 0) or 0),
+        "regime_window_frames": int(detector_window_meta.get("regime_window_frames", 0) or 0),
+        "enter_th": float(enter_th),
+        "exit_th": float(exit_th),
+        "minimum_interval_frames": int(min_high_len),
+        "gap_merge_frames": int(glitch_merge_len),
+        "shoulder_extension_frames": int(
+            detector_meta.get("shoulder_extension_frames", 0)
+            or detector_window_meta.get("shoulder_extension_frames", 0)
+            or 0
+        ),
+        "gap_merge_count": int(((detector_meta.get("gap_merge", {}) or {}).get("merge_count", 0) or 0)),
+        "merged_interval_count": int(((detector_meta.get("interval_merge", {}) or {}).get("merge_count", 0) or 0)),
+        "dropped_short_interval_count": int(((detector_meta.get("short_interval_filter", {}) or {}).get("dropped_count", 0) or 0)),
+        "dropped_low_score_interval_count": int(((detector_meta.get("score_level_filter", {}) or {}).get("dropped_count", 0) or 0)),
+    }
+
+
+def _load_state_input_rows(exp_dir, segment_dir):
+    input_csv = segment_dir / "signal_extraction" / _INPUT_CSV_NAME
+    if input_csv.is_file():
+        return _read_signal_rows(input_csv), input_csv
+
+    frames_dir = ensure_dir(segment_dir / "frames", name="segment frames dir")
+    timestamps = _read_timestamps(ensure_file(segment_dir / "timestamps.txt", name="segment timestamps"))
+    keyframes_meta_path = segment_dir / "keyframes" / "keyframes_meta.json"
+    keyframes_meta = _read_json(keyframes_meta_path) if keyframes_meta_path.is_file() else {}
+    signal_payload = extract_signal_timeseries_from_frames(
+        frame_paths=list_frames_sorted(frames_dir),
+        timestamps=timestamps,
+        exp_dir=exp_dir,
+        segment_dir=segment_dir,
+        keyframes_meta=keyframes_meta,
+        output_dir=segment_dir / ".segment_cache" / "state_signal_prepare",
+        cache_dir=segment_dir / ".segment_cache" / "signal_extraction",
+    )
+    return list(signal_payload.get("rows", []) or []), None
+
+
 def compute_state_segments(
     rows,
     exp_dir=None,
@@ -1077,7 +1117,7 @@ def compute_state_segments(
         detector_scores=detector_scores,
         dt_sec=dt_sec,
     )
-    summary = _build_summary(segments, len(rows))
+    summary = _build_interval_summary(segments, len(rows))
     high_risk_intervals = _high_risk_interval_digest(segments)
     high_risk_coverage_ratio = float(summary.get("high_state_frame_ratio", 0.0) or 0.0)
 
@@ -1105,26 +1145,15 @@ def compute_state_segments(
             }
         )
 
-    sample_note = _sample_note(high_risk_intervals, len(rows))
-    detector_report_meta = {
-        "detector_type": str(detector_meta.get("detector_type", _DETECTOR_TYPE) or _DETECTOR_TYPE),
-        "online": bool(detector_meta.get("online", True)),
-        "trailing_style": bool(detector_meta.get("trailing_style", True)),
-        "uses_local_mean": bool(detector_window_meta.get("uses_local_mean", True)),
-        "uses_local_spread": bool(detector_window_meta.get("uses_local_spread", True)),
-        "baseline_window_frames": int(detector_window_meta.get("baseline_window_frames", 0) or 0),
-        "recent_window_frames": int(detector_window_meta.get("recent_window_frames", 0) or 0),
-        "regime_window_frames": int(detector_window_meta.get("regime_window_frames", 0) or 0),
-        "enter_th": float(enter_th),
-        "exit_th": float(exit_th),
-        "minimum_interval_frames": int(min_high_len),
-        "gap_merge_frames": int(glitch_merge_len),
-        "shoulder_extension_frames": int(detector_meta.get("shoulder_extension_frames", 0) or detector_window_meta.get("shoulder_extension_frames", 0) or 0),
-        "gap_merge_count": int(((detector_meta.get("gap_merge", {}) or {}).get("merge_count", 0) or 0)),
-        "merged_interval_count": int(((detector_meta.get("interval_merge", {}) or {}).get("merge_count", 0) or 0)),
-        "dropped_short_interval_count": int(((detector_meta.get("short_interval_filter", {}) or {}).get("dropped_count", 0) or 0)),
-        "dropped_low_score_interval_count": int(((detector_meta.get("score_level_filter", {}) or {}).get("dropped_count", 0) or 0)),
-    }
+    sample_note = _build_interpretation(high_risk_intervals, len(rows))
+    detector_report_meta = _build_detector_report_meta(
+        detector_meta=detector_meta,
+        detector_window_meta=detector_window_meta,
+        enter_th=enter_th,
+        exit_th=exit_th,
+        min_high_len=min_high_len,
+        glitch_merge_len=glitch_merge_len,
+    )
 
     meta = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -1132,12 +1161,6 @@ def compute_state_segments(
         "input_csv": str(Path(input_csv).resolve()) if input_csv else "",
         "input_signals": list(DEFAULT_INPUT_SIGNALS),
         "formal_state_inputs": dict(formal_state_input_meta),
-        "normalization_method": {
-            "name": "processed_formal_state_inputs_only",
-            "scope": "reuse persisted formal state inputs from signal extraction when available",
-            "source_mode": str(formal_state_input_meta.get("source_mode", "")),
-            "legacy_cli_fallback_only": False,
-        },
         "weights": dict(weights),
         "score": score_meta,
         "enter_th": float(enter_th),
@@ -1146,10 +1169,6 @@ def compute_state_segments(
         "min_low_len": int(min_low_len),
         "merge_rule": dict((detector_meta.get("gap_merge", {}) or {})),
         "detector": detector_report_meta,
-        "detector_window_meta": detector_window_meta,
-        "frame_count": int(len(rows)),
-        "median_dt_sec": float(dt_sec),
-        "state_labels": [STATE_LOW, STATE_HIGH],
         "summary": summary,
         "high_risk_intervals": high_risk_intervals,
         "high_risk_coverage_ratio": float(high_risk_coverage_ratio),
@@ -1194,25 +1213,7 @@ def run_state_segmentation(
 ):
     exp_dir = ensure_dir(exp_dir, name="experiment dir")
     segment_dir = ensure_dir(exp_dir / "segment", name="segment dir")
-    input_csv = segment_dir / "signal_extraction" / _INPUT_CSV_NAME
-    if input_csv.is_file():
-        rows = _read_signal_rows(input_csv)
-    else:
-        frames_dir = ensure_dir(segment_dir / "frames", name="segment frames dir")
-        timestamps = _read_timestamps(ensure_file(segment_dir / "timestamps.txt", name="segment timestamps"))
-        keyframes_meta_path = segment_dir / "keyframes" / "keyframes_meta.json"
-        keyframes_meta = _read_json(keyframes_meta_path) if keyframes_meta_path.is_file() else {}
-        signal_payload = extract_signal_timeseries_from_frames(
-            frame_paths=list_frames_sorted(frames_dir),
-            timestamps=timestamps,
-            exp_dir=exp_dir,
-            segment_dir=segment_dir,
-            keyframes_meta=keyframes_meta,
-            output_dir=segment_dir / ".segment_cache" / "state_signal_prepare",
-            cache_dir=segment_dir / ".segment_cache" / "signal_extraction",
-        )
-        rows = list(signal_payload.get("rows", []) or [])
-        input_csv = None
+    rows, input_csv = _load_state_input_rows(exp_dir, segment_dir)
     output_dir = (segment_dir / "state_segmentation").resolve()
     return compute_state_segments(
         rows=rows,

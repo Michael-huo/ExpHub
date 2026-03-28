@@ -26,7 +26,7 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 - `segment/keyframes/keyframes_meta.json` 是 raw keyframe 事实源
 - `segment/deploy_schedule.json` 是当前 Wan 执行投影；`infer` 优先消费它，但它不能回写覆盖 raw schedule
 - `segment/state_segmentation/state_segments.json` 是 state 区间事实源；`prompt` 基于它生成 `state_prompt_manifest.json`
-- 当前默认 `state_segments.json` 语义是兼容下游的 `low_state / high_state` 区间序列；当前样例中某个 `high_state` 可能对应 turning high-risk interval，但正式主线不再绑定单一模板
+- 当前默认 `state_segments.json` 语义是兼容下游的 `low_state / high_state` 区间序列
 - `prompt/final_prompt.json` 是 infer prompt 的 base scene 输入
 - `prompt/state_prompt_manifest.json` 是按 state 区间生成的局部 motion prompt
 - `prompt/deploy_to_state_prompt_map.json` 只负责把 execution segment 映射到 state prompt，不直接生成新 prompt

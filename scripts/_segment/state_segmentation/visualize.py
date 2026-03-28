@@ -77,25 +77,7 @@ def _draw_segment_sequence(ax, segments, y_value, height):
         )
 
 
-def save_state_overview(
-    output_path,
-    frame_rows,
-    segments,
-    enter_th=None,
-    exit_th=None,
-    density_rows=None,
-    schedule_runs=None,
-    final_indices=None,
-    uniform_indices=None,
-    signal_rows=None,
-):
-    del enter_th
-    del exit_th
-    del density_rows
-    del schedule_runs
-    del uniform_indices
-    del signal_rows
-
+def _save_state_overview(output_path, frame_rows, segments, final_indices=None):
     frame_rows = list(frame_rows or [])
     segments = list(segments or [])
     final_indices = [int(idx) for idx in list(final_indices or [])]
@@ -184,27 +166,28 @@ def save_state_segmentation_plots(
     uniform_indices=None,
     signal_rows=None,
 ):
+    del enter_th
+    del exit_th
+    del density_rows
+    del schedule_runs
+    del uniform_indices
+    del signal_rows
+
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     overview_path = output_dir / "state_overview.png"
-    legacy_candidate_compare = output_dir / "state_signal_candidate_compare.png"
-    if legacy_candidate_compare.is_file():
+    stale_compare_path = output_dir / "state_signal_candidate_compare.png"
+    if stale_compare_path.is_file():
         try:
-            legacy_candidate_compare.unlink()
+            stale_compare_path.unlink()
         except Exception:
             pass
 
-    save_state_overview(
+    _save_state_overview(
         output_path=overview_path,
         frame_rows=frame_rows,
         segments=segments,
-        enter_th=enter_th,
-        exit_th=exit_th,
-        density_rows=density_rows,
-        schedule_runs=schedule_runs,
         final_indices=final_indices,
-        uniform_indices=uniform_indices,
-        signal_rows=signal_rows,
     )
     return {
         "overview_path": overview_path,

@@ -29,8 +29,10 @@ def build_policy_plan(context):
                 frame_idx,
                 source_type="uniform",
                 source_role="uniform",
-                candidate_role="uniform",
-                promotion_source="uniform",
+                legacy_meta={
+                    "candidate_role": "uniform",
+                    "promotion_source": "uniform",
+                },
             )
         )
 

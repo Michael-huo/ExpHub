@@ -164,7 +164,7 @@
 
 - `signal_overview.png` 需要明确标出当前正式主线输入是 `motion_velocity`、`semantic_velocity`
 - 这些正式输入曲线应反映已经完成轻量预处理后的 processed 结果
-- 当前默认不再输出 `state_signal_candidate_compare.png` 等 state score 候选 sidecar 图
+- 当前默认不再输出 `state_signal_candidate_compare.png` 等旧 sidecar 对照图
 
 当前默认不再独立生成旧 `segment/analysis/` 目录中的 `segment_summary.json`、`segment_timeseries.csv`、`kinematics_overview.png`、`allocation_overview.png`、`comparison_overview.png`、`projection_overview.png` 以及历史 `risk_*` / `proposed_schedule*` 研究文件。
 

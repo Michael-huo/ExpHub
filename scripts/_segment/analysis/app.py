@@ -191,39 +191,6 @@ def _remove_stale_outputs(analysis_dir):
         pass
 
 
-def _projection_maps(deploy_schedule):
-    if not isinstance(deploy_schedule, dict):
-        return {"raw_boundary_order": {}, "deploy_boundary_order": {}, "raw_segments": {}, "deploy_segments": {}}
-
-    raw_boundary_order = {}
-    for pos, frame_idx in enumerate(list(deploy_schedule.get("raw_keyframe_indices") or [])):
-        raw_boundary_order[int(frame_idx)] = int(pos)
-    deploy_boundary_order = {}
-    for pos, frame_idx in enumerate(list(deploy_schedule.get("deploy_keyframe_indices") or [])):
-        deploy_boundary_order[int(frame_idx)] = int(pos)
-
-    raw_segments = {}
-    deploy_segments = {}
-    for item in list(deploy_schedule.get("segments") or []):
-        raw_end_idx = int(item.get("raw_end_idx", 0) or 0)
-        deploy_end_idx = int(item.get("deploy_end_idx", 0) or 0)
-        payload = {
-            "projection_segment_id": int(item.get("segment_id", 0) or 0),
-            "projection_raw_gap": int(item.get("raw_gap", 0) or 0),
-            "projection_deploy_gap": int(item.get("deploy_gap", 0) or 0),
-            "projection_gap_error": int(item.get("gap_error", 0) or 0),
-            "projection_boundary_shift": int(item.get("boundary_shift", 0) or 0),
-        }
-        raw_segments[raw_end_idx] = dict(payload)
-        deploy_segments[deploy_end_idx] = dict(payload)
-    return {
-        "raw_boundary_order": raw_boundary_order,
-        "deploy_boundary_order": deploy_boundary_order,
-        "raw_segments": raw_segments,
-        "deploy_segments": deploy_segments,
-    }
-
-
 def _projection_summary(deploy_schedule):
     if not isinstance(deploy_schedule, dict):
         return {}
@@ -259,61 +226,6 @@ def _signal_stats(rows):
     return summary
 
 
-def _state_row_map(frame_rows):
-    row_map = {}
-    for row in list(frame_rows or []):
-        row_map[int(row.get("frame_idx", 0) or 0)] = row
-    return row_map
-
-
-def _build_timeseries_rows(signal_rows, keyframes_meta, deploy_schedule, state_result=None):
-    uniform_indices, final_indices = _resolve_keyframe_sets(keyframes_meta)
-    uniform_set = set(uniform_indices)
-    final_set = set(final_indices)
-    state_map = _state_row_map((state_result or {}).get("frame_rows", []))
-    projection = _projection_maps(deploy_schedule)
-    out_rows = []
-
-    for row in list(signal_rows or []):
-        frame_idx = int(row.get("frame_idx", 0) or 0)
-        item = dict(row)
-        item["is_uniform_anchor"] = bool(frame_idx in uniform_set)
-        item["is_selected_keyframe"] = bool(frame_idx in final_set)
-        item["is_active_keyframe"] = bool(frame_idx in final_set)
-        item["is_raw_boundary"] = bool(frame_idx in projection["raw_boundary_order"])
-        item["raw_boundary_order"] = projection["raw_boundary_order"].get(frame_idx)
-        item["is_deploy_boundary"] = bool(frame_idx in projection["deploy_boundary_order"])
-        item["deploy_boundary_order"] = projection["deploy_boundary_order"].get(frame_idx)
-        projection_row = projection["raw_segments"].get(frame_idx) or projection["deploy_segments"].get(frame_idx) or {}
-        for key in ("projection_segment_id", "projection_raw_gap", "projection_deploy_gap", "projection_gap_error", "projection_boundary_shift"):
-            item[key] = projection_row.get(key)
-
-        state_row = state_map.get(frame_idx)
-        if state_row is not None:
-            item["state_label"] = str(state_row.get("state_label", ""))
-            item["state_score"] = float(state_row.get("state_score", 0.0) or 0.0)
-            item["schedule_zone"] = str(state_row.get("schedule_zone", ""))
-            item["target_gap"] = int(state_row.get("target_gap", 0) or 0)
-        out_rows.append(item)
-    return out_rows
-
-
-def _write_csv(path, rows):
-    fieldnames = []
-    seen = set()
-    for row in rows:
-        for key in row.keys():
-            if key in seen:
-                continue
-            seen.add(key)
-            fieldnames.append(key)
-    with open(str(path), "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: row.get(key) for key in fieldnames})
-
-
 def _experiment_info(exp_dir, exp_meta, step_meta):
     params = dict(exp_meta.get("params", {}) or {})
     step_params = dict(step_meta.get("params", {}) or {})
@@ -334,7 +246,7 @@ def _experiment_info(exp_dir, exp_meta, step_meta):
     }
 
 
-def _build_summary(exp_dir, data, signal_rows, state_result=None):
+def _build_summary(exp_dir, data, signal_rows):
     keyframes_meta = dict(data["keyframes_meta"])
     policy_name = _policy_name(keyframes_meta)
     exp_info = _experiment_info(exp_dir, data["exp_meta"], data["step_meta"])
@@ -364,7 +276,7 @@ def _build_summary(exp_dir, data, signal_rows, state_result=None):
     if projection:
         summary["projection"] = projection
     if policy_name == "state":
-        state_block = {
+        summary["state_schedule"] = {
             "state_segment_count": int(policy_meta.get("state_segment_count", 0) or 0),
             "high_state_count": int(policy_meta.get("high_state_count", 0) or 0),
             "low_state_count": int(policy_meta.get("low_state_count", 0) or 0),
@@ -376,9 +288,6 @@ def _build_summary(exp_dir, data, signal_rows, state_result=None):
             "min_final_segment_frames": int(policy_meta.get("min_final_segment_frames", 0) or 0),
             "short_segment_merge_count": int(policy_meta.get("short_segment_merge_count", 0) or 0),
         }
-        if state_result is not None:
-            state_block["state_segmentation_summary"] = dict((state_result.get("meta", {}) or {}).get("summary", {}) or {})
-        summary["state_schedule"] = state_block
     return summary
 
 
@@ -420,14 +329,13 @@ def run_segment_analyze(argv=None):
     state_output_dir = None
     if policy_name == "state":
         state_output_dir = segment_dir / "state_segmentation"
-        summary = _build_summary(exp_dir, data, signal_rows, state_result=state_result)
+        summary = _build_summary(exp_dir, data, signal_rows)
         if not (state_output_dir / "state_report.json").is_file():
             state_result = run_state_segmentation(exp_dir)
             write_state_segmentation_outputs(state_result)
-        log_info("analysis summary prepared: policy={} frames={}".format(policy_name, int(summary.get("signals", {}).get("frame_count", 0) or 0)))
     else:
-        summary = _build_summary(exp_dir, data, signal_rows, state_result=state_result)
-        log_info("analysis summary prepared: policy={} frames={}".format(policy_name, int(summary.get("signals", {}).get("frame_count", 0) or 0)))
+        summary = _build_summary(exp_dir, data, signal_rows)
+    log_info("analysis summary prepared: policy={} frames={}".format(policy_name, int(summary.get("signals", {}).get("frame_count", 0) or 0)))
 
     _official_log(
         data["keyframes_meta"],

@@ -25,35 +25,41 @@ def _read_timestamps(path):
 
 
 def _build_keyframe_item_factory(frame_paths, timestamps):
+    def _legacy_item_fields(source_role, legacy_meta):
+        legacy_meta = dict(legacy_meta or {})
+        return {
+            # Legacy compatibility only: retained for existing keyframe metadata consumers.
+            "candidate_role": str(legacy_meta.get("candidate_role") or source_role),
+            "is_inserted": bool(legacy_meta.get("is_inserted", False)),
+            "is_relocated": bool(legacy_meta.get("is_relocated", False)),
+            "replaced_uniform_index": (
+                int(legacy_meta["replaced_uniform_index"])
+                if legacy_meta.get("replaced_uniform_index") is not None
+                else None
+            ),
+            "promotion_source": str(legacy_meta.get("promotion_source") or ""),
+            "promotion_reason": str(legacy_meta.get("promotion_reason") or ""),
+            "window_id": int(legacy_meta["window_id"]) if legacy_meta.get("window_id") is not None else None,
+        }
+
     def _make_item(
         frame_idx,
         source_type,
         source_role,
         rerank_score=None,
-        is_inserted=False,
-        is_relocated=False,
-        replaced_uniform_index=None,
-        candidate_role="",
-        promotion_source="",
-        promotion_reason="",
-        window_id=None,
+        legacy_meta=None,
     ):
         path = frame_paths[int(frame_idx)]
-        return {
+        item = {
             "frame_idx": int(frame_idx),
             "file_name": path.name,
             "ts_sec": float(timestamps[int(frame_idx)]),
             "source_type": str(source_type),
             "source_role": str(source_role),
-            "candidate_role": str(candidate_role or source_role),
             "rerank_score": float(rerank_score) if rerank_score is not None else None,
-            "is_inserted": bool(is_inserted),
-            "is_relocated": bool(is_relocated),
-            "replaced_uniform_index": int(replaced_uniform_index) if replaced_uniform_index is not None else None,
-            "promotion_source": str(promotion_source or ""),
-            "promotion_reason": str(promotion_reason or ""),
-            "window_id": int(window_id) if window_id is not None else None,
         }
+        item.update(_legacy_item_fields(source_role, legacy_meta))
+        return item
 
     return _make_item
 
@@ -105,8 +111,10 @@ def _normalize_plan(context, plan):
                 frame_idx,
                 source_type="uniform",
                 source_role="uniform",
-                candidate_role="uniform",
-                promotion_source="uniform",
+                legacy_meta={
+                    "candidate_role": "uniform",
+                    "promotion_source": "uniform",
+                },
             )
         items.append(item)
 

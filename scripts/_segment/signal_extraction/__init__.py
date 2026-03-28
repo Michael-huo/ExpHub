@@ -8,7 +8,6 @@ _EXPORTS = {
     "FORMAL_STATE_INPUT_COLUMNS": ".extract",
     "FORMAL_STATE_INPUT_PREPROCESSING": ".extract",
     "FORMAL_STATE_INPUT_SIGNALS": ".extract",
-    "DEFAULT_PLOT_SMOOTH_WINDOW": ".extract",
     "build_formal_state_input_rows": ".extract",
     "extract_signal_timeseries": ".extract",
     "extract_signal_timeseries_from_frames": ".extract",

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Run a minimal baseline state segmentation on top of signal extraction outputs."""
+"""Run the formal state segmentation pipeline."""
 
 import argparse
 
@@ -30,13 +30,13 @@ def build_arg_parser():
     parser.add_argument(
         "--normalization_method",
         default=DEFAULT_NORMALIZATION_METHOD,
-        help="legacy raw fallback knob only; persisted formal state inputs are reused when available",
+        help="fallback only; persisted formal state inputs are reused when available",
     )
     parser.add_argument(
         "--smoothing_window",
         type=int,
         default=DEFAULT_SMOOTHING_WINDOW,
-        help="legacy raw fallback knob only; persisted formal state inputs are reused when available",
+        help="fallback only; persisted formal state inputs are reused when available",
     )
     parser.add_argument("--enter_th", type=float, default=DEFAULT_ENTER_TH, help="detector score threshold for entering a high-risk interval")
     parser.add_argument("--exit_th", type=float, default=DEFAULT_EXIT_TH, help="detector score threshold for leaving a high-risk interval")
