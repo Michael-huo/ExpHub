@@ -2,17 +2,19 @@
 # -*- coding: utf-8 -*-
 
 import csv
+import json
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
-from scripts._common import ensure_dir, ensure_file, write_json_atomic
+from scripts._common import ensure_dir, ensure_file, list_frames_sorted, write_json_atomic
 from scripts._segment.research.kinematics import moving_average
 from scripts._segment.signal_extraction import (
     FORMAL_STATE_INPUT_COLUMNS,
     FORMAL_STATE_INPUT_SIGNALS,
     build_formal_state_input_rows,
+    extract_signal_timeseries_from_frames,
 )
 
 
@@ -49,7 +51,7 @@ _LEGACY_STATE_OUTPUT_NAMES = [
     "state_signal_candidate_compare.png",
 ]
 
-_DETECTOR_TYPE = "bocpd_like_regime_shift_posterior"
+_DETECTOR_TYPE = "high_risk_interval_detector"
 
 
 def _optional_float(value):
@@ -90,6 +92,22 @@ def _read_signal_rows(csv_path):
     if not rows:
         raise SystemExit("[ERR] state segmentation input is empty: {}".format(csv_path))
     return rows
+
+
+def _read_json(path):
+    with open(str(path), "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _read_timestamps(path):
+    values = []
+    with open(str(path), "r", encoding="utf-8") as f:
+        for line in f:
+            text = line.strip()
+            if not text:
+                continue
+            values.append(float(text))
+    return values
 
 
 def _coerce_signal_rows(rows):
@@ -833,27 +851,6 @@ def _build_segments(rows, state_labels, state_scores, detector_scores, dt_sec):
     return segments
 
 
-def _segment_digest(segments):
-    rows = []
-    for segment in list(segments or []):
-        rows.append(
-            {
-                "segment_id": int(segment.get("segment_id", 0) or 0),
-                "state_label": str(segment.get("state_label", STATE_LOW)),
-                "risk_level": str(segment.get("risk_level", "") or ""),
-                "start_frame": int(segment.get("start_frame", 0) or 0),
-                "end_frame": int(segment.get("end_frame", 0) or 0),
-                "duration_frames": int(segment.get("duration_frames", 0) or 0),
-                "duration_sec": float(segment.get("duration_sec", 0.0) or 0.0),
-                "state_score_mean": float(segment.get("state_score_mean", 0.0) or 0.0),
-                "state_score_peak": float(segment.get("state_score_peak", 0.0) or 0.0),
-                "detector_score_mean": float(segment.get("detector_score_mean", 0.0) or 0.0),
-                "detector_score_peak": float(segment.get("detector_score_peak", 0.0) or 0.0),
-            }
-        )
-    return rows
-
-
 def _high_risk_interval_digest(segments):
     rows = []
     for segment in list(segments or []):
@@ -921,110 +918,12 @@ def _sample_note(high_intervals, frame_count):
         center = 0.5 * float(int(item.get("start_frame", 0) or 0) + int(item.get("end_frame", 0) or 0))
         middle = 0.5 * float(max(0, int(frame_count) - 1))
         if middle > 0.0 and abs(float(center) - float(middle)) / float(middle) <= 0.35:
-            return "Single middle high-risk interval aligns with the sample's turning region and shoulder."
+            return "Single middle high-risk interval covers the main elevated-risk regime in this sample."
         return "Single sustained high-risk interval detected in this sample."
     return "Multiple high-risk intervals detected in this sample."
 
 
-def _frame_time_lookup(frame_rows):
-    out = {}
-    for row in list(frame_rows or []):
-        out[int(row.get("frame_idx", 0) or 0)] = float(row.get("timestamp", 0.0) or 0.0)
-    return out
-
-
-def build_state_timeline_rows(result, schedule_runs=None):
-    frame_lookup = _frame_time_lookup(result.get("frame_rows", []))
-    rows = []
-    for segment in list(result.get("segments", []) or []):
-        rows.append(
-            {
-                "row_type": "state_segment",
-                "row_id": int(segment.get("segment_id", 0) or 0),
-                "start_frame": int(segment.get("start_frame", 0) or 0),
-                "end_frame": int(segment.get("end_frame", 0) or 0),
-                "start_time": float(segment.get("start_time", 0.0) or 0.0),
-                "end_time": float(segment.get("end_time", 0.0) or 0.0),
-                "duration_frames": int(segment.get("duration_frames", 0) or 0),
-                "duration_sec": float(segment.get("duration_sec", 0.0) or 0.0),
-                "state_label": str(segment.get("state_label", STATE_LOW)),
-                "schedule_zone": "",
-                "target_gap": "",
-                "anchor_count": "",
-                "state_score_mean": float(segment.get("state_score_mean", 0.0) or 0.0),
-                "state_score_peak": float(segment.get("state_score_peak", 0.0) or 0.0),
-                "detector_score_mean": float(segment.get("detector_score_mean", 0.0) or 0.0),
-                "detector_score_peak": float(segment.get("detector_score_peak", 0.0) or 0.0),
-            }
-        )
-
-    for run in list(schedule_runs or []):
-        start_frame = int(run.get("start_frame", 0) or 0)
-        end_frame = int(run.get("end_frame", 0) or 0)
-        rows.append(
-            {
-                "row_type": "density_window",
-                "row_id": int(run.get("run_id", 0) or 0),
-                "start_frame": int(start_frame),
-                "end_frame": int(end_frame),
-                "start_time": float(frame_lookup.get(int(start_frame), 0.0)),
-                "end_time": float(frame_lookup.get(int(end_frame), 0.0)),
-                "duration_frames": int(run.get("duration_frames", 0) or 0),
-                "duration_sec": float(
-                    max(0.0, float(frame_lookup.get(int(end_frame), 0.0)) - float(frame_lookup.get(int(start_frame), 0.0)))
-                ),
-                "state_label": "",
-                "schedule_zone": str(run.get("schedule_zone", "") or ""),
-                "target_gap": int(run.get("target_gap", 0) or 0),
-                "anchor_count": int(run.get("anchor_count", 0) or 0),
-                "state_score_mean": "",
-                "state_score_peak": "",
-                "detector_score_mean": "",
-                "detector_score_peak": "",
-            }
-        )
-    return rows
-
-
-def _timeline_fieldnames():
-    return [
-        "row_type",
-        "row_id",
-        "start_frame",
-        "end_frame",
-        "start_time",
-        "end_time",
-        "duration_frames",
-        "duration_sec",
-        "state_label",
-        "schedule_zone",
-        "target_gap",
-        "anchor_count",
-        "state_score_mean",
-        "state_score_peak",
-        "detector_score_mean",
-        "detector_score_peak",
-    ]
-
-
-def write_state_timeline_csv(path, rows):
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = _timeline_fieldnames()
-    with open(str(path), "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in list(rows or []):
-            writer.writerow({key: row.get(key, "") for key in fieldnames})
-
-
-def build_state_report(result, schedule_runs=None, final_indices=None, policy_meta=None, analysis_summary=None, signal_report=None, candidate_sidecar=None):
-    del schedule_runs
-    del final_indices
-    del policy_meta
-    del signal_report
-    del candidate_sidecar
-
+def build_state_report(result):
     meta = dict(result.get("meta", {}) or {})
     summary = dict(meta.get("summary", {}) or {})
     segments = list(result.get("segments", []) or [])
@@ -1038,33 +937,29 @@ def build_state_report(result, schedule_runs=None, final_indices=None, policy_me
         "report_schema_version": str(REPORT_SCHEMA_VERSION),
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "source_exp_dir": str(meta.get("source_exp_dir", "") or ""),
-        "input_artifacts": {
-            "signal_timeseries_csv": "segment/signal_extraction/signal_timeseries.csv",
-            "state_segments_json": "segment/state_segmentation/{}".format(_OUTPUT_JSON_NAME),
-        },
         "artifact_contract": {
-            "default_files": [
+            "default_outputs": [
                 _OUTPUT_REPORT_NAME,
                 "state_overview.png",
                 _OUTPUT_JSON_NAME,
             ],
-            "factsource_files": [
-                _OUTPUT_JSON_NAME,
-            ],
-            "legacy_default_outputs_replaced": list(_LEGACY_STATE_OUTPUT_NAMES),
+            "fact_source": _OUTPUT_JSON_NAME,
         },
-        "official_inputs": {
+        "formal_inputs": {
             "signal_names": list(meta.get("input_signals", []) or []),
-            "formal_state_inputs": dict(meta.get("formal_state_inputs", {}) or {}),
+            "source_mode": str((meta.get("formal_state_inputs", {}) or {}).get("source_mode", "") or ""),
+            "processed_columns": dict((meta.get("formal_state_inputs", {}) or {}).get("processed_columns", {}) or {}),
+            "pipeline": list((meta.get("formal_state_inputs", {}) or {}).get("pipeline", []) or []),
+            "signals": dict((meta.get("formal_state_inputs", {}) or {}).get("signals", {}) or {}),
         },
-        "score": {
+        "state_score_summary": {
             "method": str(score_meta.get("method", "") or ""),
             "description": str(score_meta.get("description", "") or ""),
             "weights": dict(score_meta.get("weights", {}) or {}),
             "smoothing_window": int(score_meta.get("smoothing_window", 0) or 0),
             "stats": dict(score_meta.get("score_stats", {}) or {}),
         },
-        "detector": {
+        "detector_summary": {
             "detector_type": str(detector_meta.get("detector_type", _DETECTOR_TYPE) or _DETECTOR_TYPE),
             "online": bool(detector_meta.get("online", True)),
             "trailing_style": bool(detector_meta.get("trailing_style", True)),
@@ -1084,21 +979,20 @@ def build_state_report(result, schedule_runs=None, final_indices=None, policy_me
             "dropped_low_score_interval_count": int(detector_meta.get("dropped_low_score_interval_count", 0) or 0),
         },
         "high_risk_intervals": list(high_intervals),
-        "high_risk_summary": {
-            "interval_count": int(len(high_intervals)),
-            "coverage_ratio": float(coverage_ratio),
+        "coverage_ratio": float(coverage_ratio),
+        "interval_sequence_summary": {
+            "summary": summary,
             "frame_statistics": _state_frame_statistics(segments, len(frame_rows)),
         },
-        "state_segmentation": {
-            "summary": summary,
-            "segments": _segment_digest(segments),
+        "key_parameters": {
+            "enter_th": float(meta.get("enter_th", 0.0) or 0.0),
+            "exit_th": float(meta.get("exit_th", 0.0) or 0.0),
+            "min_high_len": int(meta.get("min_high_len", 0) or 0),
+            "min_low_len": int(meta.get("min_low_len", 0) or 0),
+            "glitch_merge_len": int(((meta.get("merge_rule", {}) or {}).get("maximum_gap_frames", 0) or 0)),
         },
-        "sample_note": str(meta.get("sample_note", "") or ""),
+        "interpretation": str(meta.get("sample_note", "") or ""),
     }
-
-    if isinstance(analysis_summary, dict) and analysis_summary:
-        report["segment_analysis_summary"] = dict(analysis_summary)
-
     return report
 
 
@@ -1246,10 +1140,6 @@ def compute_state_segments(
         },
         "weights": dict(weights),
         "score": score_meta,
-        "score_calibration": {
-            "applied": False,
-            "reason": "removed_from_formal_mainline",
-        },
         "enter_th": float(enter_th),
         "exit_th": float(exit_th),
         "min_high_len": int(min_high_len),
@@ -1305,7 +1195,24 @@ def run_state_segmentation(
     exp_dir = ensure_dir(exp_dir, name="experiment dir")
     segment_dir = ensure_dir(exp_dir / "segment", name="segment dir")
     input_csv = segment_dir / "signal_extraction" / _INPUT_CSV_NAME
-    rows = _read_signal_rows(input_csv)
+    if input_csv.is_file():
+        rows = _read_signal_rows(input_csv)
+    else:
+        frames_dir = ensure_dir(segment_dir / "frames", name="segment frames dir")
+        timestamps = _read_timestamps(ensure_file(segment_dir / "timestamps.txt", name="segment timestamps"))
+        keyframes_meta_path = segment_dir / "keyframes" / "keyframes_meta.json"
+        keyframes_meta = _read_json(keyframes_meta_path) if keyframes_meta_path.is_file() else {}
+        signal_payload = extract_signal_timeseries_from_frames(
+            frame_paths=list_frames_sorted(frames_dir),
+            timestamps=timestamps,
+            exp_dir=exp_dir,
+            segment_dir=segment_dir,
+            keyframes_meta=keyframes_meta,
+            output_dir=segment_dir / ".segment_cache" / "state_signal_prepare",
+            cache_dir=segment_dir / ".segment_cache" / "signal_extraction",
+        )
+        rows = list(signal_payload.get("rows", []) or [])
+        input_csv = None
     output_dir = (segment_dir / "state_segmentation").resolve()
     return compute_state_segments(
         rows=rows,
@@ -1323,18 +1230,11 @@ def run_state_segmentation(
     )
 
 
-def write_state_segmentation_outputs(result, schedule_runs=None, final_indices=None, policy_meta=None, analysis_summary=None, signal_report=None):
+def write_state_segmentation_outputs(result):
     output_dir = ensure_dir(result["output_dir"], name="state segmentation output dir")
     json_path = output_dir / _OUTPUT_JSON_NAME
     report_path = output_dir / _OUTPUT_REPORT_NAME
-    report = build_state_report(
-        result,
-        schedule_runs=schedule_runs,
-        final_indices=final_indices,
-        policy_meta=policy_meta,
-        analysis_summary=analysis_summary,
-        signal_report=signal_report,
-    )
+    report = build_state_report(result)
     write_json_atomic(json_path, result["json_payload"], indent=2)
     write_state_report(report_path, report)
     _remove_legacy_state_outputs(output_dir)

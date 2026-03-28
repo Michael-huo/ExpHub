@@ -706,7 +706,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--skip_analyze",
         action="store_true",
-        help="skip automatic post-segment analyze for --mode segment/--mode all",
+        help="legacy no-op flag; post-segment analyze sidecar is no longer run by default",
     )
 
     # SLAM sequence selection.
@@ -1352,34 +1352,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         if args.mode not in ("segment", "all"):
             return
         if args.skip_analyze:
-            _debug_info("post analyze skipped: --skip_analyze")
+            _debug_info("post analyze disabled: --skip_analyze (legacy no-op)")
             return
-
-        signal_dir = exp_dir / "segment" / "signal_extraction"
-        state_dir = exp_dir / "segment" / "state_segmentation"
-        segment_python = _phase_python("segment")
-        cmd = [
-            str(segment_python),
-            str(seg_py),
-            "--task",
-            "analyze",
-            "--exp_dir",
-            str(exp_dir),
-        ]
-        _debug_info("post analyze start: exp_dir={} interpreter={}".format(exp_dir, segment_python))
-        try:
-            run_cmd(
-                cmd,
-                cwd=exphub_root,
-                check=True,
-                **step_runner._cmd_log_kwargs("segment_analyze.log")
-            )
-        except RunError as e:
-            rc = e.returncode if e.returncode is not None else -1
-            log_path = str(e.log_path) if e.log_path else str(logs_dir / "segment_analyze.log")
-            _warn("post analyze failed: rc={} log={}".format(rc, log_path))
-            return
-        _debug_info("post analyze done: signal_dir={} state_dir={}".format(signal_dir, state_dir))
+        _debug_info("post analyze disabled by default: analysis/research sidecar is now manual-only")
 
 
     # Execute mode

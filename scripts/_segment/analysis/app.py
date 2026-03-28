@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from exphub.context import ExperimentContext
-from scripts._common import ensure_dir, ensure_file, list_frames_sorted, log_info, log_prog, log_warn, write_json_atomic
+from scripts._common import ensure_dir, ensure_file, list_frames_sorted, log_info, log_prog, log_warn
 from scripts._segment.policies.naming import OFFICIAL_POLICY_NAMES, normalize_policy_name, policy_display_name
 from scripts._segment.signal_extraction import extract_signal_timeseries
 from scripts._segment.state_segmentation import run_state_segmentation, write_state_segmentation_outputs
@@ -51,7 +51,7 @@ STALE_ANALYSIS_OUTPUT_NAMES = [
 
 def build_arg_parser():
     ap = argparse.ArgumentParser(
-        description="Analyze an existing segment directory and refresh current uniform/state sidecar artifacts only."
+        description="Refresh explicit segment research sidecars for an existing experiment."
     )
     ap.add_argument("--exp_dir", default="", help="existing experiment directory; if set, overrides dataset/sequence/tag-based resolution")
     ap.add_argument("--exphub", default=str(_REPO_ROOT), help="ExpHub root used when resolving exp_dir from experiment parameters")
@@ -420,29 +420,14 @@ def run_segment_analyze(argv=None):
     state_output_dir = None
     if policy_name == "state":
         state_output_dir = segment_dir / "state_segmentation"
-        report_path = state_output_dir / "state_report.json"
         summary = _build_summary(exp_dir, data, signal_rows, state_result=state_result)
-        if report_path.is_file():
-            report = _read_json(report_path)
-            if not isinstance(report, dict):
-                report = {}
-            report["segment_analysis_summary"] = summary
-            report["signal_context"] = {
-                "signal_report_path": "segment/signal_extraction/signal_report.json",
-                "formal_state_inputs": dict((signal_payload.get("report", {}) or {}).get("formal_state_inputs", {}) or {}),
-                "representative_signals": dict((signal_payload.get("report", {}) or {}).get("representative_signals", {}) or {}),
-                "family_groups": list((signal_payload.get("report", {}) or {}).get("family_groups", []) or []),
-            }
-            write_json_atomic(str(report_path), report, indent=2)
-        else:
+        if not (state_output_dir / "state_report.json").is_file():
             state_result = run_state_segmentation(exp_dir)
-            write_state_segmentation_outputs(
-                state_result,
-                analysis_summary=summary,
-                signal_report=signal_payload.get("report", {}),
-            )
+            write_state_segmentation_outputs(state_result)
+        log_info("analysis summary prepared: policy={} frames={}".format(policy_name, int(summary.get("signals", {}).get("frame_count", 0) or 0)))
     else:
         summary = _build_summary(exp_dir, data, signal_rows, state_result=state_result)
+        log_info("analysis summary prepared: policy={} frames={}".format(policy_name, int(summary.get("signals", {}).get("frame_count", 0) or 0)))
 
     _official_log(
         data["keyframes_meta"],

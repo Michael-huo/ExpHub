@@ -183,10 +183,7 @@ def save_state_segmentation_plots(
     final_indices=None,
     uniform_indices=None,
     signal_rows=None,
-    candidate_sidecar=None,
 ):
-    del candidate_sidecar
-
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     overview_path = output_dir / "state_overview.png"
@@ -211,5 +208,4 @@ def save_state_segmentation_plots(
     )
     return {
         "overview_path": overview_path,
-        "candidate_compare_path": None,
     }

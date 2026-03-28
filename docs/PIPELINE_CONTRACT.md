@@ -23,7 +23,7 @@
 
 | 阶段 | 主要脚本 | 关键输入 | 关键输出 | 下游依赖 |
 |---|---|---|---|---|
-| `segment` | `scripts/segment_make.py` | 数据集、标定、`platform.yaml` phase | `segment/frames/`, `segment/keyframes/keyframes_meta.json`, `segment/deploy_schedule.json`, `timestamps.txt`, `calib.txt`, `preprocess_meta.json`, `step_meta.json`，以及收敛后的研究产物 `segment/signal_extraction/*`、`segment/state_segmentation/*` | `prompt`, `infer`, `slam`, `segment_analyze` |
+| `segment` | `scripts/segment_make.py` | 数据集、标定、`platform.yaml` phase | `segment/frames/`, `segment/keyframes/keyframes_meta.json`, `segment/deploy_schedule.json`, `timestamps.txt`, `calib.txt`, `preprocess_meta.json`, `step_meta.json`, `segment/state_segmentation/*` | `prompt`, `infer`, `slam` |
 | `prompt` | `scripts/prompt_gen.py` | `segment/frames/`, `segment/state_segmentation/state_segments.json`, `segment/deploy_schedule.json`（存在时） | `prompt/final_prompt.json`, `prompt/state_prompt_manifest.json`, `prompt/deploy_to_state_prompt_map.json`, `prompt/report.json` | `infer`, `stats` |
 | `infer` | `scripts/infer_i2v.py` | `segment/frames/`, `prompt/final_prompt.json`, `prompt/state_prompt_manifest.json`, `prompt/deploy_to_state_prompt_map.json`, `segment/deploy_schedule.json` | `infer/prompt_manifest_resolved.json`, `infer/runs/`, `infer/runs_plan.json`, `infer/report.json` | `merge`, `stats` |
 | `merge` | `scripts/merge_seq.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
@@ -40,7 +40,7 @@
 - `segment/frames/` 可供 `prompt` 与 `infer` 直接读取
 - `segment/keyframes/keyframes_meta.json` 存在，并表达正式 raw keyframe 结果
 - `segment/deploy_schedule.json` 存在时，`infer` 会优先使用它；它是执行投影，不回写 raw schedule
-- `segment/signal_extraction/*` 与 `segment/state_segmentation/*` 属于当前正式研究产物
+- `segment/state_segmentation/*` 属于当前正式主线产物；`segment/signal_extraction/*` 只在显式 sidecar 任务中生成
 - `segment/state_segmentation/state_segments.json` 是 state 区间事实源
 - `segment/step_meta.json` 至少能支撑 `stats/report.json` 的压缩字段汇总
 
@@ -56,8 +56,8 @@
 
 补充约束：
 
-- 这两者在 `segment/signal_extraction/signal_timeseries.csv` 中除了 observed raw 列，还应提供轻量的 processed formal state input 列，供正式 state score 直接消费
-- `blur_score`、`appearance_delta` 等其它已提取信号可继续保留在 `signal_report.json`、`signal_overview.png` 或其它 analysis sidecar 旁路观察中，但不能再作为当前正式 state score 输入集合
+- 这两者是当前正式 `state_score` 的唯一输入；主链允许在内部完成轻量预处理，但默认不再要求把 `segment/signal_extraction/signal_timeseries.csv` 作为正式产物落盘
+- `blur_score`、`appearance_delta` 等其它已提取信号只允许保留在显式 `signal_extract` / `analyze` 侧路观察中，不能再作为当前正式 state score 输入集合
 - 当前正式 detector 目标是高风险区间检测：它在正式 score 上用最小 online / changepoint-style 方法识别 `low_state / high_state` 区间序列，并稳定输出 `state_segments.json`
 - 当前 detector 应表现为 regime-shift-sensitive 的状态响应：基于因果 local mean / local spread 与持续证据累积形成 detector score，而不是对每个局部波峰单独强响应
 - `segment/state_segmentation/` 默认只保留 `state_overview.png`、`state_report.json`、`state_segments.json` 三件套
@@ -146,7 +146,7 @@
 
 ## 4. `segment` 后分析旁路契约
 
-`segment` 后的 analyze 旁路不是主链路阶段，但当前系统默认会在 `segment` 后触发；当前内部入口为 `scripts/_segment/analysis/app.py`。
+`segment` 后的 analyze 旁路不是主链路阶段；当前内部入口为 `scripts/_segment/analysis/app.py`，但它已降级为显式手动 sidecar，不再由默认正式主链自动触发。
 
 它的边界是：
 
@@ -154,25 +154,21 @@
 - 只刷新 `segment/signal_extraction/`、`segment/state_segmentation/` 与 `segment/.segment_cache/`
 - 失败时只能 warn-only，不能破坏主链路
 
-当前正式分析产物收敛为：
+当前显式 sidecar 分析产物收敛为：
 
 - `segment/signal_extraction/signal_report.json`
 - `segment/signal_extraction/signal_timeseries.csv`
 - `segment/signal_extraction/signal_overview.png`
-- `segment/state_segmentation/state_report.json`
-- `segment/state_segmentation/state_overview.png`
-- `segment/state_segmentation/state_segments.json`（事实源，继续保留）
 
 其中当前 state 旁路/主线边界应满足：
 
-- `signal_overview.png` 与 `state_overview.png` 需要明确标出当前正式主线输入是 `motion_velocity`、`semantic_velocity`
+- `signal_overview.png` 需要明确标出当前正式主线输入是 `motion_velocity`、`semantic_velocity`
 - 这些正式输入曲线应反映已经完成轻量预处理后的 processed 结果
-- `state_overview.png` 需要直接服务高风险区间分析：上层展示两信号与正式 score，中层展示 score 与更平稳的 regime-style detector score 及最终 high-risk 区间边界，下层展示最终 `low_state / high_state` 区间序列与关键帧位置
 - 当前默认不再输出 `state_signal_candidate_compare.png` 等 state score 候选 sidecar 图
 
 当前默认不再独立生成旧 `segment/analysis/` 目录中的 `segment_summary.json`、`segment_timeseries.csv`、`kinematics_overview.png`、`allocation_overview.png`、`comparison_overview.png`、`projection_overview.png` 以及历史 `risk_*` / `proposed_schedule*` 研究文件。
 
-其中仍有价值的旧摘要会被并入 `state_report.json`，与当前 state 研究强相关的图表信息会并入 `state_overview.png`；它们都不回写 `segment/keyframes/keyframes_meta.json`，也不回写 `segment/deploy_schedule.json`。
+这些 sidecar 产物都不回写 `segment/keyframes/keyframes_meta.json`，也不回写 `segment/deploy_schedule.json`，更不构成 prompt / infer / schedule 的正式消费契约。
 
 ## 5. 最小验收检查点
 

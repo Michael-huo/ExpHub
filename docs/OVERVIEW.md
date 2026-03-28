@@ -13,13 +13,13 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 当前主链路的默认口径是：
 
 - `segment` 当前正式 policy 只保留 `uniform` 与 `state`，其中 `state` 是当前正式研究主线
-- `state` 当前正式主线只使用两类输入信号：`motion_velocity`、`semantic_velocity`；`blur_score`、`appearance_delta` 等其它已提取信号只保留为 analysis / validation sidecar 观察，不进入正式 state score。当前正式 `state_score` 先由这两条 processed signal 生成简洁的 `raw_state_score`，再估计慢变化的 historical baseline，提取相对 baseline 的 uplift，最后通过保留 shoulder 的轻量单调映射生成正式 score，使它既能兼容当前固定阈值，也更像适合状态区间识别的分布信号
+- `state` 当前正式主线只使用两类输入信号：`motion_velocity`、`semantic_velocity`；`blur_score`、`appearance_delta` 等其它已提取信号只保留为 analysis / validation sidecar 观察，不进入正式 state score。当前正式 `state_score` 由这两条 processed signal 按固定权重生成，并只做一层轻量平滑，然后交给正式 high-risk interval detector 识别 `low_state / high_state` 区间序列
 - `prompt` 默认使用 `smolvlm2`，默认收敛产物到 `prompt/final_prompt.json`、`prompt/state_prompt_manifest.json`、`prompt/deploy_to_state_prompt_map.json` 与 `prompt/report.json`
 - `infer` 默认使用 `wan_fun_5b_inp`，优先消费 `segment/deploy_schedule.json`，并默认收敛产物到 `infer/runs_plan.json`、`infer/prompt_manifest_resolved.json` 与 `infer/report.json`
-- `segment` 会默认收敛正式研究产物到 `segment/signal_extraction/` 与 `segment/state_segmentation/`：前者默认保留 `signal_report.json`、`signal_timeseries.csv`、`signal_overview.png`，其中 `signal_timeseries.csv` 同时保留 observed raw signals 与两信号的 processed formal state inputs；后者默认只保留 `state_report.json`、`state_overview.png`、`state_segments.json` 三件套
+- `segment` 当前正式主线默认只保留 `segment/state_segmentation/` 三件套：`state_report.json`、`state_overview.png`、`state_segments.json`。正式 `state` policy 仍会内部提取 `motion_velocity` 与 `semantic_velocity` 这两条 formal inputs，但不再把 `segment/signal_extraction/` 作为默认正式产物目录
 - `segment/state_segmentation/` 当前正式目标是直接做高风险区间检测：正式 score 只基于 `motion_velocity` 与 `semantic_velocity`，再用最小 online / changepoint-style detector 识别 `low_state / high_state` 区间序列；当前 detector 采用 regime-shift 风格的因果 local-mean / local-spread 状态响应，而不是逐波峰事件响应；`state_segments.json` 继续作为 state 区间事实源
 - `eval` 会默认收敛评测产物到 `eval/report.json`、`eval/details.csv`、`eval/plots/traj_xy.png` 与 `eval/plots/metrics_overview.png`，不再默认散落多份独立 metrics json/csv/curve png
-- `segment` 后的 analyze 旁路仍会执行研究刷新，但默认不再额外散落独立 `segment/analysis/` 目录；它只会刷新上述聚合研究产物并清理旧遗留文件
+- `signal_extract` / `analyze` 仍保留为显式 research sidecar 入口，但默认正式主链不再自动触发它们，也不再依赖它们写出正式 segment 产物
 
 如果你只需要把握当前系统，先记住三个核心事实：
 
@@ -33,7 +33,7 @@ ExpHub 是一个面向视频流与 VSLAM 实验的平台化调度外壳。它把
 - `prompt/report.json` 是 prompt 默认元信息与摘要的聚合出口
 - `infer/prompt_manifest_resolved.json` 是 infer 运行时真正消费的派生 prompt manifest；它会把 global prompt 与 state local prompt 对齐到 execution segments
 - `infer/report.json` 是 infer 默认元信息与执行摘要的聚合出口
-- analysis 类脚本与产物只属于旁路分析，不回写主链 schedule 或 raw keyframe 事实源
+- `segment/signal_extraction/`、`segment/analysis/` 与其它 research sidecar 产物只属于显式旁路分析，不回写主链 schedule 或 raw keyframe 事实源，也不属于当前默认正式 segment 输出
 
 ## 核心文档导航
 

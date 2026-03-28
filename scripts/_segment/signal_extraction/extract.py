@@ -701,7 +701,7 @@ def build_signal_report(payload, plot_meta):
             "panel_layout": list(plot_meta.get("panels", [])),
         },
         "artifact_contract": {
-            "default_files": [
+            "sidecar_files": [
                 "signal_report.json",
                 "signal_timeseries.csv",
                 "signal_overview.png",

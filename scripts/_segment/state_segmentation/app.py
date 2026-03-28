@@ -22,23 +22,21 @@ from scripts._segment.state_segmentation import (
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         description=(
-            "Build a simple, explainable state segmentation baseline from signal_extraction outputs. "
-            "The current official state mainline inputs are motion_velocity and semantic_velocity, "
-            "and the formal state_score is built from a raw weighted score, a slow historical baseline, "
-            "relative uplift above that baseline, and a light shoulder-preserving final mapping."
+            "Build the current formal state segmentation output from motion_velocity and semantic_velocity. "
+            "The default output is a low_state/high_state interval sequence produced by the high-risk interval detector."
         )
     )
-    parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir (expects segment/signal_extraction/signal_timeseries.csv)")
+    parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir")
     parser.add_argument(
         "--normalization_method",
         default=DEFAULT_NORMALIZATION_METHOD,
-        help="legacy raw fallback knob only; current official state mainline consumes persisted processed formal state inputs when available",
+        help="legacy raw fallback knob only; persisted formal state inputs are reused when available",
     )
     parser.add_argument(
         "--smoothing_window",
         type=int,
         default=DEFAULT_SMOOTHING_WINDOW,
-        help="legacy raw fallback knob only; current official state mainline consumes persisted processed formal state inputs when available",
+        help="legacy raw fallback knob only; persisted formal state inputs are reused when available",
     )
     parser.add_argument("--enter_th", type=float, default=DEFAULT_ENTER_TH, help="detector score threshold for entering a high-risk interval")
     parser.add_argument("--exit_th", type=float, default=DEFAULT_EXIT_TH, help="detector score threshold for leaving a high-risk interval")
@@ -80,7 +78,6 @@ def run_state_segmentation_cli(argv=None):
         "json_path": str(io_paths["json_path"]),
         "report_path": str(io_paths["report_path"]),
         "overview_path": str(plot_paths["overview_path"]),
-        "candidate_compare_path": "",
     }
 
 

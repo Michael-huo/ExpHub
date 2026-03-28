@@ -1,19 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import csv
-from pathlib import Path
-
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
 from _common import log_info
 
 from _segment.signal_extraction import (
     extract_signal_timeseries_from_frames,
-    materialize_signal_extraction_outputs,
 )
 from _segment.state_segmentation import (
     STATE_HIGH,
@@ -52,19 +43,6 @@ _ZONE_PRIORITY = {
     ZONE_TRANSITION: 1,
     ZONE_HIGH: 2,
 }
-
-_ZONE_LEVEL = {
-    ZONE_LOW: 0.0,
-    ZONE_TRANSITION: 1.0,
-    ZONE_HIGH: 2.0,
-}
-
-_ZONE_COLORS = {
-    ZONE_LOW: "#dfe7ec",
-    ZONE_TRANSITION: "#bde0fe",
-    ZONE_HIGH: "#ffcc80",
-}
-
 
 def _build_state_items(build_item, final_indices, density_rows, safe_base_indices):
     safe_base_set = set(int(idx) for idx in list(safe_base_indices or []))
@@ -518,109 +496,6 @@ def _min_gap(final_indices):
     return min(int(final_indices[idx + 1] - final_indices[idx]) for idx in range(len(final_indices) - 1))
 
 
-def _write_density_schedule_csv(path, density_rows):
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["frame_idx", "state_label", "schedule_zone", "target_gap"]
-    with open(str(path), "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in list(density_rows or []):
-            writer.writerow(
-                {
-                    "frame_idx": int(row.get("frame_idx", 0) or 0),
-                    "state_label": str(row.get("state_label", STATE_LOW)),
-                    "schedule_zone": str(row.get("schedule_zone", ZONE_LOW)),
-                    "target_gap": int(row.get("target_gap", 0) or 0),
-                }
-            )
-    return path
-
-
-def _shade_schedule_runs(ax, schedule_runs, alpha):
-    for run in list(schedule_runs or []):
-        zone_name = str(run.get("schedule_zone", ZONE_LOW))
-        ax.axvspan(
-            float(run.get("start_frame", 0) or 0),
-            float(run.get("end_frame", 0) or 0),
-            color=_ZONE_COLORS.get(zone_name, "#dfe7ec"),
-            alpha=float(alpha),
-            linewidth=0.0,
-        )
-
-
-def _shade_state_segments(ax, segments, alpha):
-    for segment in list(segments or []):
-        color = "#ffcc80" if str(segment.get("state_label", STATE_LOW)) == STATE_HIGH else "#dfe7ec"
-        ax.axvspan(
-            float(segment.get("start_frame", 0) or 0),
-            float(segment.get("end_frame", 0) or 0),
-            color=color,
-            alpha=float(alpha),
-            linewidth=0.0,
-        )
-
-
-def _save_density_schedule_overview(path, frame_rows, segments, density_rows, schedule_runs, final_indices):
-    path = Path(path).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    x = [int(row.get("frame_idx", 0) or 0) for row in list(frame_rows or [])]
-    state_scores = [float(row.get("state_score", 0.0) or 0.0) for row in list(frame_rows or [])]
-    schedule_levels = [float(_ZONE_LEVEL.get(str(row.get("schedule_zone", ZONE_LOW)), 0.0)) for row in list(density_rows or [])]
-    state_levels = [1.0 if str(row.get("state_label", STATE_LOW)) == STATE_HIGH else 0.0 for row in list(frame_rows or [])]
-    y_map = {}
-    for idx, frame_idx in enumerate(x):
-        y_map[int(frame_idx)] = float(state_scores[idx]) if idx < len(state_scores) else 0.0
-
-    fig, axes = plt.subplots(2, 1, figsize=(14, 8.4), dpi=150, sharex=True, gridspec_kw={"height_ratios": [3.0, 1.4]})
-    score_ax = axes[0]
-    zone_ax = axes[1]
-
-    _shade_schedule_runs(score_ax, schedule_runs, 0.22)
-    score_ax.plot(x, state_scores, color="#d62728", linewidth=2.1, label="state_score")
-    if final_indices:
-        score_ax.scatter(
-            [int(value) for value in final_indices],
-            [float(y_map.get(int(value), 0.0)) for value in final_indices],
-            color="#111111",
-            marker="o",
-            s=22,
-            label="final keyframes",
-            zorder=5,
-        )
-    score_ax.set_ylabel("state_score")
-    score_ax.set_title("Density Schedule Overview")
-    score_ax.grid(True, alpha=0.24)
-    score_ax.legend(loc="upper right", fontsize=9)
-
-    _shade_state_segments(zone_ax, segments, 0.30)
-    _shade_schedule_runs(zone_ax, schedule_runs, 0.48)
-    zone_ax.step(x, schedule_levels, where="mid", color="#1d3557", linewidth=1.8, label="schedule zone")
-    zone_ax.step(x, state_levels, where="mid", color="#37474f", linewidth=1.2, linestyle="--", label="state label")
-    if final_indices:
-        zone_ax.scatter(
-            [int(value) for value in final_indices],
-            [float(_ZONE_LEVEL.get(str(density_rows[int(value)].get("schedule_zone", ZONE_LOW)), 0.0)) for value in final_indices],
-            color="#111111",
-            marker="|",
-            s=160,
-            label="final keyframes",
-            zorder=5,
-        )
-    zone_ax.set_ylabel("zone")
-    zone_ax.set_xlabel("frame_idx")
-    zone_ax.set_yticks([0.0, 1.0, 2.0])
-    zone_ax.set_yticklabels(["low", "transition", "high"])
-    zone_ax.set_ylim(-0.25, 2.25)
-    zone_ax.grid(True, axis="x", alpha=0.2)
-    zone_ax.legend(loc="upper right", fontsize=9, ncol=2)
-
-    fig.tight_layout()
-    fig.savefig(str(path))
-    plt.close(fig)
-    return path
-
-
 def build_policy_plan(context):
     safe_gap = max(1, int(context["kf_gap"]))
     transition_gap = int(DEFAULT_TRANSITION_GAP)
@@ -670,17 +545,14 @@ def build_policy_plan(context):
 
     exp_dir = context["root_dir"].parent
     segment_dir = context["root_dir"]
-    signal_output_dir = segment_dir / "signal_extraction"
     state_output_dir = segment_dir / "state_segmentation"
     used_frame_paths = list(context["frame_paths"][:frame_count_used])
     used_timestamps = list(context["timestamps"][:frame_count_used])
 
     log_info(
-        "state policy observe start: frames={} used={} safe_gap={} high_gap={}".format(
+        "state policy formal inputs start: frames={} used={} signals=motion_velocity,semantic_velocity".format(
             int(context["frame_count_total"]),
             int(frame_count_used),
-            int(safe_gap),
-            int(high_gap),
         )
     )
     signal_payload = extract_signal_timeseries_from_frames(
@@ -689,15 +561,14 @@ def build_policy_plan(context):
         exp_dir=exp_dir,
         segment_dir=segment_dir,
         keyframes_meta={"policy_name": STATE_POLICY_NAME},
-        output_dir=signal_output_dir,
+        output_dir=context["policy_cache_dir"] / "formal_state_inputs",
         cache_dir=context["policy_cache_dir"],
     )
-    signal_io = materialize_signal_extraction_outputs(signal_payload)
 
     state_result = compute_state_segments(
         rows=signal_payload["rows"],
         exp_dir=exp_dir,
-        input_csv=signal_io["csv_path"],
+        input_csv=None,
         output_dir=state_output_dir,
         normalization_method=DEFAULT_NORMALIZATION_METHOD,
         smoothing_window=DEFAULT_SMOOTHING_WINDOW,
@@ -774,26 +645,6 @@ def build_policy_plan(context):
         ) if safe_base_indices else 0.0,
     }
 
-    timeline_schedule_runs = []
-    for run in list(schedule_runs or []):
-        anchor_count = 0
-        start_frame = int(run.get("start_frame", 0) or 0)
-        end_frame = int(run.get("end_frame", 0) or 0)
-        for frame_idx in list(final_indices or []):
-            if start_frame <= int(frame_idx) <= end_frame:
-                anchor_count += 1
-        timeline_schedule_runs.append(
-            {
-                "run_id": int(run.get("run_id", 0) or 0),
-                "schedule_zone": str(run.get("schedule_zone", ZONE_LOW)),
-                "target_gap": int(run.get("target_gap", 0) or 0),
-                "start_frame": int(start_frame),
-                "end_frame": int(end_frame),
-                "duration_frames": int(run.get("duration_frames", 0) or 0),
-                "anchor_count": int(anchor_count),
-            }
-        )
-
     policy_meta = {
         "policy_name": STATE_POLICY_NAME,
         "safe_gap": int(safe_gap),
@@ -816,10 +667,7 @@ def build_policy_plan(context):
         "state_segmentation_params": {
             "input_signals": list(state_segmentation_meta.get("input_signals", []) or []),
             "formal_state_inputs": dict(state_segmentation_meta.get("formal_state_inputs", {}) or {}),
-            "normalization_method": dict(state_segmentation_meta.get("normalization_method", {}) or {}),
-            "smoothing": dict(state_segmentation_meta.get("smoothing", {}) or {}),
             "weights": dict(state_segmentation_meta.get("weights", {}) or {}),
-            "score_pipeline": dict(state_segmentation_meta.get("score_pipeline", {}) or {}),
             "enter_th": float(state_segmentation_meta.get("enter_th", DEFAULT_ENTER_TH) or DEFAULT_ENTER_TH),
             "exit_th": float(state_segmentation_meta.get("exit_th", DEFAULT_EXIT_TH) or DEFAULT_EXIT_TH),
             "min_high_len": int(state_segmentation_meta.get("min_high_len", DEFAULT_MIN_HIGH_LEN) or DEFAULT_MIN_HIGH_LEN),
@@ -832,23 +680,15 @@ def build_policy_plan(context):
         },
         "spacing_merge_meta": spacing_meta,
         "short_segment_merge_meta": short_segment_meta,
-        "signal_artifacts": {
-            "csv_path": str(signal_io["csv_path"]),
-            "report_path": str(signal_io["report_path"]),
-            "overview_path": str(signal_io["plot_paths"]["overview"]),
+        "formal_inputs": {
+            "signal_names": list((state_segmentation_meta.get("input_signals", []) or [])),
+            "source_mode": str((state_segmentation_meta.get("formal_state_inputs", {}) or {}).get("source_mode", "") or ""),
+            "processed_columns": dict((state_segmentation_meta.get("formal_state_inputs", {}) or {}).get("processed_columns", {}) or {}),
         },
         "state_segmentation_artifacts": {},
-        "signal_extraction_report": dict(signal_io["report"]),
-        "state_segmentation_meta": state_segmentation_meta,
     }
 
-    state_io = write_state_segmentation_outputs(
-        state_result,
-        schedule_runs=timeline_schedule_runs,
-        final_indices=final_indices,
-        policy_meta=policy_meta,
-        signal_report=signal_io["report"],
-    )
+    state_io = write_state_segmentation_outputs(state_result)
     state_plots = save_state_segmentation_plots(
         output_dir=state_result["output_dir"],
         frame_rows=state_result["frame_rows"],
@@ -856,7 +696,6 @@ def build_policy_plan(context):
         enter_th=DEFAULT_ENTER_TH,
         exit_th=DEFAULT_EXIT_TH,
         density_rows=density_rows,
-        schedule_runs=timeline_schedule_runs,
         final_indices=final_indices,
         uniform_indices=safe_base_indices,
         signal_rows=signal_payload["rows"],

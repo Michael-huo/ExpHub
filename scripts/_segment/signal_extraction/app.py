@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Extract and visualize candidate raw signals for segment-side manual inspection."""
+"""Extract signal sidecar artifacts for manual inspection."""
 
 import argparse
 
@@ -11,7 +11,7 @@ _DEFAULT_PLOT_SMOOTH_WINDOW = 5
 
 
 def build_arg_parser():
-    parser = argparse.ArgumentParser(description="Extract and visualize raw segment signals for an existing experiment.")
+    parser = argparse.ArgumentParser(description="Extract signal sidecar artifacts for an existing experiment.")
     parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir (expects segment/frames and segment/timestamps.txt)")
     parser.add_argument("--plot_smooth_window", type=int, default=_DEFAULT_PLOT_SMOOTH_WINDOW, help="moving-average window used only for plotted curves")
     return parser
