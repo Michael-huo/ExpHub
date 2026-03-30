@@ -51,7 +51,7 @@ ExpHub 服务的核心问题是：
 - `segment/signal_extraction/*` 与 `segment/state_segmentation/*` 是当前正式研究产物
 - analysis 类脚本与产物只用于旁路分析，不回写 raw keyframe 事实源或 deploy schedule
 - `prompt` 当前默认使用 `SmolVLM2`，保留 `Qwen` 作为显式回退/对照
-- prompt 主链路已经收敛到 `PromptProfile v1 -> final_prompt.json`
+- prompt 主链路已经收敛到 `PromptProfile v1 -> base_prompt.json + state_prompt_manifest.json + runtime_prompt_plan.json`
 - `infer` 当前默认 backend 是 `wan_fun_5b_inp`
 - `wan_fun_a14b_inp` 保留为显式回退/对照路线
 

@@ -69,7 +69,7 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 | 阶段 | 主要脚本 | 系统职责 |
 |---|---|---|
 | `segment` | `scripts/segment_make.py` | 读取原始数据，按正式 `uniform | state` 口径输出标准帧序列、raw keyframes、deploy schedule 与研究产物；当前 `state` 正式主线只消费 `motion_velocity`、`semantic_velocity` 两信号，`blur_score` / `appearance_delta` 仅保留为 sidecar 观察 |
-| `prompt` | `scripts/prompt_gen.py` | 从 `segment/frames/` 抽代表帧，基于 `segment/state_segmentation/state_segments.json` 与 `segment/deploy_schedule.json` 生成 `final_prompt`、state prompt 产物与聚合 `report.json` |
+| `prompt` | `scripts/prompt_gen.py` | 从 `segment/frames/` 抽代表帧，生成全局 `base_prompt`，并基于 `segment/state_segmentation/state_segments.json` 与 `segment/deploy_schedule.json` 写出区间化 `state_prompt_manifest` 与 `runtime_prompt_plan` |
 | `infer` | `scripts/infer_i2v.py` | 读取 prompt 与执行计划，路由到具体 Wan backend |
 | `merge` | `scripts/merge_seq.py` | 按 `runs_plan.json` 的真实边界合并生成结果 |
 | `slam` | `scripts/slam_droid.py` | 在 `ori` 或 `gen` 轨道上估计位姿 |
@@ -108,12 +108,12 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 
 当前 prompt 主链路已经收敛为：
 
-- `prompt/final_prompt.json`
+- `prompt/base_prompt.json`
 - `prompt/state_prompt_manifest.json`
-- `prompt/deploy_to_state_prompt_map.json`
+- `prompt/runtime_prompt_plan.json`
 - `prompt/report.json`
 
-`prompt/state_prompt_manifest.json` 的语义单位以 `segment/state_segmentation/state_segments.json` 为准，`prompt/deploy_to_state_prompt_map.json` 只负责把 deploy execution segments 对齐到 state prompt。`infer` 仍以 `final_prompt.json` 里的全局 `prompt / negative_prompt` 作为 base scene prompt，但当前会在前端把它与 `state_prompt_manifest.json` / `deploy_to_state_prompt_map.json` 派生为 `infer/prompt_manifest_resolved.json`。runtime 继续只理解“prompt manifest + per-segment override”，不直接理解 state 文件本身。
+`prompt/state_prompt_manifest.json` 的语义单位以 `segment/state_segmentation/state_segments.json` 为准；`prompt/runtime_prompt_plan.json` 则把 deploy execution segments 直接展开为 runtime 可消费的 per-segment prompt plan。`infer` 不再前端拼接 `global + local`，而是直接读取 `runtime_prompt_plan.json`，再与 execution plan 对齐给 runtime。
 
 专题细节见 [PROMPT_PROFILE_SYSTEM.md](./PROMPT_PROFILE_SYSTEM.md)。
 
@@ -127,8 +127,8 @@ ExpHub 的核心原则是“平台调度层”和“业务脚本层”分离。
 
 - `segment/`：`frames/`、`keyframes/`、`keyframes_meta.json`、`deploy_schedule.json`
 - `segment/` 还会收敛正式研究产物 `signal_extraction/` 与 `state_segmentation/`
-- `prompt/`：`final_prompt.json`、`state_prompt_manifest.json`、`deploy_to_state_prompt_map.json`、`report.json`
-- `infer/`：`prompt_manifest_resolved.json`、`runs/`、`runs_plan.json`、`report.json`
+- `prompt/`：`base_prompt.json`、`state_prompt_manifest.json`、`runtime_prompt_plan.json`、`report.json`
+- `infer/`：`runs/`、`runs_plan.json`、`report.json`
 - `merge/`：`frames/`、`timestamps.txt`、`calib.txt`、`step_meta.json`
 - `slam/`：`ori/`、`gen/` 轨迹与运行元数据
 - `eval/`：`report.json`、`details.csv`、`plots/traj_xy.png`、`plots/metrics_overview.png` 以及必要失败摘要

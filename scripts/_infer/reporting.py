@@ -10,6 +10,7 @@ from _common import write_json_atomic
 REPORT_FILENAME = "report.json"
 LEGACY_INFER_OUTPUT_NAMES = [
     "execution_plan.json",
+    "prompt_manifest_resolved.json",
     "prompt_resolution.json",
     "step_meta.json",
 ]
@@ -80,6 +81,7 @@ def _segment_summary(plan_segments):
                 "deploy_gap": item.get("deploy_gap"),
                 "prompt_source": item.get("prompt_source"),
                 "state_segment_id": item.get("state_segment_id"),
+                "state_label": item.get("state_label"),
                 "motion_trend": item.get("motion_trend"),
             }
             for item in list(plan_segments or [])[:5]
@@ -100,10 +102,8 @@ def build_infer_report(
     infer_dir = Path(infer_dir).resolve()
     exp_dir = infer_dir.parent.resolve()
     runs_plan_path = (infer_dir / "runs_plan.json").resolve()
-    prompt_manifest_path = (infer_dir / "prompt_manifest_resolved.json").resolve()
 
     runs_plan_bytes = runs_plan_path.read_bytes()
-    prompt_manifest_bytes = prompt_manifest_path.read_bytes()
     plan_segments = list((runs_plan_obj or {}).get("segments", []) or [])
     segment_summary = _segment_summary(plan_segments)
 
@@ -126,26 +126,21 @@ def build_infer_report(
         "runs_plan_path": str(runs_plan_path),
         "runs_plan_size": int(len(runs_plan_bytes)),
         "runs_plan_sha1": _sha1_bytes(runs_plan_bytes),
-        "prompt_manifest_path": str(prompt_manifest_path),
-        "prompt_manifest_size": int(len(prompt_manifest_bytes)),
-        "prompt_manifest_sha1": _sha1_bytes(prompt_manifest_bytes),
-        "prompt_manifest_mode": str((runtime_summary or {}).get("prompt_manifest_mode", "") or ""),
+        "runtime_prompt_plan_path": str((prompt_resolution or {}).get("runtime_prompt_plan_path", "") or ""),
         "state_prompt_enabled": bool((runtime_summary or {}).get("state_prompt_enabled", False)),
-        "state_prompt_files_detected": bool((runtime_summary or {}).get("state_prompt_files_detected", False)),
         "state_prompt_segment_count": int((runtime_summary or {}).get("state_prompt_segment_count", 0) or 0),
-        "mapped_execution_segment_count": int((runtime_summary or {}).get("mapped_execution_segment_count", 0) or 0),
+        "matched_execution_segment_count": int((runtime_summary or {}).get("matched_execution_segment_count", 0) or 0),
         "prompt_file_version": int((runtime_summary or {}).get("prompt_file_version", 0) or 0),
         "prompt_file_source": str((runtime_summary or {}).get("prompt_file_source", "") or ""),
         "prompt_source_counts": dict((runtime_summary or {}).get("prompt_source_counts", {}) or {}),
         "state_motion_trend_counts": dict((runtime_summary or {}).get("state_motion_trend_counts", {}) or {}),
+        "state_label_counts": dict((runtime_summary or {}).get("state_label_counts", {}) or {}),
         "outputs": {
             "bytes_sum": 0,
             "report_bytes_sum": 0,
             "runs_plan_bytes_sum": int(len(runs_plan_bytes)),
-            "prompt_manifest_resolved_bytes_sum": int(len(prompt_manifest_bytes)),
             "report_file_count": 1,
             "runs_plan_file_count": 1,
-            "prompt_manifest_resolved_file_count": 1,
         },
         "backend_meta": dict(backend_meta or {}),
         "backend_result": dict(backend_result or {}),
@@ -169,21 +164,24 @@ def build_infer_report(
             "segment_count": int((runtime_summary or {}).get("segments", 0) or 0),
         },
         "prompt_resolution_summary": {
-            "prompt_manifest_mode": str((runtime_summary or {}).get("prompt_manifest_mode", "") or ""),
             "state_prompt_enabled": bool((runtime_summary or {}).get("state_prompt_enabled", False)),
-            "state_prompt_files_detected": bool((runtime_summary or {}).get("state_prompt_files_detected", False)),
             "state_prompt_segment_count": int((runtime_summary or {}).get("state_prompt_segment_count", 0) or 0),
-            "mapped_execution_segment_count": int((runtime_summary or {}).get("mapped_execution_segment_count", 0) or 0),
+            "matched_execution_segment_count": int((runtime_summary or {}).get("matched_execution_segment_count", 0) or 0),
             "prompt_source_counts": dict((runtime_summary or {}).get("prompt_source_counts", {}) or {}),
             "state_motion_trend_counts": dict((runtime_summary or {}).get("state_motion_trend_counts", {}) or {}),
+            "state_label_counts": dict((runtime_summary or {}).get("state_label_counts", {}) or {}),
             "warnings": list((prompt_resolution or {}).get("warnings", []) or []),
         },
         "prompt_resolution": dict((prompt_resolution or {}).get("prompt_resolution", {}) or {}),
         "execution_segments_summary": segment_summary,
         "source_files": {
             "runs_plan": _relative_path(exp_dir, runs_plan_path),
-            "prompt_manifest_resolved": _relative_path(exp_dir, prompt_manifest_path),
-            "final_prompt": (
+            "runtime_prompt_plan": (
+                _relative_path(exp_dir, Path(prompt_resolution.get("runtime_prompt_plan_path")).resolve())
+                if (prompt_resolution or {}).get("runtime_prompt_plan_path")
+                else ""
+            ),
+            "base_prompt": (
                 _relative_path(exp_dir, Path(prompt_resolution.get("base_prompt_path")).resolve())
                 if (prompt_resolution or {}).get("base_prompt_path")
                 else ""
@@ -193,16 +191,10 @@ def build_infer_report(
                 if (prompt_resolution or {}).get("state_prompt_manifest_path")
                 else ""
             ),
-            "deploy_to_state_prompt_map": (
-                _relative_path(exp_dir, Path(prompt_resolution.get("deploy_to_state_prompt_map_path")).resolve())
-                if (prompt_resolution or {}).get("deploy_to_state_prompt_map_path")
-                else ""
-            ),
         },
         "artifact_contract": {
             "default_files": [
                 "runs_plan.json",
-                "prompt_manifest_resolved.json",
                 REPORT_FILENAME,
             ],
             "legacy_default_outputs_replaced": list(LEGACY_INFER_OUTPUT_NAMES),
@@ -227,7 +219,6 @@ def write_infer_report(infer_dir, report):
         outputs["bytes_sum"] = int(
             int(outputs.get("report_bytes_sum", 0) or 0)
             + int(outputs.get("runs_plan_bytes_sum", 0) or 0)
-            + int(outputs.get("prompt_manifest_resolved_bytes_sum", 0) or 0)
         )
         report_obj["outputs"] = outputs
         report_obj["report_size"] = report_size

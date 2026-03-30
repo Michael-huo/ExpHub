@@ -100,13 +100,14 @@ ExpHub 的性能面板依赖显式心跳，而不是只看顶层计时。
 
 ## 8. 当前默认日志口径与 prompt 系统的关系
 
-主链路 prompt 现在收敛为 `PromptProfile -> final_prompt.json`。
+主链路 prompt 现在收敛为 `PromptProfile -> base_prompt.json + state_prompt_manifest.json + runtime_prompt_plan.json`。
 
 因此日志侧应使用的术语是：
 
 - `profile`
-- `final_prompt`
-- `prompt / negative_prompt`
+- `base_prompt`
+- `runtime_prompt_plan`
+- `resolved_prompt / negative_prompt`
 - `prompt_source`
 
 不应继续把 `manifest_v2 / base_only / delta_prompt` 写成当前默认日志语言。

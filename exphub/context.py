@@ -172,8 +172,12 @@ class ExperimentContext:
         return self.prompt_dir / "report.json"
 
     @property
-    def prompt_final_path(self):
-        return self.prompt_dir / "final_prompt.json"
+    def prompt_base_path(self):
+        return self.prompt_dir / "base_prompt.json"
+
+    @property
+    def prompt_runtime_plan_path(self):
+        return self.prompt_dir / "runtime_prompt_plan.json"
 
     @property
     def infer_runs_dir(self):

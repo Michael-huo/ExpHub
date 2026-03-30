@@ -11,6 +11,8 @@ REPORT_FILENAME = "report.json"
 LEGACY_PROMPT_OUTPUT_NAMES = [
     "profile.json",
     "step_meta.json",
+    "final_prompt.json",
+    "deploy_to_state_prompt_map.json",
 ]
 
 
@@ -40,25 +42,26 @@ def _relative_path(base_dir, target_path):
         return str(target)
 
 
-def _state_prompt_statistics(state_prompt_manifest, deploy_to_state_prompt_map):
+def _state_prompt_statistics(state_prompt_manifest, runtime_prompt_plan):
     # type: (dict, dict) -> dict
     state_segments = list((state_prompt_manifest or {}).get("state_segments") or [])
-    deploy_segments = list((deploy_to_state_prompt_map or {}).get("deploy_segments") or [])
+    runtime_segments = list((runtime_prompt_plan or {}).get("segments") or [])
     return {
         "state_segment_count": int(len(state_segments)),
-        "deploy_segment_count": int(len(deploy_segments)),
+        "deploy_segment_count": int(len(runtime_segments)),
         "state_label_counts": dict(_count_by_key(state_segments, "state_label")),
         "motion_trend_counts": dict(_count_by_key(state_segments, "motion_trend")),
-        "deploy_match_source_counts": dict(_count_by_key(deploy_segments, "match_source")),
+        "deploy_match_source_counts": dict(_count_by_key(runtime_segments, "match_source")),
+        "runtime_state_label_counts": dict(_count_by_key(runtime_segments, "state_label")),
     }
 
 
 def build_prompt_report(
     prompt_dir,
     aggregated_profile,
-    final_prompt_payload,
+    base_prompt_payload,
     state_prompt_manifest,
-    deploy_to_state_prompt_map,
+    runtime_prompt_plan,
     state_prompt_summary,
     backend_meta,
     backend_name,
@@ -77,13 +80,13 @@ def build_prompt_report(
 ):
     # type: (...) -> dict
     prompt_dir = Path(prompt_dir).resolve()
-    final_prompt_path = (prompt_dir / "final_prompt.json").resolve()
+    base_prompt_path = (prompt_dir / "base_prompt.json").resolve()
     state_prompt_manifest_path = (prompt_dir / "state_prompt_manifest.json").resolve()
-    deploy_to_state_prompt_map_path = (prompt_dir / "deploy_to_state_prompt_map.json").resolve()
+    runtime_prompt_plan_path = (prompt_dir / "runtime_prompt_plan.json").resolve()
 
-    final_prompt_bytes = final_prompt_path.read_bytes()
+    base_prompt_bytes = base_prompt_path.read_bytes()
     state_prompt_manifest_bytes = state_prompt_manifest_path.read_bytes()
-    deploy_to_state_prompt_map_bytes = deploy_to_state_prompt_map_path.read_bytes()
+    runtime_prompt_plan_bytes = runtime_prompt_plan_path.read_bytes()
 
     report = {
         "report_schema_version": "prompt_report.v1",
@@ -105,7 +108,7 @@ def build_prompt_report(
         "frames_count": int(frame_files_count),
         "fps": int(fps) if fps is not None else None,
         "profile_version": int((aggregated_profile or {}).get("version", 0) or 0),
-        "prompt_source": str((final_prompt_payload or {}).get("source", "") or ""),
+        "base_prompt_source": str((base_prompt_payload or {}).get("source", "") or ""),
         "representative_frames": [Path(path_text).name for path_text in list(selected_paths or [])],
         "representative_indices": [
             int(item.get("frame_idx"))
@@ -115,32 +118,32 @@ def build_prompt_report(
         "frame_candidates": list(frame_records or []),
         "errors": list(errors or []),
         "error_count": int(len(list(errors or []))),
-        "final_prompt_path": str(final_prompt_path),
-        "final_prompt_size": int(len(final_prompt_bytes)),
-        "final_prompt_sha1": _sha1_bytes(final_prompt_bytes),
+        "base_prompt_path": str(base_prompt_path),
+        "base_prompt_size": int(len(base_prompt_bytes)),
+        "base_prompt_sha1": _sha1_bytes(base_prompt_bytes),
         "state_prompt_manifest_path": str(state_prompt_manifest_path),
         "state_prompt_manifest_size": int(len(state_prompt_manifest_bytes)),
         "state_prompt_manifest_sha1": _sha1_bytes(state_prompt_manifest_bytes),
-        "deploy_to_state_prompt_map_path": str(deploy_to_state_prompt_map_path),
-        "deploy_to_state_prompt_map_size": int(len(deploy_to_state_prompt_map_bytes)),
-        "deploy_to_state_prompt_map_sha1": _sha1_bytes(deploy_to_state_prompt_map_bytes),
+        "runtime_prompt_plan_path": str(runtime_prompt_plan_path),
+        "runtime_prompt_plan_size": int(len(runtime_prompt_plan_bytes)),
+        "runtime_prompt_plan_sha1": _sha1_bytes(runtime_prompt_plan_bytes),
         "outputs": {
             "bytes_sum": 0,
             "report_bytes_sum": 0,
-            "final_prompt_bytes_sum": int(len(final_prompt_bytes)),
+            "base_prompt_bytes_sum": int(len(base_prompt_bytes)),
             "state_prompt_manifest_bytes_sum": int(len(state_prompt_manifest_bytes)),
-            "deploy_to_state_prompt_map_bytes_sum": int(len(deploy_to_state_prompt_map_bytes)),
+            "runtime_prompt_plan_bytes_sum": int(len(runtime_prompt_plan_bytes)),
             "report_file_count": 1,
-            "final_prompt_file_count": 1,
+            "base_prompt_file_count": 1,
             "state_prompt_manifest_file_count": 1,
-            "deploy_to_state_prompt_map_file_count": 1,
+            "runtime_prompt_plan_file_count": 1,
         },
         "profile": dict(aggregated_profile or {}),
-        "rules_hit": list((final_prompt_payload or {}).get("rules_hit", []) or []),
-        "final_prompt_preview": str((final_prompt_payload or {}).get("prompt", "") or ""),
-        "negative_prompt_preview": str((final_prompt_payload or {}).get("negative_prompt", "") or ""),
+        "rules_hit": list((base_prompt_payload or {}).get("rules_hit", []) or []),
+        "base_prompt_preview": str((base_prompt_payload or {}).get("base_prompt", "") or ""),
+        "negative_prompt_preview": str((base_prompt_payload or {}).get("negative_prompt", "") or ""),
         "state_prompt_summary": dict(state_prompt_summary or {}),
-        "state_prompt_statistics": _state_prompt_statistics(state_prompt_manifest, deploy_to_state_prompt_map),
+        "state_prompt_statistics": _state_prompt_statistics(state_prompt_manifest, runtime_prompt_plan),
         "model": str(model_record or ""),
         "frames_dir": "",
         "backend_summary": {
@@ -168,24 +171,24 @@ def build_prompt_report(
         },
         "prompt_generation_summary": {
             "profile_version": int((aggregated_profile or {}).get("version", 0) or 0),
-            "prompt_source": str((final_prompt_payload or {}).get("source", "") or ""),
-            "rules_hit": list((final_prompt_payload or {}).get("rules_hit", []) or []),
+            "base_prompt_source": str((base_prompt_payload or {}).get("source", "") or ""),
+            "rules_hit": list((base_prompt_payload or {}).get("rules_hit", []) or []),
             "prompt_gen_total_sec": float(total_sec),
             "avg_prompt_sec_per_frame": float(avg_prompt_sec),
             "error_count": int(len(list(errors or []))),
-            "final_prompt_preview": str((final_prompt_payload or {}).get("prompt", "") or ""),
-            "negative_prompt_preview": str((final_prompt_payload or {}).get("negative_prompt", "") or ""),
+            "base_prompt_preview": str((base_prompt_payload or {}).get("base_prompt", "") or ""),
+            "negative_prompt_preview": str((base_prompt_payload or {}).get("negative_prompt", "") or ""),
         },
         "source_files": {
-            "final_prompt": _relative_path(prompt_dir.parent, final_prompt_path),
+            "base_prompt": _relative_path(prompt_dir.parent, base_prompt_path),
             "state_prompt_manifest": _relative_path(prompt_dir.parent, state_prompt_manifest_path),
-            "deploy_to_state_prompt_map": _relative_path(prompt_dir.parent, deploy_to_state_prompt_map_path),
+            "runtime_prompt_plan": _relative_path(prompt_dir.parent, runtime_prompt_plan_path),
         },
         "artifact_contract": {
             "default_files": [
-                "final_prompt.json",
+                "base_prompt.json",
                 "state_prompt_manifest.json",
-                "deploy_to_state_prompt_map.json",
+                "runtime_prompt_plan.json",
                 REPORT_FILENAME,
             ],
             "legacy_default_outputs_replaced": list(LEGACY_PROMPT_OUTPUT_NAMES),
@@ -209,9 +212,9 @@ def write_prompt_report(prompt_dir, report):
         outputs["report_bytes_sum"] = report_size
         outputs["bytes_sum"] = int(
             int(outputs.get("report_bytes_sum", 0) or 0)
-            + int(outputs.get("final_prompt_bytes_sum", 0) or 0)
+            + int(outputs.get("base_prompt_bytes_sum", 0) or 0)
             + int(outputs.get("state_prompt_manifest_bytes_sum", 0) or 0)
-            + int(outputs.get("deploy_to_state_prompt_map_bytes_sum", 0) or 0)
+            + int(outputs.get("runtime_prompt_plan_bytes_sum", 0) or 0)
         )
         report_obj["outputs"] = outputs
         report_obj["report_size"] = report_size

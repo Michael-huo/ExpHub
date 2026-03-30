@@ -14,7 +14,7 @@ from tqdm import tqdm
 from _common import ensure_dir, get_platform_config, log_info, log_prog, log_prompt, log_warn, write_json_atomic
 from _prompt.api import create_backend
 from _prompt.backends.smolvlm2_backend import DEFAULT_SMOLVLM2_MODEL_ID
-from _prompt.generator import build_final_prompt_payload
+from _prompt.generator import build_base_prompt_payload
 from _prompt.profile import (
     PROMPT_PROFILE_VERSION,
     aggregate_prompt_profiles,
@@ -112,7 +112,7 @@ def main():
     ap.add_argument("--max_pixels", type=int, default=1024 * 28 * 28)
     ap.add_argument("--max_new_tokens", type=int, default=0)
     ap.add_argument("--out_profile", default="", help="output profile.json")
-    ap.add_argument("--out_final_prompt", default="", help="output final_prompt.json")
+    ap.add_argument("--out_final_prompt", default="", help="output base_prompt.json")
     ap.add_argument("--backend_python_phase", default="prompt", help="effective python phase used by cli")
     args = ap.parse_args()
 
@@ -132,14 +132,14 @@ def main():
     if exp_dir is not None:
         prompt_dir = exp_dir / "prompt"
         legacy_profile_export_path = Path(args.out_profile).resolve() if args.out_profile else None
-        out_final_prompt = (
-            Path(args.out_final_prompt).resolve() if args.out_final_prompt else (prompt_dir / "final_prompt.json")
+        out_base_prompt = (
+            Path(args.out_final_prompt).resolve() if args.out_final_prompt else (prompt_dir / "base_prompt.json")
         )
     else:
         if not args.out_final_prompt:
             raise SystemExit("[ERR] without --exp_dir, you must provide --out_final_prompt")
         legacy_profile_export_path = Path(args.out_profile).resolve() if args.out_profile else None
-        out_final_prompt = Path(args.out_final_prompt).resolve()
+        out_base_prompt = Path(args.out_final_prompt).resolve()
 
     rep_count = _clamp_num_images(int(args.num_images))
     if int(args.num_images) != rep_count:
@@ -228,24 +228,24 @@ def main():
 
     aggregated_profile = aggregate_prompt_profiles(candidates)
     aggregated_profile["version"] = int(PROMPT_PROFILE_VERSION)
-    final_prompt_payload = build_final_prompt_payload(aggregated_profile)
-    state_prompt_manifest_path = out_final_prompt.parent / "state_prompt_manifest.json"
-    deploy_to_state_prompt_map_path = out_final_prompt.parent / "deploy_to_state_prompt_map.json"
+    base_prompt_payload = build_base_prompt_payload(aggregated_profile)
+    state_prompt_manifest_path = out_base_prompt.parent / "state_prompt_manifest.json"
+    runtime_prompt_plan_path = out_base_prompt.parent / "runtime_prompt_plan.json"
     state_prompt_result = build_state_prompt_artifacts(
         frames_dir=frames_dir,
         frames_count=len(frame_files),
-        prompt_dir=out_final_prompt.parent,
-        global_prompt_path=out_final_prompt,
+        prompt_dir=out_base_prompt.parent,
+        base_prompt_payload=base_prompt_payload,
         exp_dir=exp_dir,
         segment_dir=Path(args.segment_dir).resolve() if args.segment_dir.strip() else None,
     )
     state_prompt_manifest = dict(state_prompt_result.get("state_prompt_manifest") or {})
-    deploy_to_state_prompt_map = dict(state_prompt_result.get("deploy_to_state_prompt_map") or {})
+    runtime_prompt_plan = dict(state_prompt_result.get("runtime_prompt_plan") or {})
     state_prompt_summary = dict(state_prompt_result.get("summary") or {})
 
-    write_json_atomic(out_final_prompt, final_prompt_payload, indent=2)
+    write_json_atomic(out_base_prompt, base_prompt_payload, indent=2)
     write_json_atomic(state_prompt_manifest_path, state_prompt_manifest, indent=2)
-    write_json_atomic(deploy_to_state_prompt_map_path, deploy_to_state_prompt_map, indent=2)
+    write_json_atomic(runtime_prompt_plan_path, runtime_prompt_plan, indent=2)
     if legacy_profile_export_path is not None:
         write_json_atomic(legacy_profile_export_path, aggregated_profile, indent=2)
 
@@ -253,11 +253,11 @@ def main():
 
     model_record = str(backend_meta.get("model_dir", "") or backend_meta.get("model_id", "") or model_ref)
     prompt_report = build_prompt_report(
-        prompt_dir=out_final_prompt.parent,
+        prompt_dir=out_base_prompt.parent,
         aggregated_profile=aggregated_profile,
-        final_prompt_payload=final_prompt_payload,
+        base_prompt_payload=base_prompt_payload,
         state_prompt_manifest=state_prompt_manifest,
-        deploy_to_state_prompt_map=deploy_to_state_prompt_map,
+        runtime_prompt_plan=runtime_prompt_plan,
         state_prompt_summary=state_prompt_summary,
         backend_meta=backend_meta,
         backend_name=str(args.backend),
@@ -284,8 +284,8 @@ def main():
             "profile_size": int(len(profile_bytes)),
             "profile_sha1": hashlib.sha1(profile_bytes).hexdigest(),
         }
-    report_path = write_prompt_report(out_final_prompt.parent, prompt_report)
-    cleanup_legacy_prompt_outputs(out_final_prompt.parent, preserve_paths=[legacy_profile_export_path] if legacy_profile_export_path is not None else [])
+    report_path = write_prompt_report(out_base_prompt.parent, prompt_report)
+    cleanup_legacy_prompt_outputs(out_base_prompt.parent, preserve_paths=[legacy_profile_export_path] if legacy_profile_export_path is not None else [])
 
     log_prog("prompt profile generated from {} representative frames".format(int(len(selected_paths))))
     log_info("state prompt detected state_segments={}".format(bool(state_prompt_summary.get("has_state_segments", False))))
@@ -297,13 +297,13 @@ def main():
     )
     log_info("state prompt manifest generated: count={}".format(int(state_prompt_summary.get("state_segment_count", 0) or 0)))
     log_info(
-        "deploy to state prompt map generated: count={}".format(
+        "runtime prompt plan generated: count={}".format(
             int(state_prompt_summary.get("deploy_segment_count", 0) or 0)
         )
     )
-    log_info("wrote: {}".format(out_final_prompt))
+    log_info("wrote: {}".format(out_base_prompt))
     log_info("wrote: {}".format(state_prompt_manifest_path))
-    log_info("wrote: {}".format(deploy_to_state_prompt_map_path))
+    log_info("wrote: {}".format(runtime_prompt_plan_path))
     log_info("wrote: {}".format(report_path))
     if legacy_profile_export_path is not None:
         log_info("wrote legacy profile export: {}".format(legacy_profile_export_path))

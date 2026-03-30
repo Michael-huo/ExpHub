@@ -13,13 +13,13 @@ from typing import Dict, Optional, Tuple
 
 try:
     from .base import DirectInferBackend, _run_filtered
-    from ..manifest_v2_consumer import load_prompt_manifest_for_infer, resolve_segment_overrides
+    from ..runtime_prompt_plan import load_runtime_prompt_plan_for_infer, resolve_segment_overrides
 except Exception:
     _SCRIPTS_DIR = Path(__file__).resolve().parents[2]
     if str(_SCRIPTS_DIR) not in sys.path:
         sys.path.insert(0, str(_SCRIPTS_DIR))
     from _infer.backends.base import DirectInferBackend, _run_filtered
-    from _infer.manifest_v2_consumer import load_prompt_manifest_for_infer, resolve_segment_overrides
+    from _infer.runtime_prompt_plan import load_runtime_prompt_plan_for_infer, resolve_segment_overrides
 
 
 WAN_GPU_MEMORY_MODES = (
@@ -770,7 +770,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         prompt_dir = runs_parent_path / "prompt"
     prompt_dir.mkdir(parents=True, exist_ok=True)
 
-    prompt_file_dst = prompt_dir / "final_prompt.json"
+    prompt_file_dst = prompt_dir / "runtime_prompt_plan.json"
     prompt_file_path = str(prompt_file_dst.resolve())
     if str(args.prompt_file or "").strip():
         src = Path(args.prompt_file).resolve()
@@ -786,13 +786,15 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             str(prompt_file_dst),
             {
                 "version": 1,
-                "prompt": prompt.strip(),
+                "schema": "runtime_prompt_plan.v1",
+                "base_prompt": prompt.strip(),
                 "negative_prompt": negative_prompt.strip(),
                 "source": "runtime_default",
+                "segments": [],
             },
         )
         prompt_file_path = str(prompt_file_dst.resolve())
-    prompt_file_loaded = load_prompt_manifest_for_infer(
+    prompt_file_loaded = load_runtime_prompt_plan_for_infer(
         prompt_file_path,
         default_prompt=prompt,
         default_negative_prompt=negative_prompt,

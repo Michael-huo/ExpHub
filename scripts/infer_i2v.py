@@ -134,6 +134,11 @@ def _merge_prompt_resolution_into_plan(plan_obj, segment_resolutions):
         seg_item["state_segment_id"] = resolved.get("state_segment_id")
         seg_item["state_label"] = resolved.get("state_label")
         seg_item["motion_trend"] = resolved.get("motion_trend")
+        seg_item["base_prompt"] = resolved.get("base_prompt")
+        seg_item["local_prompt"] = resolved.get("local_prompt")
+        seg_item["resolved_prompt"] = resolved.get("resolved_prompt")
+        seg_item["negative_prompt"] = resolved.get("negative_prompt")
+        seg_item["prompt_strength"] = resolved.get("prompt_strength")
         seg_item["prompt_preview"] = resolved.get("prompt_preview")
     plan["segments"] = plan_segments
     return plan
@@ -168,7 +173,7 @@ def main():
     ap.add_argument(
         "--prompt_file",
         default="",
-        help="Optional base final_prompt.json; archived under <exp_dir>/prompt/final_prompt.json",
+        help="Optional runtime prompt plan json; archived under <exp_dir>/prompt/runtime_prompt_plan.json",
     )
     ap.add_argument(
         "--infer_backend",
@@ -221,7 +226,7 @@ def main():
 
     exp_dir = Path(args.exp_dir).resolve()
     prompt_dir = exp_dir / "prompt"
-    prompt_file_std = prompt_dir / "final_prompt.json"
+    prompt_file_std = prompt_dir / "runtime_prompt_plan.json"
     infer_dir = exp_dir / "infer"
     runs_root = infer_dir / "runs"
     runs_root.mkdir(parents=True, exist_ok=True)
@@ -316,15 +321,13 @@ def main():
         log_warn("state prompt fallback: {}".format(msg))
 
     log_info(
-        "state prompt files: detected={} state_segments={} mapped_segments={}".format(
-            bool(prompt_resolution.get("state_prompt_files_detected", False)),
+        "runtime prompt plan: state_segments={} matched_segments={}".format(
             int(prompt_resolution.get("state_prompt_segment_count", 0) or 0),
-            int(prompt_resolution.get("mapped_execution_segment_count", 0) or 0),
+            int(prompt_resolution.get("matched_execution_segment_count", 0) or 0),
         )
     )
     log_info(
-        "prompt manifest mode={} state_enabled={} runtime_prompt_file={}".format(
-            str(prompt_resolution.get("prompt_manifest_mode", "global_only")),
+        "runtime prompt enabled={} runtime_prompt_file={}".format(
             bool(prompt_resolution.get("state_prompt_enabled", False)),
             prompt_resolution.get("prompt_file_path", prompt_file_std),
         )
@@ -406,12 +409,14 @@ def main():
     if not isinstance(plan_obj, dict):
         raise SystemExit("[ERR] invalid runs_plan.json: {}".format(runs_plan))
     plan_obj = _merge_prompt_resolution_into_plan(plan_obj, prompt_resolution.get("segment_resolutions", []))
-    plan_obj["prompt_manifest_mode"] = str(prompt_resolution.get("prompt_manifest_mode", "global_only"))
     plan_obj["state_prompt_enabled"] = bool(prompt_resolution.get("state_prompt_enabled", False))
     plan_obj["state_prompt_segment_count"] = int(prompt_resolution.get("state_prompt_segment_count", 0) or 0)
-    plan_obj["mapped_execution_segment_count"] = int(prompt_resolution.get("mapped_execution_segment_count", 0) or 0)
+    plan_obj["matched_execution_segment_count"] = int(prompt_resolution.get("matched_execution_segment_count", 0) or 0)
+    plan_obj["prompt_file_version"] = int(prompt_resolution.get("prompt_file_version", 1) or 1)
+    plan_obj["prompt_file_source"] = str(prompt_resolution.get("prompt_file_source", "") or "")
     plan_obj["prompt_source_counts"] = dict(prompt_resolution.get("prompt_source_counts", {}) or {})
     plan_obj["state_motion_trend_counts"] = dict(prompt_resolution.get("state_motion_trend_counts", {}) or {})
+    plan_obj["state_label_counts"] = dict(prompt_resolution.get("state_label_counts", {}) or {})
     write_json_atomic(runs_plan, plan_obj, indent=2)
     plan_segment_items = list(plan_obj.get("segments", []) or [])
     plan_segments = int(len(plan_segment_items))
@@ -429,15 +434,14 @@ def main():
         "schedule_source": str(schedule_source),
         "execution_backend": str(schedule_backend),
         "mean_deploy_gap": float(mean_deploy_gap),
-        "prompt_manifest_mode": str(prompt_resolution.get("prompt_manifest_mode", "global_only")),
         "state_prompt_enabled": bool(prompt_resolution.get("state_prompt_enabled", False)),
-        "state_prompt_files_detected": bool(prompt_resolution.get("state_prompt_files_detected", False)),
         "state_prompt_segment_count": int(prompt_resolution.get("state_prompt_segment_count", 0) or 0),
-        "mapped_execution_segment_count": int(prompt_resolution.get("mapped_execution_segment_count", 0) or 0),
+        "matched_execution_segment_count": int(prompt_resolution.get("matched_execution_segment_count", 0) or 0),
         "prompt_file_version": int(plan_obj.get("prompt_file_version", 1)),
         "prompt_file_source": str(plan_obj.get("prompt_file_source", "")),
         "prompt_source_counts": _count_by_key(plan_segment_items, "prompt_source"),
         "state_motion_trend_counts": dict(prompt_resolution.get("state_motion_trend_counts", {}) or {}),
+        "state_label_counts": dict(prompt_resolution.get("state_label_counts", {}) or {}),
     }
     infer_report = build_infer_report(
         infer_dir=infer_dir,

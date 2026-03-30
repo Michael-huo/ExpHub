@@ -115,9 +115,9 @@ def write_compression_stats(ctx: ExperimentContext) -> None:
 
     prompt_files = [
         ctx.prompt_report_path,
-        ctx.prompt_final_path,
+        ctx.prompt_base_path,
         ctx.prompt_dir / "state_prompt_manifest.json",
-        ctx.prompt_dir / "deploy_to_state_prompt_map.json",
+        ctx.prompt_runtime_plan_path,
     ]
 
     ori_n, ori_b = _sum_files(frames_dir, "*.png", follow_symlinks=True)
@@ -1131,9 +1131,9 @@ def main(argv: Optional[List[str]] = None) -> None:
 
         step_runner.run_env_python(cmd, phase_name=prompt_phase, log_name="prompt.log", cwd=exphub_root)
         _ensure(ctx.prompt_report_path, "file")
-        _ensure(ctx.prompt_final_path, "file")
+        _ensure(ctx.prompt_base_path, "file")
         _ensure(ctx.prompt_dir / "state_prompt_manifest.json", "file")
-        _ensure(ctx.prompt_dir / "deploy_to_state_prompt_map.json", "file")
+        _ensure(ctx.prompt_runtime_plan_path, "file")
 
     def step_stats() -> None:
         cmd = [
@@ -1146,10 +1146,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         _ensure(ctx.stats_report_path, "file")
 
     def step_infer() -> None:
-        prompt_file = ctx.prompt_final_path
+        prompt_file = ctx.prompt_runtime_plan_path
         if not prompt_file.is_file():
             _die(
-                'missing prompt/final_prompt.json. Run "--mode prompt" first or provide a valid prompt file.'
+                'missing prompt/runtime_prompt_plan.json. Run "--mode prompt" first or provide a valid prompt file.'
             )
 
         exp_dir.mkdir(parents=True, exist_ok=True)
@@ -1197,7 +1197,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         step_runner.run_env_python(cmd_infer, phase_name=infer_phase, log_name="infer.log", cwd=exphub_root)
         _ensure(ctx.infer_runs_dir, "dir")
         _ensure(ctx.infer_runs_plan_path, "file")
-        _ensure(ctx.infer_dir / "prompt_manifest_resolved.json", "file")
         _ensure(ctx.infer_report_path, "file")
 
     def step_merge() -> None:

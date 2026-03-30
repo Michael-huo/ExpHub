@@ -6,32 +6,34 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
-MOTION_TEMPLATES = {
-    "straight": {
+STATE_PROMPT_PRESETS = {
+    "low_state": {
         "prompt_text": (
-            "The camera continues moving straight ahead with stable forward motion and consistent perspective."
+            "Within this interval, keep motion transitions gentle and preserve stable first-person continuity, "
+            "local geometry, and temporal consistency."
         ),
-        "prompt_short": "Stable straight-ahead forward motion.",
+        "negative_prompt_delta": "",
+        "prompt_strength": 0.35,
+        "motion_trend": "stable_interval",
     },
-    "turn": {
+    "high_state": {
         "prompt_text": (
-            "The camera follows a continuous turning motion through the curve while preserving scene geometry "
-            "and viewpoint continuity."
+            "Within this interval, treat the motion as high-risk and preserve first-person continuity, "
+            "local geometry, exposure stability, and temporal coherence under stronger viewpoint change."
         ),
-        "prompt_short": "Continuous turning motion through the curve.",
+        "negative_prompt_delta": "abrupt perspective jumps, transition discontinuity, motion tearing",
+        "prompt_strength": 0.75,
+        "motion_trend": "risk_interval",
     },
     "unknown": {
         "prompt_text": (
-            "The camera continues moving forward while preserving scene geometry and viewpoint continuity."
+            "Within this interval, preserve first-person continuity, stable geometry, and temporal coherence."
         ),
-        "prompt_short": "Stable forward motion with consistent geometry.",
+        "negative_prompt_delta": "",
+        "prompt_strength": 0.50,
+        "motion_trend": "unknown_interval",
     },
-}  # type: Dict[str, Dict[str, str]]
-
-STATE_TO_MOTION_TREND = {
-    "low_state": "straight",
-    "high_state": "turn",
-}  # type: Dict[str, str]
+}  # type: Dict[str, Dict[str, object]]
 
 
 def _as_dict(value):
@@ -39,6 +41,11 @@ def _as_dict(value):
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _collapse_ws(text):
+    # type: (object) -> str
+    return " ".join(str(text or "").strip().split()).strip()
 
 
 def _load_json_if_object(path_obj):
@@ -98,9 +105,9 @@ def _segment_midpoint(start_frame, end_frame):
     return 0.5 * float(int(start_frame) + int(end_frame))
 
 
-def _motion_trend_for_state(state_label):
-    # type: (str) -> str
-    return str(STATE_TO_MOTION_TREND.get(str(state_label), "unknown"))
+def _preset_for_state_label(state_label):
+    # type: (str) -> Dict[str, object]
+    return dict(STATE_PROMPT_PRESETS.get(str(state_label or "unknown"), STATE_PROMPT_PRESETS["unknown"]))
 
 
 def _coerce_state_segments(payload):
@@ -116,17 +123,17 @@ def _coerce_state_segments(payload):
         if end_frame < start_frame:
             continue
         state_label = str(item.get("state_label", "unknown") or "unknown")
-        motion_trend = _motion_trend_for_state(state_label)
-        prompt_payload = dict(MOTION_TEMPLATES.get(motion_trend, MOTION_TEMPLATES["unknown"]))
+        preset = _preset_for_state_label(state_label)
         rows.append(
             {
                 "state_segment_id": int(item.get("segment_id", idx) or idx),
                 "start_frame": int(start_frame),
                 "end_frame": int(end_frame),
                 "state_label": str(state_label),
-                "motion_trend": str(motion_trend),
-                "prompt_text": str(prompt_payload.get("prompt_text", "")),
-                "prompt_short": str(prompt_payload.get("prompt_short", "")),
+                "prompt_text": str(preset.get("prompt_text", "") or ""),
+                "negative_prompt_delta": str(preset.get("negative_prompt_delta", "") or ""),
+                "prompt_strength": float(preset.get("prompt_strength", 0.5) or 0.5),
+                "motion_trend": str(preset.get("motion_trend", "unknown_interval") or "unknown_interval"),
                 "source_segment_id": int(item.get("segment_id", idx) or idx),
             }
         )
@@ -136,16 +143,17 @@ def _coerce_state_segments(payload):
 def _fallback_state_segments(frames_count):
     # type: (int) -> List[Dict[str, object]]
     end_frame = max(0, int(frames_count) - 1)
-    prompt_payload = dict(MOTION_TEMPLATES["unknown"])
+    preset = _preset_for_state_label("unknown")
     return [
         {
             "state_segment_id": 0,
             "start_frame": 0,
             "end_frame": int(end_frame),
             "state_label": "unknown",
-            "motion_trend": "unknown",
-            "prompt_text": str(prompt_payload.get("prompt_text", "")),
-            "prompt_short": str(prompt_payload.get("prompt_short", "")),
+            "prompt_text": str(preset.get("prompt_text", "") or ""),
+            "negative_prompt_delta": str(preset.get("negative_prompt_delta", "") or ""),
+            "prompt_strength": float(preset.get("prompt_strength", 0.5) or 0.5),
+            "motion_trend": str(preset.get("motion_trend", "unknown_interval") or "unknown_interval"),
             "source_segment_id": None,
         }
     ]
@@ -222,21 +230,39 @@ def _pick_state_segment(raw_start, raw_end, state_segments):
     return int(nearest_segment.get("state_segment_id", 0) or 0), 0, "nearest_state_segment"
 
 
+def _join_prompt_parts(base_prompt, local_prompt):
+    # type: (str, str) -> str
+    base = _collapse_ws(base_prompt)
+    local = _collapse_ws(local_prompt)
+    if not base:
+        return local
+    if not local:
+        return base
+    return _collapse_ws("{} {}".format(base, local))
+
+
+def _join_negative_prompt(base_negative_prompt, negative_delta):
+    # type: (str, str) -> str
+    base = _collapse_ws(base_negative_prompt)
+    delta = _collapse_ws(negative_delta)
+    if not delta:
+        return base
+    if not base:
+        return delta
+    return "{}, {}".format(base, delta)
+
+
 def build_state_prompt_artifacts(
     frames_dir,
     frames_count,
     prompt_dir,
-    global_prompt_path,
+    base_prompt_payload,
     exp_dir=None,
     segment_dir=None,
 ):
-    # type: (Path, int, Path, Path, Optional[Path], Optional[Path]) -> Dict[str, object]
-    # state_segments.json is the state-interval fact source for prompt.
-    # deploy_schedule.json is only used to align execution segments onto those
-    # state intervals; it does not replace the raw/state facts.
+    # type: (Path, int, Path, Dict[str, object], Optional[Path], Optional[Path]) -> Dict[str, object]
     prompt_dir = Path(prompt_dir).resolve()
     frames_dir = Path(frames_dir).resolve()
-    global_prompt_path = Path(global_prompt_path).resolve()
     exp_dir_path = Path(exp_dir).resolve() if exp_dir is not None else None
     segment_dir_path = _resolve_segment_dir(exp_dir_path, frames_dir, segment_dir)
     base_dir = exp_dir_path
@@ -254,97 +280,102 @@ def build_state_prompt_artifacts(
         deploy_schedule_payload = _load_json_if_object(deploy_schedule_path)
 
     has_state_segments = bool(state_segments_payload)
-    source_policy = "state" if has_state_segments else "unknown"
-    alignment_source = "state_segments" if has_state_segments else "clip_fallback"
     state_segments = _coerce_state_segments(state_segments_payload)
     if not state_segments:
         state_segments = _fallback_state_segments(frames_count)
 
-    global_prompt_ref = _relative_path(base_dir, global_prompt_path)
+    base_prompt_text = _collapse_ws((base_prompt_payload or {}).get("base_prompt", ""))
+    base_negative_prompt = _collapse_ws((base_prompt_payload or {}).get("negative_prompt", ""))
+    base_prompt_path = prompt_dir / "base_prompt.json"
+
     state_manifest = {
-        "version": "v1",
+        "version": 1,
+        "schema": "state_prompt_manifest.v1",
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "source_policy": str(source_policy),
-        "alignment_source": str(alignment_source),
-        "global_prompt_path": str(global_prompt_ref),
+        "manifest_type": "interval_prompt_manifest",
+        "base_prompt_path": _relative_path(base_dir, base_prompt_path),
         "state_segment_count": int(len(state_segments)),
-        "motion_mapping_rule": {
-            "state_label_to_motion_trend": {
-                "low_state": "straight",
-                "high_state": "turn",
-            },
-            "fallback_without_reliable_state": "unknown",
-        },
         "source_files": {
-            "state_segments": (
-                _relative_path(base_dir, state_segments_path) if state_segments_path is not None else ""
-            ),
-            "deploy_schedule": (
-                _relative_path(base_dir, deploy_schedule_path) if deploy_schedule_path is not None else ""
-            ),
+            "state_segments": _relative_path(base_dir, state_segments_path) if state_segments_path is not None else "",
+            "deploy_schedule": _relative_path(base_dir, deploy_schedule_path) if deploy_schedule_path is not None else "",
             "has_state_segments": bool(has_state_segments),
         },
-        "state_segments": state_segments,
+        "state_segments": list(state_segments),
     }
 
     deploy_segments = _coerce_deploy_segments(deploy_schedule_payload)
-    deploy_map_segments = []
+    runtime_segments = []
     for deploy_segment in list(deploy_segments):
         raw_start = int(deploy_segment.get("raw_start_frame", deploy_segment.get("start_frame", 0)) or 0)
         raw_end = int(deploy_segment.get("raw_end_frame", deploy_segment.get("end_frame", 0)) or 0)
         state_segment_id, overlap_frames, match_source = _pick_state_segment(raw_start, raw_end, state_segments)
-        deploy_map_segments.append(
+        state_row = {}
+        if state_segment_id >= 0:
+            for item in list(state_segments):
+                current_state_segment_id = item.get("state_segment_id", -1)
+                if int(current_state_segment_id if current_state_segment_id is not None else -1) == int(state_segment_id):
+                    state_row = dict(item)
+                    break
+
+        state_label = str(state_row.get("state_label", "unknown") or "unknown")
+        local_prompt = _collapse_ws(state_row.get("prompt_text", ""))
+        negative_prompt_delta = _collapse_ws(state_row.get("negative_prompt_delta", ""))
+        prompt_strength = float(state_row.get("prompt_strength", 0.5) or 0.5)
+        resolved_prompt = _join_prompt_parts(base_prompt_text, local_prompt)
+        negative_prompt = _join_negative_prompt(base_negative_prompt, negative_prompt_delta)
+        runtime_segments.append(
             {
+                "seg": int(deploy_segment.get("deploy_segment_id", 0) or 0),
+                "segment_id": int(deploy_segment.get("deploy_segment_id", 0) or 0),
                 "deploy_segment_id": int(deploy_segment.get("deploy_segment_id", 0) or 0),
                 "start_frame": int(deploy_segment.get("start_frame", 0) or 0),
                 "end_frame": int(deploy_segment.get("end_frame", 0) or 0),
-                "state_segment_id": int(state_segment_id),
                 "raw_start_frame": int(raw_start),
                 "raw_end_frame": int(raw_end),
-                "overlap_frames": int(overlap_frames),
+                "state_segment_id": int(state_segment_id) if state_segment_id >= 0 else None,
+                "state_label": str(state_label),
+                "base_prompt": str(base_prompt_text),
+                "local_prompt": str(local_prompt),
+                "resolved_prompt": str(resolved_prompt),
+                "negative_prompt": str(negative_prompt),
+                "negative_prompt_delta": str(negative_prompt_delta),
+                "prompt_strength": float(prompt_strength),
+                "motion_trend": str(state_row.get("motion_trend", "unknown_interval") or "unknown_interval"),
                 "match_source": str(match_source),
+                "overlap_frames": int(overlap_frames),
+                "prompt_source": "runtime_prompt_plan",
             }
         )
 
-    deploy_map = {
-        "version": "v1",
+    runtime_plan = {
+        "version": 1,
+        "schema": "runtime_prompt_plan.v1",
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "alignment_source": "deploy_schedule_to_state_segments",
-        "state_prompt_manifest_path": "prompt/state_prompt_manifest.json",
-        "deploy_segment_count": int(len(deploy_map_segments)),
-        "mapping_rule": {
-            "primary_rule": "max_overlap_on_raw_frame_range",
-            "fallback_rule": "nearest_state_segment_by_midpoint",
-            "fallback_without_deploy_schedule": "emit_empty_mapping",
-        },
+        "source": "runtime_prompt_plan_v1",
+        "base_prompt": str(base_prompt_text),
+        "negative_prompt": str(base_negative_prompt),
+        "state_prompt_manifest_path": _relative_path(base_dir, prompt_dir / "state_prompt_manifest.json"),
+        "deploy_segment_count": int(len(runtime_segments)),
         "source_files": {
-            "deploy_schedule": (
-                _relative_path(base_dir, deploy_schedule_path) if deploy_schedule_path is not None else ""
-            ),
-            "state_segments": (
-                _relative_path(base_dir, state_segments_path) if state_segments_path is not None else ""
-            ),
+            "base_prompt": _relative_path(base_dir, base_prompt_path),
+            "state_prompt_manifest": _relative_path(base_dir, prompt_dir / "state_prompt_manifest.json"),
+            "state_segments": _relative_path(base_dir, state_segments_path) if state_segments_path is not None else "",
+            "deploy_schedule": _relative_path(base_dir, deploy_schedule_path) if deploy_schedule_path is not None else "",
         },
-        "deploy_segments": deploy_map_segments,
+        "segments": list(runtime_segments),
     }
 
     return {
         "state_prompt_manifest": state_manifest,
-        "deploy_to_state_prompt_map": deploy_map,
+        "runtime_prompt_plan": runtime_plan,
         "summary": {
             "has_state_segments": bool(has_state_segments),
             "state_segment_count": int(len(state_segments)),
-            "deploy_segment_count": int(len(deploy_map_segments)),
-            "source_policy": str(source_policy),
-            "alignment_source": str(alignment_source),
+            "deploy_segment_count": int(len(runtime_segments)),
             "segment_dir": _relative_path(base_dir, segment_dir_path) if segment_dir_path is not None else "",
             "source_files": {
-                "state_segments": (
-                    _relative_path(base_dir, state_segments_path) if state_segments_path is not None else ""
-                ),
-                "deploy_schedule": (
-                    _relative_path(base_dir, deploy_schedule_path) if deploy_schedule_path is not None else ""
-                ),
+                "state_segments": _relative_path(base_dir, state_segments_path) if state_segments_path is not None else "",
+                "deploy_schedule": _relative_path(base_dir, deploy_schedule_path) if deploy_schedule_path is not None else "",
             },
         },
     }
