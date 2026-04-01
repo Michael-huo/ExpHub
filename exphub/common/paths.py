@@ -40,6 +40,38 @@ class ExperimentPaths:
         return self.exp_dir / "segment"
 
     @property
+    def segment_manifest_path(self):
+        return self.segment_dir / "segment_manifest.json"
+
+    @property
+    def segment_report_path(self):
+        return self.segment_dir / "report.json"
+
+    @property
+    def segment_visuals_dir(self):
+        return self.segment_dir / "visuals"
+
+    @property
+    def segment_state_overview_path(self):
+        return self.segment_visuals_dir / "state_overview.png"
+
+    @property
+    def segment_state_dir(self):
+        return self.segment_dir / "state_segmentation"
+
+    @property
+    def segment_state_segments_path(self):
+        return self.segment_state_dir / "state_segments.json"
+
+    @property
+    def segment_state_report_path(self):
+        return self.segment_state_dir / "state_report.json"
+
+    @property
+    def segment_state_overview_legacy_path(self):
+        return self.segment_state_dir / "state_overview.png"
+
+    @property
     def prompt_dir(self):
         return self.exp_dir / "prompt"
 

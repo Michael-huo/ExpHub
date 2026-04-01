@@ -1,9 +1,66 @@
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
+from typing import Dict, List
+
 from .common import StageContract
 
 
-SEGMENT_MANIFEST = "segment_manifest"
+FORMAL_SEGMENT_POLICY = "state"
+FORMAL_SEGMENT_POLICIES = (FORMAL_SEGMENT_POLICY,)
+
+SEGMENT_MANIFEST_NAME = "segment_manifest.json"
+SEGMENT_REPORT_NAME = "report.json"
+SEGMENT_VISUALS_DIRNAME = "visuals"
+SEGMENT_OVERVIEW_NAME = "state_overview.png"
+SEGMENT_COMPAT_STATE_DIRNAME = "state_segmentation"
+SEGMENT_COMPAT_STATE_SEGMENTS_NAME = "state_segments.json"
+SEGMENT_COMPAT_STATE_REPORT_NAME = "state_report.json"
+
+
+@dataclass(frozen=True)
+class SegmentStateInterval:
+    segment_id: int
+    state_label: str
+    start_frame: int
+    end_frame: int
+    duration_frames: int
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class SegmentContractPaths:
+    manifest_path: str
+    report_path: str
+    visuals_dir: str
+    deploy_schedule_path: str
+    keyframes_meta_path: str
+    compat_state_segments_path: str
+    compat_state_report_path: str
+
+    def to_dict(self):
+        return asdict(self)
+
+
+def normalize_formal_segment_policy(policy_name):
+    name = str(policy_name or FORMAL_SEGMENT_POLICY).strip().lower()
+    if not name:
+        name = FORMAL_SEGMENT_POLICY
+    return name
+
+
+def require_formal_segment_policy(policy_name):
+    name = normalize_formal_segment_policy(policy_name)
+    if name != FORMAL_SEGMENT_POLICY:
+        raise ValueError(
+            "formal segment workflow only supports policy '{}' during Step 1 (got '{}')".format(
+                FORMAL_SEGMENT_POLICY,
+                str(policy_name or "").strip() or "<empty>",
+            )
+        )
+    return name
 
 
 def build_contract(paths):
@@ -12,6 +69,9 @@ def build_contract(paths):
         root=paths.segment_dir,
         artifacts={
             "frames_dir": paths.segment_frames_dir,
+            "manifest": paths.segment_manifest_path,
+            "report": paths.segment_report_path,
+            "visuals_dir": paths.segment_visuals_dir,
             "keyframes_meta": paths.segment_keyframes_dir / "keyframes_meta.json",
             "deploy_schedule": paths.segment_dir / "deploy_schedule.json",
             "state_segments": paths.segment_dir / "state_segmentation" / "state_segments.json",
