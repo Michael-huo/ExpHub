@@ -13,13 +13,16 @@ from typing import Dict, Optional, Tuple
 
 try:
     from .base import DirectInferBackend, _run_filtered
-    from ..runtime_prompt_plan import load_runtime_prompt_plan_for_infer, resolve_segment_overrides
+    from exphub.pipeline.infer.runtime_plan import load_runtime_prompt_plan_for_infer, resolve_segment_overrides
 except Exception:
     _SCRIPTS_DIR = Path(__file__).resolve().parents[2]
     if str(_SCRIPTS_DIR) not in sys.path:
         sys.path.insert(0, str(_SCRIPTS_DIR))
+    _REPO_ROOT = Path(__file__).resolve().parents[3]
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
     from _infer.backends.base import DirectInferBackend, _run_filtered
-    from _infer.runtime_prompt_plan import load_runtime_prompt_plan_for_infer, resolve_segment_overrides
+    from exphub.pipeline.infer.runtime_plan import load_runtime_prompt_plan_for_infer, resolve_segment_overrides
 
 
 WAN_GPU_MEMORY_MODES = (
