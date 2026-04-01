@@ -608,12 +608,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
     ap.add_argument("--gpus", type=int, default=2)
 
-    ap.add_argument("--infer_extra", default="", help="extra args passed to infer_i2v.py (quoted string)")
+    ap.add_argument("--infer_extra", default="", help="extra args passed through the formal infer service (quoted string)")
     ap.add_argument(
         "--infer_backend",
         default="wan_fun_5b_inp",
         choices=["wan_fun_a14b_inp", "wan_fun_5b_inp"],
-        help="infer backend used by scripts/infer_i2v.py",
+        help="formal infer backend used by exphub.pipeline.infer.service.run(...)",
     )
     ap.add_argument(
         "--infer_model_dir",
@@ -647,23 +647,21 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--droid_repo", default=_def_droid_repo)
     ap.add_argument("--droid_weights", default=_def_droid_w)
 
-    # Prompt generator is now managed under ExpHub/scripts.
-    # Qwen2-VL model path default is sourced from config/platform.yaml.
     ap.add_argument(
         "--qwen_model_dir",
         default=_def_qwen,
-        help="Qwen2-VL model dir used by prompt generator",
+        help="legacy qwen model dir placeholder; Step 2 formal prompt path uses smolvlm2",
     )
     ap.add_argument(
         "--prompt_backend",
         default="smolvlm2",
-        choices=["qwen", "smolvlm2"],
-        help="prompt backend used by scripts/prompt_gen.py",
+        choices=["smolvlm2"],
+        help="formal prompt backend used by exphub.pipeline.prompt.service.run(...)",
     )
     ap.add_argument(
         "--prompt_model_dir",
         default="",
-        help="override prompt backend model dir or model id; qwen falls back to --qwen_model_dir when empty",
+        help="override formal prompt backend model dir or model id",
     )
     ap.add_argument(
         "--prompt_dtype",
@@ -674,7 +672,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--prompt_sample_mode",
         default="even",
-        choices=["quartiles", "even", "first", "last", "all"],
+        choices=["quartiles", "even", "first", "last"],
         help="frame sampling strategy inside each prompt clip",
     )
     ap.add_argument(

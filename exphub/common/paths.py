@@ -116,6 +116,10 @@ class ExperimentPaths:
         return self.segment_dir / "calib.txt"
 
     @property
+    def segment_deploy_schedule_path(self):
+        return self.segment_dir / "deploy_schedule.json"
+
+    @property
     def segment_timestamps_path(self):
         return self.segment_dir / "timestamps.txt"
 
@@ -138,6 +142,10 @@ class ExperimentPaths:
     @property
     def prompt_base_path(self):
         return self.prompt_dir / "base_prompt.json"
+
+    @property
+    def prompt_state_manifest_path(self):
+        return self.prompt_dir / "state_prompt_manifest.json"
 
     @property
     def prompt_runtime_plan_path(self):
@@ -314,6 +322,10 @@ class ExperimentContext:
         return self.paths.segment_timestamps_path
 
     @property
+    def segment_deploy_schedule_path(self):
+        return self.paths.segment_deploy_schedule_path
+
+    @property
     def segment_preprocess_meta_path(self):
         return self.paths.segment_preprocess_meta_path
 
@@ -332,6 +344,10 @@ class ExperimentContext:
     @property
     def prompt_base_path(self):
         return self.paths.prompt_base_path
+
+    @property
+    def prompt_state_manifest_path(self):
+        return self.paths.prompt_state_manifest_path
 
     @property
     def prompt_runtime_plan_path(self):
