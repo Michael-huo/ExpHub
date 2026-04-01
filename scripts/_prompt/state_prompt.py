@@ -91,6 +91,26 @@ def _resolve_segment_dir(exp_dir, frames_dir, segment_dir):
     return None
 
 
+def _resolve_segment_manifest(segment_dir):
+    # type: (Optional[Path]) -> Tuple[Optional[Path], Dict[str, object]]
+    if segment_dir is None:
+        return None, {}
+    manifest_path = (Path(segment_dir).resolve() / "segment_manifest.json").resolve()
+    if not manifest_path.is_file():
+        return manifest_path, {}
+    return manifest_path, _load_json_if_object(manifest_path)
+
+
+def _segment_manifest_state_payload(manifest_payload):
+    # type: (Dict[str, object]) -> Dict[str, object]
+    return _as_dict(manifest_payload.get("state_segments"))
+
+
+def _segment_manifest_deploy_payload(manifest_payload):
+    # type: (Dict[str, object]) -> Dict[str, object]
+    return _as_dict(manifest_payload.get("deploy_schedule"))
+
+
 def _overlap_len(start_a, end_a, start_b, end_b):
     # type: (int, int, int, int) -> int
     left = max(int(start_a), int(start_b))
@@ -271,13 +291,21 @@ def build_state_prompt_artifacts(
 
     state_segments_path = None  # type: Optional[Path]
     deploy_schedule_path = None  # type: Optional[Path]
+    segment_manifest_path = None  # type: Optional[Path]
     state_segments_payload = {}  # type: Dict[str, object]
     deploy_schedule_payload = {}  # type: Dict[str, object]
     if segment_dir_path is not None:
-        state_segments_path = (segment_dir_path / "state_segmentation" / "state_segments.json").resolve()
-        deploy_schedule_path = (segment_dir_path / "deploy_schedule.json").resolve()
-        state_segments_payload = _load_json_if_object(state_segments_path)
-        deploy_schedule_payload = _load_json_if_object(deploy_schedule_path)
+        segment_manifest_path, manifest_payload = _resolve_segment_manifest(segment_dir_path)
+        state_segments_payload = _segment_manifest_state_payload(manifest_payload)
+        deploy_schedule_payload = _segment_manifest_deploy_payload(manifest_payload)
+        if state_segments_payload or deploy_schedule_payload:
+            state_segments_path = segment_manifest_path
+            deploy_schedule_path = segment_manifest_path
+        else:
+            state_segments_path = (segment_dir_path / "state_segmentation" / "state_segments.json").resolve()
+            deploy_schedule_path = (segment_dir_path / "deploy_schedule.json").resolve()
+            state_segments_payload = _load_json_if_object(state_segments_path)
+            deploy_schedule_payload = _load_json_if_object(deploy_schedule_path)
 
     has_state_segments = bool(state_segments_payload)
     state_segments = _coerce_state_segments(state_segments_payload)
@@ -296,6 +324,7 @@ def build_state_prompt_artifacts(
         "base_prompt_path": _relative_path(base_dir, base_prompt_path),
         "state_segment_count": int(len(state_segments)),
         "source_files": {
+            "segment_manifest": _relative_path(base_dir, segment_manifest_path) if segment_manifest_path is not None else "",
             "state_segments": _relative_path(base_dir, state_segments_path) if state_segments_path is not None else "",
             "deploy_schedule": _relative_path(base_dir, deploy_schedule_path) if deploy_schedule_path is not None else "",
             "has_state_segments": bool(has_state_segments),
@@ -359,6 +388,7 @@ def build_state_prompt_artifacts(
         "source_files": {
             "base_prompt": _relative_path(base_dir, base_prompt_path),
             "state_prompt_manifest": _relative_path(base_dir, prompt_dir / "state_prompt_manifest.json"),
+            "segment_manifest": _relative_path(base_dir, segment_manifest_path) if segment_manifest_path is not None else "",
             "state_segments": _relative_path(base_dir, state_segments_path) if state_segments_path is not None else "",
             "deploy_schedule": _relative_path(base_dir, deploy_schedule_path) if deploy_schedule_path is not None else "",
         },
@@ -374,6 +404,7 @@ def build_state_prompt_artifacts(
             "deploy_segment_count": int(len(runtime_segments)),
             "segment_dir": _relative_path(base_dir, segment_dir_path) if segment_dir_path is not None else "",
             "source_files": {
+                "segment_manifest": _relative_path(base_dir, segment_manifest_path) if segment_manifest_path is not None else "",
                 "state_segments": _relative_path(base_dir, state_segments_path) if state_segments_path is not None else "",
                 "deploy_schedule": _relative_path(base_dir, deploy_schedule_path) if deploy_schedule_path is not None else "",
             },

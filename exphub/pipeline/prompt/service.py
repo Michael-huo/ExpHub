@@ -9,6 +9,7 @@ def run(runtime):
     contract = prompt_contract.build_contract(runtime.paths)
     ensure_dir(runtime.paths.segment_dir, "segment dir")
     ensure_dir(runtime.paths.segment_frames_dir, "segment frames dir")
+    ensure_file(runtime.paths.segment_manifest_path, "segment manifest")
 
     runtime.paths.exp_dir.mkdir(parents=True, exist_ok=True)
     runtime.paths.prompt_dir.mkdir(parents=True, exist_ok=True)

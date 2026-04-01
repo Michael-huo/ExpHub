@@ -75,7 +75,17 @@ def _cleanup_min(exp_dir: Path) -> None:
     _prune_dir_keep_names(
         exp_dir,
         exp_dir / "segment",
-        {"step_meta.json", "calib.txt", "timestamps.txt", "analysis", "deploy_schedule.json", "keyframes"},
+        {
+            "step_meta.json",
+            "calib.txt",
+            "timestamps.txt",
+            "deploy_schedule.json",
+            "keyframes",
+            "segment_manifest.json",
+            "report.json",
+            "visuals",
+            "state_segmentation",
+        },
     )
     _prune_dir_keep_names(exp_dir, exp_dir / "segment" / "keyframes", {"keyframes_meta.json"})
     _prune_dir_keep_names(

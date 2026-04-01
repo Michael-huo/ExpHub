@@ -16,14 +16,10 @@ from .cleanup import normalize_keep_level
 from .common.config import ConfigError, get_platform_config
 from .common.logging import set_cli_log_level
 from .common.types import sanitize_token
+from .contracts.segment import FORMAL_SEGMENT_POLICY, require_formal_segment_policy
 from .context import ExperimentContext
 from .pipeline.orchestrator import build_runtime, run_runtime
 from .runner import RunError
-from scripts._segment.policies.naming import (
-    OFFICIAL_POLICY_NAMES,
-    is_supported_policy_name,
-    normalize_policy_name,
-)
 
 
 _ANSI_RESET = "\033[0m"
@@ -605,8 +601,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--keyframes_mode", default="symlink", choices=["symlink", "hardlink", "copy"], help="how to materialize segment/keyframes")
     ap.add_argument(
         "--segment_policy",
-        default="uniform",
-        help="official segment keyframe policy for the current mainline: uniform | state",
+        default=FORMAL_SEGMENT_POLICY,
+        help="formal segment policy for the Step 1 mainline; only 'state' is accepted",
     )
     ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
@@ -706,15 +702,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     _CLI_LOG_LEVEL = str(args.log_level or "info").strip().lower()
     set_cli_log_level(_CLI_LOG_LEVEL)
     args.keep_level = normalize_keep_level(args.keep_level)
-    raw_segment_policy = str(args.segment_policy or "uniform")
-    if not is_supported_policy_name(raw_segment_policy):
-        _die(
-            "unsupported segment policy: {} (expected one of: {})".format(
-                raw_segment_policy,
-                ", ".join(OFFICIAL_POLICY_NAMES),
-            )
-        )
-    args.segment_policy = normalize_policy_name(raw_segment_policy)
+    try:
+        args.segment_policy = require_formal_segment_policy(args.segment_policy)
+    except ValueError as exc:
+        _die(str(exc))
 
     args.dataset = sanitize_token(args.dataset)
     args.sequence = sanitize_token(args.sequence)
