@@ -10,7 +10,6 @@ MERGE_REPORT = "merge_report"
 SLAM_REPORT = "slam_report"
 EVAL_REPORT = "eval_report"
 FINAL_REPORT = "final_report"
-COMPAT_REPORT = "compat_report"
 COMPRESSION = "compression"
 
 FORMAL_STATS_ARTIFACT_KEYS = (
@@ -31,7 +30,6 @@ def build_contract(paths):
             SLAM_REPORT: paths.slam_report_path,
             EVAL_REPORT: paths.eval_report_path,
             FINAL_REPORT: paths.stats_report_path,
-            COMPAT_REPORT: paths.stats_report_compat_path,
             COMPRESSION: paths.stats_compression_path,
         },
     )

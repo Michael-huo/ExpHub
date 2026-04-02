@@ -192,10 +192,6 @@ class ExperimentPaths:
         return self.slam_dir / "traj_est.txt"
 
     @property
-    def slam_primary_reference_path(self):
-        return self.slam_dir / "traj_ref.txt"
-
-    @property
     def eval_report_path(self):
         return self.eval_dir / "report.json"
 
@@ -214,10 +210,6 @@ class ExperimentPaths:
     @property
     def stats_report_path(self):
         return self.stats_dir / "final_report.json"
-
-    @property
-    def stats_report_compat_path(self):
-        return self.stats_dir / "report.json"
 
     @property
     def stats_compression_path(self):

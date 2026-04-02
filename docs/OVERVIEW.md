@@ -28,9 +28,9 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 - `prompt` 固定使用 `smolvlm2`，对下游输出 `runtime_prompt_plan.json`，并保留 `base_prompt.json`、`state_prompt_manifest.json`、`report.json` 作为阶段内部支撑与追溯产物
 - `infer` 直接消费 `prompt/runtime_prompt_plan.json`，产出 `runs_plan.json` 与 `report.json`
 - `merge` 只按 `infer/runs_plan.json` 的真实边界拼接
-- `slam` 在 `ori` 与 `gen` 两条轨道上估计位姿
+- `slam` 在 `ori` 与 `gen` 两条轨道上估计位姿，对外正式聚合出口是 `slam/report.json` 与 `slam/traj_est.txt`
 - `eval` 汇总轨迹、图像与 slam-friendly 指标
-- `stats` 汇总阶段报告、压缩统计与实验摘要
+- `stats` 汇总阶段报告、压缩统计与实验摘要，正式输出为 `stats/final_report.json`
 
 如果只记最关键的事实源，请先记住：
 
