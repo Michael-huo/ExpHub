@@ -22,10 +22,10 @@ class SegmentArtifactPaths:
     report_path: Path
     visuals_dir: Path
     state_overview_path: Path
-    compat_state_dir: Path
-    compat_state_segments_path: Path
-    compat_state_report_path: Path
-    compat_state_overview_path: Path
+    state_dir: Path
+    state_segments_path: Path
+    state_report_path: Path
+    state_overview_source_path: Path
     step_meta_path: Path
     preprocess_meta_path: Path
     calib_path: Path
@@ -48,20 +48,20 @@ def build_paths(exp_dir):
         state_overview_path=(
             root / segment_contract.SEGMENT_VISUALS_DIRNAME / segment_contract.SEGMENT_OVERVIEW_NAME
         ).resolve(),
-        compat_state_dir=(root / segment_contract.SEGMENT_COMPAT_STATE_DIRNAME).resolve(),
-        compat_state_segments_path=(
+        state_dir=(root / segment_contract.SEGMENT_STATE_DIRNAME).resolve(),
+        state_segments_path=(
             root
-            / segment_contract.SEGMENT_COMPAT_STATE_DIRNAME
-            / segment_contract.SEGMENT_COMPAT_STATE_SEGMENTS_NAME
+            / segment_contract.SEGMENT_STATE_DIRNAME
+            / segment_contract.SEGMENT_STATE_SEGMENTS_NAME
         ).resolve(),
-        compat_state_report_path=(
+        state_report_path=(
             root
-            / segment_contract.SEGMENT_COMPAT_STATE_DIRNAME
-            / segment_contract.SEGMENT_COMPAT_STATE_REPORT_NAME
+            / segment_contract.SEGMENT_STATE_DIRNAME
+            / segment_contract.SEGMENT_STATE_REPORT_NAME
         ).resolve(),
-        compat_state_overview_path=(
+        state_overview_source_path=(
             root
-            / segment_contract.SEGMENT_COMPAT_STATE_DIRNAME
+            / segment_contract.SEGMENT_STATE_DIRNAME
             / segment_contract.SEGMENT_OVERVIEW_NAME
         ).resolve(),
         step_meta_path=(root / "step_meta.json").resolve(),
@@ -158,10 +158,10 @@ def write_step_meta(paths, step_meta):
     return paths.step_meta_path
 
 
-def load_compat_state_payloads(paths):
+def load_state_payloads(paths):
     return {
-        "state_segments": read_json_dict(paths.compat_state_segments_path),
-        "state_report": read_json_dict(paths.compat_state_report_path),
+        "state_segments": read_json_dict(paths.state_segments_path),
+        "state_report": read_json_dict(paths.state_report_path),
     }
 
 
@@ -197,8 +197,8 @@ def build_manifest(
             "state_overview": relative_to_exp(paths.exp_dir, paths.state_overview_path),
             "keyframes_meta": relative_to_exp(paths.exp_dir, paths.keyframes_meta_path),
             "deploy_schedule": relative_to_exp(paths.exp_dir, paths.deploy_schedule_path),
-            "state_segments_compat": relative_to_exp(paths.exp_dir, paths.compat_state_segments_path),
-            "state_report_compat": relative_to_exp(paths.exp_dir, paths.compat_state_report_path),
+            "state_segments_compat": relative_to_exp(paths.exp_dir, paths.state_segments_path),
+            "state_report_compat": relative_to_exp(paths.exp_dir, paths.state_report_path),
         },
         "frames": {
             "dir": relative_to_exp(paths.exp_dir, paths.frames_dir),
@@ -267,4 +267,3 @@ def build_report(
         },
         "timings_sec": dict(timings or {}),
     }
-

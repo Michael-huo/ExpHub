@@ -9,7 +9,6 @@ _EXPORTS = {
     "FORMAL_STATE_INPUT_PREPROCESSING": ".extract",
     "FORMAL_STATE_INPUT_SIGNALS": ".extract",
     "build_formal_state_input_rows": ".extract",
-    "extract_signal_timeseries": ".extract",
     "extract_signal_timeseries_from_frames": ".extract",
 }
 

@@ -4,6 +4,8 @@
 import importlib
 
 
+# Formal state mainline uses these observed signal backends through
+# signal_extraction; they are not a parallel "research" path anymore.
 _EXPORTS = {
     "compute_motion_rows": ".motion_energy",
     "compute_semantic_rows": ".semantic_openclip",

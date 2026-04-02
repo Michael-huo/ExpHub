@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Dict, List
 
 from .common import StageContract
 
@@ -13,9 +12,9 @@ SEGMENT_MANIFEST_NAME = "segment_manifest.json"
 SEGMENT_REPORT_NAME = "report.json"
 SEGMENT_VISUALS_DIRNAME = "visuals"
 SEGMENT_OVERVIEW_NAME = "state_overview.png"
-SEGMENT_COMPAT_STATE_DIRNAME = "state_segmentation"
-SEGMENT_COMPAT_STATE_SEGMENTS_NAME = "state_segments.json"
-SEGMENT_COMPAT_STATE_REPORT_NAME = "state_report.json"
+SEGMENT_STATE_DIRNAME = "state_segmentation"
+SEGMENT_STATE_SEGMENTS_NAME = "state_segments.json"
+SEGMENT_STATE_REPORT_NAME = "state_report.json"
 
 
 @dataclass(frozen=True)
@@ -28,21 +27,6 @@ class SegmentStateInterval:
 
     def to_dict(self):
         return asdict(self)
-
-
-@dataclass(frozen=True)
-class SegmentContractPaths:
-    manifest_path: str
-    report_path: str
-    visuals_dir: str
-    deploy_schedule_path: str
-    keyframes_meta_path: str
-    compat_state_segments_path: str
-    compat_state_report_path: str
-
-    def to_dict(self):
-        return asdict(self)
-
 
 def normalize_formal_segment_policy(policy_name):
     name = str(policy_name or FORMAL_SEGMENT_POLICY).strip().lower()
@@ -74,7 +58,7 @@ def build_contract(paths):
             "visuals_dir": paths.segment_visuals_dir,
             "keyframes_meta": paths.segment_keyframes_dir / "keyframes_meta.json",
             "deploy_schedule": paths.segment_dir / "deploy_schedule.json",
-            "state_segments": paths.segment_dir / "state_segmentation" / "state_segments.json",
+            "state_segments": paths.segment_dir / SEGMENT_STATE_DIRNAME / SEGMENT_STATE_SEGMENTS_NAME,
             "step_meta": paths.segment_dir / "step_meta.json",
             "calib": paths.segment_calib_path,
             "timestamps": paths.segment_timestamps_path,
