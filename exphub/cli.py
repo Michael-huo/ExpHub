@@ -398,7 +398,9 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
         image_metrics = _read_json_dict(exp_dir / "eval" / "image_metrics.json")
     if not slam_metrics:
         slam_metrics = _read_json_dict(exp_dir / "eval" / "slam_metrics.json")
-    stats_report = _read_json_dict(exp_dir / "stats" / "report.json")
+    stats_report = _read_json_dict(exp_dir / "stats" / "final_report.json")
+    if not stats_report:
+        stats_report = _read_json_dict(exp_dir / "stats" / "report.json")
     stats_legacy = _read_json_dict(exp_dir / "stats" / "compression.json")
     infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
 

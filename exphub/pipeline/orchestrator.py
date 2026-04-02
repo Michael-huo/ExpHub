@@ -337,14 +337,13 @@ def build_runtime(args):
 
 def _validate_scripts(runtime):
     required = [
-        runtime.script_path("merge_seq.py"),
-        runtime.script_path("slam_droid.py"),
-        runtime.script_path("eval_main.py"),
-        runtime.script_path("stats_collect.py"),
-        runtime.script_path("eval_traj.py"),
         (runtime.exphub_root / "exphub" / "pipeline" / "segment" / "service.py").resolve(),
         (runtime.exphub_root / "exphub" / "pipeline" / "prompt" / "service.py").resolve(),
         (runtime.exphub_root / "exphub" / "pipeline" / "infer" / "service.py").resolve(),
+        (runtime.exphub_root / "exphub" / "pipeline" / "merge" / "service.py").resolve(),
+        (runtime.exphub_root / "exphub" / "pipeline" / "slam" / "service.py").resolve(),
+        (runtime.exphub_root / "exphub" / "pipeline" / "eval" / "service.py").resolve(),
+        (runtime.exphub_root / "exphub" / "pipeline" / "stats" / "service.py").resolve(),
     ]
     for path in required:
         if not path.is_file():

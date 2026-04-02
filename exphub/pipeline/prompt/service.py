@@ -74,11 +74,9 @@ def run(runtime):
     runtime.remove_in_exp(runtime.paths.prompt_dir)
 
     prompt_phase = runtime.prompt_phase_name()
-    prompt_python = runtime.phase_python(prompt_phase)
     helper_path = (runtime.exphub_root / "exphub" / "pipeline" / "prompt" / "service.py").resolve()
 
     cmd = [
-        prompt_python,
         str(helper_path),
         "--run-formal-mainline",
         "--exp_dir",
