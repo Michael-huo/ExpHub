@@ -40,11 +40,9 @@ def run(runtime):
     runtime.remove_in_exp(runtime.paths.infer_dir)
 
     infer_phase = runtime.infer_phase_name()
-    infer_python = runtime.phase_python(infer_phase)
     helper_path = (runtime.exphub_root / "exphub" / "pipeline" / "infer" / "service.py").resolve()
 
     cmd = [
-        infer_python,
         str(helper_path),
         "--run-formal-mainline",
         "--exp_dir",

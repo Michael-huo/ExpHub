@@ -116,13 +116,7 @@ class StepRunner:
         )
 
     def run_env_python(self, cmd, phase_name, log_name, cwd=None, check=True, extra_env=None):
-        python_bin = resolve_phase_python(phase_name)
-
-        new_cmd = list(cmd)
-        if new_cmd and new_cmd[0] in ("python", "python3"):
-            new_cmd[0] = python_bin
-        elif new_cmd:
-            new_cmd.insert(0, python_bin)
+        new_cmd = build_env_python_cmd(cmd, phase_name)
 
         return run_cmd(
             new_cmd,
@@ -146,6 +140,49 @@ def _which(cmd):
     from shutil import which
 
     return which(cmd)
+
+
+def _looks_like_python_cmd(cmd):
+    if cmd is None:
+        return False
+    text = str(cmd).strip()
+    if not text:
+        return False
+    base = os.path.basename(text)
+    return base.startswith("python")
+
+
+def _python_cmd_identity(cmd):
+    text = str(cmd).strip()
+    if not text:
+        return ""
+    if os.path.isabs(text) or os.sep in text:
+        return os.path.abspath(os.path.expanduser(text))
+    return text
+
+
+def build_env_python_cmd(cmd, phase_name):
+    python_bin = resolve_phase_python(phase_name)
+    new_cmd = list(cmd or [])
+    if not new_cmd:
+        raise RuntimeError("run_env_python requires a non-empty command argv")
+
+    if len(new_cmd) >= 2 and _looks_like_python_cmd(new_cmd[0]) and _looks_like_python_cmd(new_cmd[1]):
+        first_id = _python_cmd_identity(new_cmd[0])
+        second_id = _python_cmd_identity(new_cmd[1])
+        if first_id and second_id and first_id == second_id:
+            raise RuntimeError(
+                "duplicate python executable in argv for phase '{}': {}".format(
+                    phase_name,
+                    first_id,
+                )
+            )
+
+    if _looks_like_python_cmd(new_cmd[0]):
+        new_cmd[0] = python_bin
+    else:
+        new_cmd.insert(0, python_bin)
+    return new_cmd
 
 
 def detect_conda_base():

@@ -168,6 +168,14 @@ class ExperimentPaths:
         return self.merge_dir / "frames"
 
     @property
+    def merge_manifest_path(self):
+        return self.merge_dir / "merge_manifest.json"
+
+    @property
+    def merge_report_path(self):
+        return self.merge_dir / "report.json"
+
+    @property
     def merge_calib_path(self):
         return self.merge_dir / "calib.txt"
 
@@ -176,7 +184,39 @@ class ExperimentPaths:
         return self.merge_dir / "timestamps.txt"
 
     @property
+    def slam_report_path(self):
+        return self.slam_dir / "report.json"
+
+    @property
+    def slam_primary_traj_path(self):
+        return self.slam_dir / "traj_est.txt"
+
+    @property
+    def slam_primary_reference_path(self):
+        return self.slam_dir / "traj_ref.txt"
+
+    @property
+    def eval_report_path(self):
+        return self.eval_dir / "report.json"
+
+    @property
+    def eval_metrics_dir(self):
+        return self.eval_dir / "metrics"
+
+    @property
+    def eval_plots_dir(self):
+        return self.eval_dir / "plots"
+
+    @property
+    def eval_details_path(self):
+        return self.eval_dir / "details.csv"
+
+    @property
     def stats_report_path(self):
+        return self.stats_dir / "final_report.json"
+
+    @property
+    def stats_report_compat_path(self):
         return self.stats_dir / "report.json"
 
     @property

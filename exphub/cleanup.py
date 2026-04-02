@@ -103,7 +103,11 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir / "infer",
         {"report.json", "runs_plan.json"},
     )
-    _prune_dir_keep_names(exp_dir, exp_dir / "merge", {"step_meta.json", "calib.txt", "timestamps.txt"})
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "merge",
+        {"merge_manifest.json", "report.json", "calib.txt", "timestamps.txt"},
+    )
 
 
 def apply_keep_level(exp_dir: Path, keep: KeepLevel) -> None:
