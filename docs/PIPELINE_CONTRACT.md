@@ -40,6 +40,8 @@
 - 必须写出 `segment/keyframes/keyframes_meta.json`
 - 必须写出 `segment/deploy_schedule.json`
 - 必须写出 `segment/state_segmentation/state_segments.json`
+- 当前 `state` 正式内部实现链固定为 `service.py -> state/detector.py -> state/policies/state.py -> state/signal_extraction/extract.py -> state/state_segmentation/formal.py`
+- `state/observed_signals/` 只承载正式链内部使用的原始观测后端，不是独立研究入口
 - `state` 正式输入只保留 `motion_velocity` 与 `semantic_velocity`
 - `segment/step_meta.json` 需要能支撑 `stats` 汇总
 
@@ -87,6 +89,11 @@
 ## 4. 非正式内容边界
 
 任何研究性、一次性或人工分析工具都不应重新成为正式阶段依赖，也不应回写主链事实源。
+
+对 `segment` 而言，这也包括：
+
+- 不要把 `state/signal_extraction/` 当成独立阶段入口理解；当前正式主链只消费其内联提取结果
+- 不要把 `state/state_segmentation/` 当成多实现试验场；当前正式主链固定使用 `formal.py`
 
 ## 5. 最小验收检查点
 

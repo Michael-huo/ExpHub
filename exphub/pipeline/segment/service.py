@@ -621,9 +621,9 @@ def _run_formal_mainline(args):
     materialize_sec = float(time.time() - materialize_started)
     log_info("segment artifact materialization completed in {:.2f}s".format(materialize_sec))
 
-    compat_payloads = segment_artifacts.load_compat_state_payloads(paths)
-    state_segments_payload = compat_payloads["state_segments"] or detector_result["state_segments_payload"]
-    state_report_payload = compat_payloads["state_report"] or detector_result["state_report_payload"]
+    state_payloads = segment_artifacts.load_state_payloads(paths)
+    state_segments_payload = state_payloads["state_segments"] or detector_result["state_segments_payload"]
+    state_report_payload = state_payloads["state_report"] or detector_result["state_report_payload"]
 
     frames_file_count, frames_bytes_sum = _dir_file_stats(paths.frames_dir)
     keyframes_file_count, _ = _dir_file_stats(paths.keyframes_dir)

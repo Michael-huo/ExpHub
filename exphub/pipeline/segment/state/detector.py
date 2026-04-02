@@ -193,14 +193,14 @@ def run_state_mainline(segment_dir, frames_dir, timestamps_path, kf_gap):
     context["policy_cache_dir"].mkdir(parents=True, exist_ok=True)
 
     plan = _normalize_plan(context, build_policy_plan(context))
-    compat_state_dir = (segment_dir_path / "state_segmentation").resolve()
-    state_segments_path = compat_state_dir / "state_segments.json"
-    state_report_path = compat_state_dir / "state_report.json"
-    state_overview_path = compat_state_dir / "state_overview.png"
+    state_dir = (segment_dir_path / "state_segmentation").resolve()
+    state_segments_path = state_dir / "state_segments.json"
+    state_report_path = state_dir / "state_report.json"
+    state_overview_path = state_dir / "state_overview.png"
 
     return {
         "plan": plan,
-        "compat_state_dir": compat_state_dir,
+        "state_dir": state_dir,
         "state_segments_path": state_segments_path,
         "state_report_path": state_report_path,
         "state_overview_path": state_overview_path,

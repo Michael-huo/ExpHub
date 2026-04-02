@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import csv
-import json
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
-from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, write_json_atomic
-from exphub.pipeline.segment.state.research.kinematics import moving_average
+from exphub.common.io import ensure_dir, write_json_atomic
+from exphub.pipeline.segment.state.observed_signals.kinematics import moving_average
 from exphub.pipeline.segment.state.signal_extraction import (
     FORMAL_STATE_INPUT_COLUMNS,
     FORMAL_STATE_INPUT_SIGNALS,
     build_formal_state_input_rows,
-    extract_signal_timeseries_from_frames,
 )
 
 
@@ -22,7 +19,6 @@ STATE_LOW = "low_state"
 STATE_HIGH = "high_state"
 
 DEFAULT_INPUT_SIGNALS = list(FORMAL_STATE_INPUT_SIGNALS)
-DEFAULT_NORMALIZATION_METHOD = "processed_formal_state_inputs_only"
 DEFAULT_SMOOTHING_WINDOW = 9
 DEFAULT_WEIGHTS = {
     "motion_velocity": 0.75,
@@ -35,7 +31,6 @@ DEFAULT_MIN_LOW_LEN = 24
 DEFAULT_GLITCH_MERGE_LEN = 12
 
 REPORT_SCHEMA_VERSION = "state_report.v3"
-_INPUT_CSV_NAME = "signal_timeseries.csv"
 _OUTPUT_JSON_NAME = "state_segments.json"
 _OUTPUT_REPORT_NAME = "state_report.json"
 
@@ -59,55 +54,6 @@ def _optional_float(value):
     if text == "":
         return None
     return float(text)
-
-
-def _read_signal_rows(csv_path):
-    csv_path = ensure_file(csv_path, name="state segmentation input csv")
-    rows = []
-    required_columns = set(["frame_idx", "timestamp"] + list(DEFAULT_INPUT_SIGNALS))
-    with open(str(csv_path), "r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        fieldnames = list(reader.fieldnames or [])
-        missing = sorted(required_columns.difference(fieldnames))
-        if missing:
-            raise SystemExit(
-                "[ERR] state segmentation input missing columns: {} ({})".format(
-                    ", ".join(missing),
-                    csv_path,
-                )
-            )
-        for row in reader:
-            rows.append(
-                {
-                    "frame_idx": int(row.get("frame_idx", 0) or 0),
-                    "timestamp": float(row.get("timestamp", 0.0) or 0.0),
-                    "appearance_delta": float(row.get("appearance_delta", 0.0) or 0.0),
-                    "motion_velocity": float(row.get("motion_velocity", 0.0) or 0.0),
-                    "blur_score": float(row.get("blur_score", 0.0) or 0.0),
-                    "semantic_velocity": float(row.get("semantic_velocity", 0.0) or 0.0),
-                    "motion_velocity_state_input": _optional_float(row.get("motion_velocity_state_input")),
-                    "semantic_velocity_state_input": _optional_float(row.get("semantic_velocity_state_input")),
-                }
-            )
-    if not rows:
-        raise SystemExit("[ERR] state segmentation input is empty: {}".format(csv_path))
-    return rows
-
-
-def _read_json(path):
-    with open(str(path), "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _read_timestamps(path):
-    values = []
-    with open(str(path), "r", encoding="utf-8") as f:
-        for line in f:
-            text = line.strip()
-            if not text:
-                continue
-            values.append(float(text))
-    return values
 
 
 def _coerce_signal_rows(rows):
@@ -1028,35 +974,11 @@ def _build_detector_report_meta(detector_meta, detector_window_meta, enter_th, e
         "dropped_short_interval_count": int(((detector_meta.get("short_interval_filter", {}) or {}).get("dropped_count", 0) or 0)),
         "dropped_low_score_interval_count": int(((detector_meta.get("score_level_filter", {}) or {}).get("dropped_count", 0) or 0)),
     }
-
-
-def _load_state_input_rows(exp_dir, segment_dir):
-    input_csv = segment_dir / "signal_extraction" / _INPUT_CSV_NAME
-    if input_csv.is_file():
-        return _read_signal_rows(input_csv), input_csv
-
-    frames_dir = ensure_dir(segment_dir / "frames", name="segment frames dir")
-    timestamps = _read_timestamps(ensure_file(segment_dir / "timestamps.txt", name="segment timestamps"))
-    keyframes_meta_path = segment_dir / "keyframes" / "keyframes_meta.json"
-    keyframes_meta = _read_json(keyframes_meta_path) if keyframes_meta_path.is_file() else {}
-    signal_payload = extract_signal_timeseries_from_frames(
-        frame_paths=list_frames_sorted(frames_dir),
-        timestamps=timestamps,
-        exp_dir=exp_dir,
-        segment_dir=segment_dir,
-        keyframes_meta=keyframes_meta,
-        output_dir=segment_dir / ".segment_cache" / "state_signal_prepare",
-        cache_dir=segment_dir / ".segment_cache" / "signal_extraction",
-    )
-    return list(signal_payload.get("rows", []) or []), None
-
-
 def compute_state_segments(
     rows,
     exp_dir=None,
     input_csv=None,
     output_dir=None,
-    normalization_method=DEFAULT_NORMALIZATION_METHOD,
     smoothing_window=DEFAULT_SMOOTHING_WINDOW,
     enter_th=DEFAULT_ENTER_TH,
     exit_th=DEFAULT_EXIT_TH,
@@ -1065,8 +987,6 @@ def compute_state_segments(
     glitch_merge_len=DEFAULT_GLITCH_MERGE_LEN,
     weights=None,
 ):
-    del normalization_method
-
     rows = _coerce_signal_rows(rows)
     exp_dir_path = Path(exp_dir).resolve() if exp_dir is not None else None
     output_dir_path = Path(output_dir).resolve() if output_dir is not None else None
@@ -1198,37 +1118,6 @@ def compute_state_segments(
         "meta": meta,
         "json_payload": json_payload,
     }
-
-
-def run_state_segmentation(
-    exp_dir,
-    normalization_method=DEFAULT_NORMALIZATION_METHOD,
-    smoothing_window=DEFAULT_SMOOTHING_WINDOW,
-    enter_th=DEFAULT_ENTER_TH,
-    exit_th=DEFAULT_EXIT_TH,
-    min_high_len=DEFAULT_MIN_HIGH_LEN,
-    min_low_len=DEFAULT_MIN_LOW_LEN,
-    glitch_merge_len=DEFAULT_GLITCH_MERGE_LEN,
-    weights=None,
-):
-    exp_dir = ensure_dir(exp_dir, name="experiment dir")
-    segment_dir = ensure_dir(exp_dir / "segment", name="segment dir")
-    rows, input_csv = _load_state_input_rows(exp_dir, segment_dir)
-    output_dir = (segment_dir / "state_segmentation").resolve()
-    return compute_state_segments(
-        rows=rows,
-        exp_dir=exp_dir,
-        input_csv=input_csv,
-        output_dir=output_dir,
-        normalization_method=normalization_method,
-        smoothing_window=smoothing_window,
-        enter_th=enter_th,
-        exit_th=exit_th,
-        min_high_len=min_high_len,
-        min_low_len=min_low_len,
-        glitch_merge_len=glitch_merge_len,
-        weights=weights,
-    )
 
 
 def write_state_segmentation_outputs(result):
