@@ -570,12 +570,10 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     try:
         _cfg = get_platform_config()
-        _def_qwen = _cfg.get("models", {}).get("qwen2_vl", {}).get("path", "")
         _def_videox = _cfg.get("repos", {}).get("videox_fun", "")
         _def_droid_repo = _cfg.get("repos", {}).get("droid_slam", "")
         _def_droid_w = _cfg.get("models", {}).get("droid", {}).get("path", "")
     except Exception:
-        _def_qwen = ""
         _def_videox = ""
         _def_droid_repo = ""
         _def_droid_w = ""
@@ -604,7 +602,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--segment_policy",
         default=FORMAL_SEGMENT_POLICY,
-        help="segment policy for the current mainline; only 'state' is accepted",
+        help="segment policy for the current workflow; only 'state' is accepted",
     )
     ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
@@ -615,7 +613,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--infer_backend",
         default="wan_fun_5b_inp",
         choices=["wan_fun_a14b_inp", "wan_fun_5b_inp"],
-        help="infer backend used by exphub.pipeline.infer.service.run(...)",
+        help="infer backend for the current workflow",
     )
     ap.add_argument(
         "--infer_model_dir",
@@ -650,26 +648,21 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--droid_weights", default=_def_droid_w)
 
     ap.add_argument(
-        "--qwen_model_dir",
-        default=_def_qwen,
-        help="optional model override for non-default prompt backend experiments",
-    )
-    ap.add_argument(
         "--prompt_backend",
         default="smolvlm2",
         choices=["smolvlm2"],
-        help="prompt backend used by exphub.pipeline.prompt.service.run(...)",
+        help="prompt backend for the current workflow",
     )
     ap.add_argument(
         "--prompt_model_dir",
         default="",
-        help="override prompt backend model dir or model id",
+        help="override SmolVLM2 model dir or model id",
     )
     ap.add_argument(
         "--prompt_dtype",
         default="bfloat16",
         choices=["bfloat16", "float16"],
-        help="prompt backend torch dtype hint",
+        help="SmolVLM2 torch dtype hint",
     )
     ap.add_argument(
         "--prompt_sample_mode",
@@ -681,14 +674,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--prompt_num_images",
         type=int,
         default=5,
-        help="number of representative images passed into the prompt backend",
+        help="number of representative images sampled for prompt generation",
     )
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
     ap.add_argument(
         "--skip_analyze",
         action="store_true",
-        help="compatibility no-op flag; no post-segment analyze sidecar runs in the default workflow",
+        help="reserved no-op flag; ignored in the current workflow",
     )
 
     # SLAM sequence selection.

@@ -2,7 +2,7 @@
 
 > 本文回答什么问题：每个阶段读取什么、写出什么、阶段之间靠哪些文件衔接、哪些契约不能被随意破坏。
 
-系统分层请看 [ARCHITECTURE.md](./ARCHITECTURE.md)，日志规则请看 [LOGGING.md](./LOGGING.md)。
+运行入口、配置位置与日志规则请看 [LOGGING.md](./LOGGING.md)。
 
 ## 1. 全局强契约
 
@@ -13,6 +13,7 @@
 - `segment/deploy_schedule.json` 是执行投影，不回写 raw schedule
 - `segment/state_segmentation/state_segments.json` 是 state 区间事实源
 - `prompt` 正式输出 `base_prompt.json`、`state_prompt_manifest.json`、`runtime_prompt_plan.json`、`report.json`
+- `prompt` 正式 backend 固定为 `smolvlm2`
 - `infer` 正式消费 `prompt/runtime_prompt_plan.json`
 - `infer` 正式输出 `runs_plan.json` 与 `report.json`
 - `merge` 必须按 `infer/runs_plan.json` 的真实边界拼接
@@ -44,8 +45,12 @@
 ### `prompt`
 
 - 输入来自 `segment/frames/`
+- backend 固定为 `smolvlm2`
 - 输出至少包含 `base_prompt.json`、`state_prompt_manifest.json`、`runtime_prompt_plan.json`、`report.json`
 - `runtime_prompt_plan.json` 是 `infer` 的唯一正式 prompt 输入文件
+- `base_prompt.json` 负责全局约束
+- `state_prompt_manifest.json` 负责 state 区间 prompt manifest
+- `runtime_prompt_plan.json` 负责按 deploy schedule 展开可直接执行的 prompt plan
 
 ### `infer`
 
@@ -79,7 +84,7 @@
 
 ## 4. 非正式内容边界
 
-当前仓库不再保留独立的旧 pipeline 实现树。任何研究性、一次性或人工分析工具都不应重新成为正式阶段依赖，也不应回写主链事实源。
+任何研究性、一次性或人工分析工具都不应重新成为正式阶段依赖，也不应回写主链事实源。
 
 ## 5. 最小验收检查点
 
