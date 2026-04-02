@@ -25,7 +25,7 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 当前默认行为按下面理解即可：
 
 - `segment` 负责产出标准帧序列、关键帧事实源、deploy schedule 与 state 区间
-- `prompt` 固定使用 `smolvlm2`，产出 `base_prompt.json`、`state_prompt_manifest.json`、`runtime_prompt_plan.json`、`report.json`
+- `prompt` 固定使用 `smolvlm2`，对下游输出 `runtime_prompt_plan.json`，并保留 `base_prompt.json`、`state_prompt_manifest.json`、`report.json` 作为阶段内部支撑与追溯产物
 - `infer` 直接消费 `prompt/runtime_prompt_plan.json`，产出 `runs_plan.json` 与 `report.json`
 - `merge` 只按 `infer/runs_plan.json` 的真实边界拼接
 - `slam` 在 `ori` 与 `gen` 两条轨道上估计位姿
@@ -38,6 +38,7 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 - `segment/deploy_schedule.json` 是执行投影
 - `segment/state_segmentation/state_segments.json` 是 state 区间事实源
 - `prompt/runtime_prompt_plan.json` 是 `infer` 唯一正式 prompt 输入
+- `prompt/base_prompt.json` 与 `prompt/state_prompt_manifest.json` 不是下游正式契约
 - `infer/runs_plan.json` 是 `merge` 的真实执行边界来源
 
 ## 代码与配置边界

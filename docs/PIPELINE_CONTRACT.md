@@ -12,7 +12,8 @@
 - `segment/keyframes/keyframes_meta.json` 是 raw keyframe 事实源
 - `segment/deploy_schedule.json` 是执行投影，不回写 raw schedule
 - `segment/state_segmentation/state_segments.json` 是 state 区间事实源
-- `prompt` 正式输出 `base_prompt.json`、`state_prompt_manifest.json`、`runtime_prompt_plan.json`、`report.json`
+- `prompt` 对下游唯一正式 prompt 契约是 `prompt/runtime_prompt_plan.json`
+- `prompt` 会同时写出 `base_prompt.json` 与 `state_prompt_manifest.json` 作为阶段内部支撑与追溯产物
 - `prompt` 正式 backend 固定为 `smolvlm2`
 - `infer` 正式消费 `prompt/runtime_prompt_plan.json`
 - `infer` 正式输出 `runs_plan.json` 与 `report.json`
@@ -24,7 +25,7 @@
 | 阶段 | 正式实现 | 关键输入 | 关键输出 | 下游依赖 |
 |---|---|---|---|---|
 | `segment` | `exphub/pipeline/segment/service.py` | 数据集、标定、phase Python | `segment/frames/`, `segment/keyframes/keyframes_meta.json`, `segment/deploy_schedule.json`, `segment/state_segmentation/*`, `timestamps.txt`, `calib.txt`, `preprocess_meta.json`, `step_meta.json` | `prompt`, `infer`, `slam` |
-| `prompt` | `exphub/pipeline/prompt/service.py` | `segment/frames/`, `segment/state_segmentation/state_segments.json`, `segment/deploy_schedule.json` | `prompt/base_prompt.json`, `prompt/state_prompt_manifest.json`, `prompt/runtime_prompt_plan.json`, `prompt/report.json` | `infer`, `stats` |
+| `prompt` | `exphub/pipeline/prompt/service.py` | `segment/frames/`, `segment/state_segmentation/state_segments.json`, `segment/deploy_schedule.json` | `prompt/runtime_prompt_plan.json`, `prompt/report.json`, 以及内部支撑产物 `prompt/base_prompt.json`、`prompt/state_prompt_manifest.json` | `infer`, `stats` |
 | `infer` | `exphub/pipeline/infer/service.py` | `segment/frames/`, `prompt/runtime_prompt_plan.json`, `segment/deploy_schedule.json` | `infer/runs/`, `infer/runs_plan.json`, `infer/report.json` | `merge`, `stats` |
 | `merge` | `exphub/pipeline/merge/service.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
 | `slam` | `exphub/pipeline/slam/service.py` | `segment/` 或 `merge/` 轨道数据 | `slam/<track>/traj_est.tum`, `traj_est.npz`, `run_meta.json` | `eval` |
@@ -46,14 +47,14 @@
 
 - 输入来自 `segment/frames/`
 - backend 固定为 `smolvlm2`
-- 输出至少包含 `base_prompt.json`、`state_prompt_manifest.json`、`runtime_prompt_plan.json`、`report.json`
-- `runtime_prompt_plan.json` 是 `infer` 的唯一正式 prompt 输入文件
-- `base_prompt.json` 负责全局约束
-- `state_prompt_manifest.json` 负责 state 区间 prompt manifest
+- 对下游唯一正式 prompt 契约文件是 `runtime_prompt_plan.json`
+- `report.json` 是阶段报告，不参与下游 prompt 契约
+- `base_prompt.json` 与 `state_prompt_manifest.json` 只作为 prompt 阶段内部支撑与追溯产物保留
 - `runtime_prompt_plan.json` 负责按 deploy schedule 展开可直接执行的 prompt plan
 
 ### `infer`
 
+- 正式 prompt 输入固定为 `prompt/runtime_prompt_plan.json`
 - 优先从 `segment/deploy_schedule.json` 构建 execution segments
 - deploy schedule 缺失时允许回退到 `fallback_kf_gap`
 - 不再在前端重拼 prompt 文本

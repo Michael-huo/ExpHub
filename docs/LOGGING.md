@@ -84,12 +84,11 @@
 
 ## 8. Prompt 术语口径
 
-当前主链 prompt 日志应围绕以下术语：
+当前主链对外优先使用以下 prompt 术语：
 
-- `profile`
-- `base_prompt`
-- `state_prompt_manifest`
 - `runtime_prompt_plan`
 - `resolved_prompt`
 - `negative_prompt`
 - `prompt_source`
+
+`profile`、`base_prompt`、`state_prompt_manifest` 仍可出现在 prompt 阶段内部追溯日志中，但不再作为下游正式 prompt 契约概念使用。
