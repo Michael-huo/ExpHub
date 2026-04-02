@@ -79,8 +79,6 @@ class PipelineRuntime:
     def prompt_model_ref(self):
         if str(self.args.prompt_model_dir or "").strip():
             return str(self.args.prompt_model_dir).strip()
-        if str(self.args.prompt_backend or "smolvlm2").strip().lower() == "qwen":
-            return str(self.args.qwen_model_dir or "").strip()
         return ""
 
     def infer_phase_name(self):
@@ -260,11 +258,11 @@ def _doctor(runtime):
 
 def build_runtime(args):
     exphub_root = Path(args.exphub).resolve() if args.exphub else Path.cwd().resolve()
-    if not (exphub_root / "scripts").exists():
+    if not ((exphub_root / "exphub").exists() and (exphub_root / "config").exists()):
         current = Path.cwd().resolve()
         found = None
         for path in [current] + list(current.parents):
-            if (path / "scripts").exists() and (path / "config").exists():
+            if (path / "exphub").exists() and (path / "config").exists():
                 found = path
                 break
         if found is not None:
