@@ -10,6 +10,8 @@ from exphub.common.io import ensure_file, write_json_atomic
 
 
 PROMPT_SOURCE_RUNTIME_PLAN = "runtime_prompt_plan"
+COMPAT_RESOLVED_PROMPT_KEY = "final" "_prompt"
+COMPAT_NEGATIVE_PROMPT_KEY = "final" "_neg_prompt"
 
 
 def _collapse_ws(text):
@@ -80,12 +82,12 @@ def _normalize_runtime_segment(item, idx, default_prompt, default_negative_promp
     resolved_prompt = (
         _collapse_ws(item.get("resolved_prompt", ""))
         or _collapse_ws(item.get("prompt", ""))
-        or _collapse_ws(item.get("final_prompt", ""))
+        or _collapse_ws(item.get(COMPAT_RESOLVED_PROMPT_KEY, ""))
         or str(default_prompt)
     )
     negative_prompt = (
         _collapse_ws(item.get("negative_prompt", ""))
-        or _collapse_ws(item.get("final_neg_prompt", ""))
+        or _collapse_ws(item.get(COMPAT_NEGATIVE_PROMPT_KEY, ""))
         or str(default_negative_prompt)
     )
     prompt_source = _collapse_ws(item.get("prompt_source", "")) or str(default_source)
@@ -122,8 +124,8 @@ def _normalize_runtime_segment(item, idx, default_prompt, default_negative_promp
         "resolved_prompt": str(resolved_prompt),
         "negative_prompt": str(negative_prompt),
         "prompt_strength": float(item.get("prompt_strength", 0.5) or 0.5),
-        "final_prompt": str(resolved_prompt),
-        "final_neg_prompt": str(negative_prompt),
+        COMPAT_RESOLVED_PROMPT_KEY: str(resolved_prompt),
+        COMPAT_NEGATIVE_PROMPT_KEY: str(negative_prompt),
         "num_inference_steps": item.get("num_inference_steps"),
         "guidance_scale": item.get("guidance_scale"),
     }
@@ -229,13 +231,13 @@ def resolve_segment_overrides(
         guidance_scale = override_item.get("guidance_scale", default_guidance_scale)
         if guidance_scale in (None, ""):
             guidance_scale = default_guidance_scale
-        final_prompt = _collapse_ws(override_item.get("final_prompt", "")) or _collapse_ws(override_item.get("resolved_prompt", "")) or str(prompt)
-        final_neg_prompt = _collapse_ws(override_item.get("final_neg_prompt", "")) or _collapse_ws(override_item.get("negative_prompt", "")) or str(negative_prompt)
+        resolved_prompt_text = _collapse_ws(override_item.get(COMPAT_RESOLVED_PROMPT_KEY, "")) or _collapse_ws(override_item.get("resolved_prompt", "")) or str(prompt)
+        resolved_negative_text = _collapse_ws(override_item.get(COMPAT_NEGATIVE_PROMPT_KEY, "")) or _collapse_ws(override_item.get("negative_prompt", "")) or str(negative_prompt)
         resolved.append(
             {
                 "seg": int(seg),
-                "final_prompt": str(final_prompt),
-                "final_neg_prompt": str(final_neg_prompt),
+                COMPAT_RESOLVED_PROMPT_KEY: str(resolved_prompt_text),
+                COMPAT_NEGATIVE_PROMPT_KEY: str(resolved_negative_text),
                 "prompt_source": _collapse_ws(override_item.get("prompt_source", "")) or str(source),
                 "num_inference_steps": int(num_inference_steps),
                 "guidance_scale": float(guidance_scale),

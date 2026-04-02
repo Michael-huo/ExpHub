@@ -9,16 +9,15 @@ from datetime import datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_SCRIPTS_DIR = (_REPO_ROOT / "scripts").resolve()
 
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from exphub.common.io import ensure_file
+from exphub.common.io import ensure_file, list_frames_sorted
+from exphub.common.logging import log_err, log_info, log_prog, log_warn
 from exphub.contracts import segment as segment_contract
 from exphub.pipeline.segment import artifacts as segment_artifacts
+from exphub.pipeline.segment.schedule import build_wan_r4_deploy_schedule
 
 
 _BAR_FORMAT = "[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
@@ -276,8 +275,6 @@ def _dir_file_stats(dir_path):
 
 
 def _extract_frames(args, paths):
-    from scripts._common import list_frames_sorted, log_err, log_info, log_warn
-
     try:
         import cv2
         import numpy as np
@@ -517,7 +514,7 @@ def _build_keyframes_meta(plan, kf_gap, keyframes_mode, actual_mode, keyframe_by
         "keyframes": list(plan["keyframe_items"]),
         "summary": dict(plan["summary"]),
         "policy_meta": dict(plan.get("policy_meta") or {}),
-        "note": "Formal segment mainline keeps state as the only official keyframe policy during Step 1.",
+        "note": "Formal segment mainline keeps 'state' as the only official keyframe policy.",
     }
 
 
@@ -581,9 +578,6 @@ def _build_step_meta(args, paths, keyframes_meta, deploy_schedule, actual_frame_
 
 
 def _run_formal_mainline(args):
-    from scripts._common import list_frames_sorted, log_info, log_prog
-    from scripts._schedule import build_wan_r4_deploy_schedule
-
     from exphub.pipeline.segment.state.detector import run_state_mainline
     from exphub.pipeline.segment.state.visualize import materialize_formal_visuals
 

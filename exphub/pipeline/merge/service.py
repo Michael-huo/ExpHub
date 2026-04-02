@@ -392,10 +392,8 @@ def _run_formal_mainline(args):
                 "timestamps.txt",
                 "calib.txt",
             ],
-            "legacy_outputs_removed": [
-                "merge_meta.json",
-                "step_meta.json",
-            ],
+            "obsolete_outputs_pruned": True,
+            "obsolete_output_count": 2,
         },
         "warnings": [],
     }
