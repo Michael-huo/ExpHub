@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts._common import list_frames_sorted
+from exphub.common.io import list_frames_sorted
 
 
 def _read_json(path):
@@ -155,7 +155,7 @@ def _normalize_plan(context, plan):
 
 
 def run_state_mainline(segment_dir, frames_dir, timestamps_path, kf_gap):
-    from scripts._segment.policies.state import build_policy_plan
+    from exphub.pipeline.segment.state.policies.state import build_policy_plan
 
     segment_dir_path = Path(segment_dir).resolve()
     frames_dir_path = Path(frames_dir).resolve()

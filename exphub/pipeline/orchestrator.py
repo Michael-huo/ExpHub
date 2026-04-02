@@ -51,13 +51,6 @@ class PipelineRuntime:
     def fps_arg(self):
         return self.spec.fps_text
 
-    @property
-    def scripts_dir(self):
-        return self.exphub_root / "scripts"
-
-    def script_path(self, name):
-        return (self.scripts_dir / name).resolve()
-
     def dataset(self):
         if self._dataset_resolved is None:
             cfg = load_datasets_cfg(self.cfg_path)

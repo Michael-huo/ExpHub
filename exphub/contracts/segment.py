@@ -55,7 +55,7 @@ def require_formal_segment_policy(policy_name):
     name = normalize_formal_segment_policy(policy_name)
     if name != FORMAL_SEGMENT_POLICY:
         raise ValueError(
-            "formal segment workflow only supports policy '{}' during Step 1 (got '{}')".format(
+            "formal segment workflow only supports policy '{}' in the current mainline (got '{}')".format(
                 FORMAL_SEGMENT_POLICY,
                 str(policy_name or "").strip() or "<empty>",
             )

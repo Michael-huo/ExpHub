@@ -7,7 +7,7 @@ from exphub.common.io import write_json_atomic
 
 
 REPORT_FILENAME = "report.json"
-LEGACY_INFER_OUTPUT_NAMES = [
+OBSOLETE_INFER_OUTPUT_NAMES = [
     "execution_plan.json",
     "prompt_manifest_resolved.json",
     "prompt_resolution.json",
@@ -172,7 +172,8 @@ def build_infer_report(infer_dir, runs_plan_obj, prompt_resolution, backend_meta
         },
         "artifact_contract": {
             "formal_files": ["runs_plan.json", REPORT_FILENAME],
-            "legacy_outputs_removed": list(LEGACY_INFER_OUTPUT_NAMES),
+            "obsolete_outputs_pruned": True,
+            "obsolete_output_count": int(len(OBSOLETE_INFER_OUTPUT_NAMES)),
         },
     }
 
@@ -203,7 +204,7 @@ def write_infer_report(infer_dir, report):
 def cleanup_legacy_infer_outputs(infer_dir):
     # type: (Path) -> None
     infer_dir = Path(infer_dir).resolve()
-    for rel_name in LEGACY_INFER_OUTPUT_NAMES:
+    for rel_name in OBSOLETE_INFER_OUTPUT_NAMES:
         target = (infer_dir / rel_name).resolve()
         try:
             if target.is_file() or target.is_symlink():

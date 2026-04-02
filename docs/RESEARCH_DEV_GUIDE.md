@@ -4,8 +4,6 @@
 
 系统事实请以 [ARCHITECTURE.md](./ARCHITECTURE.md) 和 [PIPELINE_CONTRACT.md](./PIPELINE_CONTRACT.md) 为准；本文只讨论研究语境与开发方法。
 
-本文负责研究问题、实验组织和开发流程；[TITS_METHODOLOGY.md](./TITS_METHODOLOGY.md) 负责论文主线、方法学定位与模块到学术贡献的映射。若要判断某个工程改动是否服务于论文主线，应额外参考 [TITS_METHODOLOGY.md](./TITS_METHODOLOGY.md)。
-
 ## 1. 研究问题
 
 ExpHub 服务的核心问题是：
@@ -18,26 +16,17 @@ ExpHub 服务的核心问题是：
 - 解码端：基于关键帧与语义条件恢复视觉序列
 - 验证端：检查恢复结果是否仍然对 SLAM 有用
 
-当前目标首先是验证范式是否成立，而不是直接做工程化产品。
-
 ## 2. 工作流与研究映射
 
 当前标准工作流是：
 
 `segment -> prompt -> infer -> merge -> slam -> eval -> stats`
 
-其中研究意义最强的三个阶段是：
+研究意义最强的三个阶段是：
 
 - `segment`：关键帧预算如何分配
 - `prompt`：图像如何被压缩成可传输的语义条件
 - `infer`：关键帧与语义条件能否恢复出足够好的序列
-
-其余阶段承担的是闭环与验证职责：
-
-- `merge`：整理恢复结果
-- `slam`：验证几何可用性
-- `eval`：形成轨迹对比
-- `stats`：形成实验记录与耗时画像
 
 ## 3. 当前实验口径
 
@@ -48,27 +37,24 @@ ExpHub 服务的核心问题是：
 - raw keyframe 事实源在 `segment/keyframes/keyframes_meta.json`
 - 执行投影在 `segment/deploy_schedule.json`
 - `segment/state_segmentation/state_segments.json` 是 state 区间事实源
-- `segment/signal_extraction/*` 与 `segment/state_segmentation/*` 是当前正式研究产物
-- analysis 类脚本与产物只用于旁路分析，不回写 raw keyframe 事实源或 deploy schedule
-- `prompt` 当前默认使用 `SmolVLM2`，保留 `Qwen` 作为显式回退/对照
-- prompt 主链路已经收敛到 `PromptProfile v1 -> base_prompt.json + state_prompt_manifest.json + runtime_prompt_plan.json`
-- `infer` 当前默认 backend 是 `wan_fun_5b_inp`
+- `prompt` 主链路收敛到 `PromptProfile v1 -> base_prompt.json + state_prompt_manifest.json + runtime_prompt_plan.json`
+- `infer` 默认 backend 是 `wan_fun_5b_inp`
 - `wan_fun_a14b_inp` 保留为显式回退/对照路线
 
-这意味着，当前研究主叙事不再以 `manifest_v2 / structured / base_only / delta_prompt` 为核心，也不应继续把它们写成默认实验设计。
+旧 prompt schema、旧桥接产物和旧双轨说明不再是当前研究主叙事。
 
 ## 4. 重点评测维度
 
-当前实验至少围绕四个维度看结果。
+当前实验至少围绕四个维度看结果：
 
-- 传输效率：关键帧与 prompt 是否显著降低上传负担
-- 几何一致性：恢复结果是否仍可用于 SLAM
-- 语义一致性：场景语义是否被保留，且跨帧是否连续
-- 运行代价：完整链路尤其是 `infer` 的成本是否可接受
+- 传输效率
+- 几何一致性
+- 语义一致性
+- 运行代价
 
-其中当前最薄弱、最需要持续补强的是：
+当前最需要持续补强的是：
 
-- 语义一致性评测的标准化
+- 语义一致性评测标准化
 - 面向 SLAM 的生成结果分析
 - `infer` 时延优化
 
@@ -80,11 +66,9 @@ ExpHub 当前更接近：
 - 一个实验编排器
 - 一个可复现实验闭环
 
-它还不是面向真实机器人部署的产品原型。判断一个改动是否“值得做”，不能只看能不能跑通，还要看它是否帮助研究比较、实验复现和结果解释。
+判断一个改动是否值得做，不能只看能不能跑通，还要看它是否帮助研究比较、实验复现和结果解释。
 
 ## 6. 推荐开发流程
-
-推荐的协作顺序是：
 
 1. 先明确研究问题和变更边界
 2. 再确认主链路、契约和日志口径
@@ -92,34 +76,23 @@ ExpHub 当前更接近：
 4. 做轻量检查与人工长链路验证分工
 5. 同步更新相关文档
 
-当前默认分工：
+默认分工：
 
 - AI 负责实现、静态检查、文档同步与轻量验证
 - 人工负责耗时较长的推理与全链路实测
 
 ## 7. 工程协作约束
 
-- 根目录 `AGENTS.md` 是最高约束
 - 一个分支尽量只做一类事情
 - 代码、文档、研究口径必须同步
 - 长耗时测试允许人工兜底，但默认行为说明不能依赖口头记忆
+- 正式实现应继续集中在 `exphub/common`、`exphub/contracts`、`exphub/pipeline`
 
 ## 8. 近期里程碑
 
 近期更值得持续推进的方向是：
 
 - 把关键帧策略从安全骨架继续推进到更强的研究方法
-- 优化 prompt 语义表示，而不是重新引入过多旧中间层
+- 优化 prompt 语义表示，而不是重新引入旧中间层
 - 将语义一致性正式纳入标准评测
 - 持续压缩 `infer` 的时间成本
-
-## 9. 维护原则
-
-当以下内容变化时，应同步更新本文：
-
-- 研究目标
-- 默认实验口径
-- 核心评测维度
-- AI 与人工的协作流程
-
-如果问题属于“系统怎么跑”，请回到 [ARCHITECTURE.md](./ARCHITECTURE.md)；如果问题属于“阶段之间靠什么文件接”，请回到 [PIPELINE_CONTRACT.md](./PIPELINE_CONTRACT.md)。

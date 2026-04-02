@@ -4,11 +4,8 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_SCRIPTS_DIR = (_REPO_ROOT / "scripts").resolve()
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from .wan_fun_5b_inp import WanFun5BInpBackend
 from .wan_fun_a14b_inp import WanFunA14BInpBackend

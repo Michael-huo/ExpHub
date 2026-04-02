@@ -604,7 +604,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--segment_policy",
         default=FORMAL_SEGMENT_POLICY,
-        help="formal segment policy for the Step 1 mainline; only 'state' is accepted",
+        help="segment policy for the current mainline; only 'state' is accepted",
     )
     ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
@@ -615,7 +615,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         "--infer_backend",
         default="wan_fun_5b_inp",
         choices=["wan_fun_a14b_inp", "wan_fun_5b_inp"],
-        help="formal infer backend used by exphub.pipeline.infer.service.run(...)",
+        help="infer backend used by exphub.pipeline.infer.service.run(...)",
     )
     ap.add_argument(
         "--infer_model_dir",
@@ -652,18 +652,18 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--qwen_model_dir",
         default=_def_qwen,
-        help="legacy qwen model dir placeholder; Step 2 formal prompt path uses smolvlm2",
+        help="optional model override for non-default prompt backend experiments",
     )
     ap.add_argument(
         "--prompt_backend",
         default="smolvlm2",
         choices=["smolvlm2"],
-        help="formal prompt backend used by exphub.pipeline.prompt.service.run(...)",
+        help="prompt backend used by exphub.pipeline.prompt.service.run(...)",
     )
     ap.add_argument(
         "--prompt_model_dir",
         default="",
-        help="override formal prompt backend model dir or model id",
+        help="override prompt backend model dir or model id",
     )
     ap.add_argument(
         "--prompt_dtype",
@@ -688,7 +688,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--skip_analyze",
         action="store_true",
-        help="legacy no-op flag; post-segment analyze sidecar is no longer run by default",
+        help="compatibility no-op flag; no post-segment analyze sidecar runs in the default workflow",
     )
 
     # SLAM sequence selection.

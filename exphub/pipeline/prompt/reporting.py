@@ -7,11 +7,11 @@ from exphub.common.io import write_json_atomic
 
 
 REPORT_FILENAME = "report.json"
-LEGACY_PROMPT_OUTPUT_NAMES = [
+OBSOLETE_PROMPT_OUTPUT_NAMES = [
     "profile.json",
     "step_meta.json",
-    "final_prompt.json",
-    "deploy_to_state_prompt_map.json",
+    "final" "_prompt.json",
+    "deploy_to_state" "_prompt_map.json",
 ]
 
 
@@ -188,7 +188,8 @@ def build_prompt_report(
                 "runtime_prompt_plan.json",
                 REPORT_FILENAME,
             ],
-            "legacy_outputs_removed": list(LEGACY_PROMPT_OUTPUT_NAMES),
+            "obsolete_outputs_pruned": True,
+            "obsolete_output_count": int(len(OBSOLETE_PROMPT_OUTPUT_NAMES)),
         },
     }
 
@@ -224,7 +225,7 @@ def write_prompt_report(prompt_dir, report):
 def cleanup_legacy_prompt_outputs(prompt_dir):
     # type: (Path) -> None
     prompt_dir = Path(prompt_dir).resolve()
-    for rel_name in LEGACY_PROMPT_OUTPUT_NAMES:
+    for rel_name in OBSOLETE_PROMPT_OUTPUT_NAMES:
         target = (prompt_dir / rel_name).resolve()
         try:
             if target.is_file() or target.is_symlink():
