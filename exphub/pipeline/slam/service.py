@@ -453,9 +453,7 @@ def _run_formal_mainline(args):
 
     reference_path = ""
     if "ori" in track_reports:
-        reference_src = (slam_dir / "ori" / "traj_est.tum").resolve()
-        reference_dst = (slam_dir / "traj_ref.txt").resolve()
-        reference_path = _copy_if_exists(reference_src, reference_dst)
+        reference_path = str((slam_dir / "ori" / "traj_est.tum").resolve())
 
     report = {
         "report_schema_version": "slam_report.v1",
@@ -478,12 +476,12 @@ def _run_formal_mainline(args):
                 "report.json",
                 "traj_est.txt",
             ],
-            "track_dirs": sorted(track_reports.keys()),
-            "compat_files": [
-                "traj_ref.txt",
-                "ori/run_meta.json",
-                "gen/run_meta.json",
+            "formal_track_files": [
+                "<track>/traj_est.tum",
+                "<track>/traj_est.npz",
+                "<track>/run_meta.json",
             ],
+            "track_dirs": sorted(track_reports.keys()),
         },
         "warnings": [],
     }

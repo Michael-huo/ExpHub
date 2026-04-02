@@ -28,9 +28,9 @@
 | `prompt` | `exphub/pipeline/prompt/service.py` | `segment/frames/`, `segment/state_segmentation/state_segments.json`, `segment/deploy_schedule.json` | `prompt/runtime_prompt_plan.json`, `prompt/report.json`, 以及内部支撑产物 `prompt/base_prompt.json`、`prompt/state_prompt_manifest.json` | `infer`, `stats` |
 | `infer` | `exphub/pipeline/infer/service.py` | `segment/frames/`, `prompt/runtime_prompt_plan.json`, `segment/deploy_schedule.json` | `infer/runs/`, `infer/runs_plan.json`, `infer/report.json` | `merge`, `stats` |
 | `merge` | `exphub/pipeline/merge/service.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
-| `slam` | `exphub/pipeline/slam/service.py` | `segment/` 或 `merge/` 轨道数据 | `slam/<track>/traj_est.tum`, `traj_est.npz`, `run_meta.json` | `eval` |
-| `eval` | `exphub/pipeline/eval/service.py` | `slam/ori/traj_est.tum`, `slam/gen/traj_est.tum`, `merge/frames/`, `segment/frames/` | `eval/report.json`, `eval/details.csv`, `eval/plots/traj_xy.png`, `eval/plots/metrics_overview.png` | 人工分析 |
-| `stats` | `exphub/pipeline/stats/service.py` | `segment/step_meta.json`, `prompt/report.json`, `infer/report.json`, `merge/step_meta.json` 与日志 | `stats/report.json`, `stats/compression.json` | 汇总出口 |
+| `slam` | `exphub/pipeline/slam/service.py` | `segment/` 或 `merge/` 轨道数据 | `slam/report.json`, `slam/traj_est.txt`, 以及 `slam/<track>/traj_est.tum`, `slam/<track>/traj_est.npz`, `slam/<track>/run_meta.json` | `eval` |
+| `eval` | `exphub/pipeline/eval/service.py` | `slam/report.json` 中声明的正式轨迹路径、`merge/frames/`、`segment/frames/` | `eval/report.json`, `eval/details.csv`, `eval/plots/traj_xy.png`, `eval/plots/metrics_overview.png` | 人工分析 |
+| `stats` | `exphub/pipeline/stats/service.py` | `segment/step_meta.json`, `prompt/report.json`, `infer/report.json`, `merge/step_meta.json` 与日志 | `stats/final_report.json`, `stats/compression.json` | 汇总出口 |
 
 ## 3. 各阶段最小契约
 
@@ -69,7 +69,8 @@
 
 - `ori` 轨读取 `segment/`
 - `gen` 轨读取 `merge/`
-- 每个轨道至少产出 `traj_est.tum` 与 `run_meta.json`
+- 正式聚合输出保留 `slam/report.json` 与 `slam/traj_est.txt`
+- `eval` 仍依赖每个轨道的 `traj_est.tum`、`traj_est.npz` 与 `run_meta.json`
 
 ### `eval`
 
@@ -79,8 +80,8 @@
 
 ### `stats`
 
-- 输出 `stats/report.json`
-- 保留 `stats/compression.json` 兼容历史消费
+- 正式输出为 `stats/final_report.json`
+- 保留 `stats/compression.json`，因为 `exphub/cli.py` 的实验摘要仍会读取它
 - 对缺失上游报告给出 `WARN`，而不是直接崩溃
 
 ## 4. 非正式内容边界
@@ -92,7 +93,7 @@
 - `python -m exphub --mode doctor ...` 返回 `PASS`
 - 当前默认命令能读到 `prompt/runtime_prompt_plan.json`
 - `infer/runs_plan.json` 中的边界与 `merge` 实际边界一致
-- `stats/report.json` 能从各阶段报告汇总结果
+- `stats/final_report.json` 能从各阶段报告汇总结果
 - 日志前缀遵守 [LOGGING.md](./LOGGING.md)
 
 快速静态检查：

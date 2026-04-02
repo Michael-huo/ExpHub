@@ -6,7 +6,6 @@ from .common import StageContract
 INPUT_MERGE_MANIFEST = "merge_manifest"
 REPORT = "report"
 PRIMARY_TRAJECTORY = "traj_est"
-PRIMARY_REFERENCE = "traj_ref"
 ORI_TUM = "ori_tum"
 ORI_META = "ori_meta"
 GEN_TUM = "gen_tum"
@@ -28,7 +27,6 @@ def build_contract(paths):
             INPUT_MERGE_MANIFEST: paths.merge_manifest_path,
             REPORT: paths.slam_report_path,
             PRIMARY_TRAJECTORY: paths.slam_primary_traj_path,
-            PRIMARY_REFERENCE: paths.slam_primary_reference_path,
             ORI_TUM: paths.slam_traj_path("ori"),
             ORI_META: paths.slam_run_meta_path("ori"),
             GEN_TUM: paths.slam_traj_path("gen"),

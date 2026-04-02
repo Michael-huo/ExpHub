@@ -286,7 +286,6 @@ def _run_formal_mainline(args):
         "eval_report_path": exp_dir / "eval" / "report.json",
         "stats_dir": stats_dir,
         "stats_report_path": stats_dir / "final_report.json",
-        "stats_report_compat_path": stats_dir / "report.json",
         "stats_compression_path": stats_dir / "compression.json",
     })())
 
@@ -324,15 +323,11 @@ def _run_formal_mainline(args):
                 "final_report.json",
                 "compression.json",
             ],
-            "compat_files": [
-                "report.json",
-            ],
         },
     }
 
     legacy_compression = _build_legacy_compression(exp_dir, compression)
     write_json_atomic(contract.artifacts[stats_contract.FINAL_REPORT], final_report, indent=2)
-    write_json_atomic(contract.artifacts[stats_contract.COMPAT_REPORT], final_report, indent=2)
     write_json_atomic(contract.artifacts[stats_contract.COMPRESSION], legacy_compression, indent=2)
 
     log_prog("stats summary: final report generated")
