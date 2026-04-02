@@ -182,12 +182,8 @@ def build_prompt_report(
             "runtime_prompt_plan": _relative_path(prompt_dir.parent, runtime_prompt_plan_path),
         },
         "artifact_contract": {
-            "formal_files": [
-                "base_prompt.json",
-                "state_prompt_manifest.json",
-                "runtime_prompt_plan.json",
-                REPORT_FILENAME,
-            ],
+            "formal_files": ["runtime_prompt_plan.json", REPORT_FILENAME],
+            "internal_support_files": ["base_prompt.json", "state_prompt_manifest.json"],
             "obsolete_outputs_pruned": True,
             "obsolete_output_count": int(len(OBSOLETE_PROMPT_OUTPUT_NAMES)),
         },

@@ -79,17 +79,8 @@ def _normalize_runtime_segment(item, idx, default_prompt, default_negative_promp
     raw_gap = _safe_int(item.get("raw_gap"), int(raw_end_idx) - int(raw_start_idx))
     num_frames = _safe_int(item.get("num_frames"), int(end_idx) - int(start_idx) + 1)
 
-    resolved_prompt = (
-        _collapse_ws(item.get("resolved_prompt", ""))
-        or _collapse_ws(item.get("prompt", ""))
-        or _collapse_ws(item.get(COMPAT_RESOLVED_PROMPT_KEY, ""))
-        or str(default_prompt)
-    )
-    negative_prompt = (
-        _collapse_ws(item.get("negative_prompt", ""))
-        or _collapse_ws(item.get(COMPAT_NEGATIVE_PROMPT_KEY, ""))
-        or str(default_negative_prompt)
-    )
+    resolved_prompt = _collapse_ws(item.get("resolved_prompt", "")) or str(default_prompt)
+    negative_prompt = _collapse_ws(item.get("negative_prompt", "")) or str(default_negative_prompt)
     prompt_source = _collapse_ws(item.get("prompt_source", "")) or str(default_source)
     execution_backend = _collapse_ws(item.get("execution_backend", "")) or str(default_backend)
 
@@ -124,8 +115,6 @@ def _normalize_runtime_segment(item, idx, default_prompt, default_negative_promp
         "resolved_prompt": str(resolved_prompt),
         "negative_prompt": str(negative_prompt),
         "prompt_strength": float(item.get("prompt_strength", 0.5) or 0.5),
-        COMPAT_RESOLVED_PROMPT_KEY: str(resolved_prompt),
-        COMPAT_NEGATIVE_PROMPT_KEY: str(negative_prompt),
         "num_inference_steps": item.get("num_inference_steps"),
         "guidance_scale": item.get("guidance_scale"),
     }
@@ -138,7 +127,7 @@ def load_runtime_prompt_plan(path, default_prompt="", default_negative_prompt=""
     if not isinstance(payload, dict):
         raise ValueError("runtime prompt plan must be a JSON object")
 
-    base_prompt = _collapse_ws(payload.get("base_prompt", "")) or _collapse_ws(payload.get("prompt", ""))
+    base_prompt = _collapse_ws(payload.get("base_prompt", ""))
     negative_prompt = _collapse_ws(payload.get("negative_prompt", ""))
     if not base_prompt:
         base_prompt = _collapse_ws(default_prompt)
@@ -174,13 +163,12 @@ def load_runtime_prompt_plan(path, default_prompt="", default_negative_prompt=""
     return {
         "version": int(payload.get("version", 1) or 1),
         "schema": str(payload.get("schema", "") or "runtime_prompt_plan.v1"),
-        "prompt": str(base_prompt),
+        "base_prompt": str(base_prompt),
         "negative_prompt": str(negative_prompt),
         "source": str(source),
         "schedule_source": str(schedule_source),
         "execution_backend": str(execution_backend),
         "segments": segments,
-        "segment_overrides": list(segments),
         "source_files": dict(payload.get("source_files", {}) or {}),
         "_raw": payload,
         "_path": prompt_path,
@@ -190,13 +178,24 @@ def load_runtime_prompt_plan(path, default_prompt="", default_negative_prompt=""
 def load_runtime_prompt_plan_for_infer(path, default_prompt="", default_negative_prompt=""):
     # type: (str, str, str) -> dict
     plan = load_runtime_prompt_plan(path, default_prompt=default_prompt, default_negative_prompt=default_negative_prompt)
+    segment_overrides = []
+    for raw_item in list(plan.get("segments", []) or []):
+        item = _as_dict(raw_item)
+        if not item:
+            continue
+        # Keep the old backend-facing aliases inside the adapter only.
+        compat_item = dict(item)
+        compat_item[COMPAT_RESOLVED_PROMPT_KEY] = str(item.get("resolved_prompt", "") or "")
+        compat_item[COMPAT_NEGATIVE_PROMPT_KEY] = str(item.get("negative_prompt", "") or "")
+        segment_overrides.append(compat_item)
     return {
         "version": int(plan.get("version", 1) or 1),
         "schema": str(plan.get("schema", "") or "runtime_prompt_plan.v1"),
-        "prompt": str(plan.get("prompt", "")),
+        "base_prompt": str(plan.get("base_prompt", "")),
+        "prompt": str(plan.get("base_prompt", "")),
         "negative_prompt": str(plan.get("negative_prompt", "")),
         "source": str(plan.get("source", "")),
-        "segment_overrides": list(plan.get("segment_overrides", []) or []),
+        "segment_overrides": segment_overrides,
         "_raw": dict(plan.get("_raw", {}) or {}),
     }
 
@@ -211,7 +210,7 @@ def resolve_segment_overrides(
 ):
     # type: (dict, int, str, str, int, float) -> List[dict]
     count = max(0, int(num_segments))
-    prompt = _collapse_ws(manifest_info.get("prompt", "")) or _collapse_ws(default_prompt)
+    prompt = _collapse_ws(manifest_info.get("base_prompt", "")) or _collapse_ws(manifest_info.get("prompt", "")) or _collapse_ws(default_prompt)
     negative_prompt = _collapse_ws(manifest_info.get("negative_prompt", "")) or _collapse_ws(default_negative_prompt)
     source = str(manifest_info.get("source", "") or PROMPT_SOURCE_RUNTIME_PLAN)
     override_map = {}
@@ -231,8 +230,8 @@ def resolve_segment_overrides(
         guidance_scale = override_item.get("guidance_scale", default_guidance_scale)
         if guidance_scale in (None, ""):
             guidance_scale = default_guidance_scale
-        resolved_prompt_text = _collapse_ws(override_item.get(COMPAT_RESOLVED_PROMPT_KEY, "")) or _collapse_ws(override_item.get("resolved_prompt", "")) or str(prompt)
-        resolved_negative_text = _collapse_ws(override_item.get(COMPAT_NEGATIVE_PROMPT_KEY, "")) or _collapse_ws(override_item.get("negative_prompt", "")) or str(negative_prompt)
+        resolved_prompt_text = _collapse_ws(override_item.get("resolved_prompt", "")) or _collapse_ws(override_item.get(COMPAT_RESOLVED_PROMPT_KEY, "")) or str(prompt)
+        resolved_negative_text = _collapse_ws(override_item.get("negative_prompt", "")) or _collapse_ws(override_item.get(COMPAT_NEGATIVE_PROMPT_KEY, "")) or str(negative_prompt)
         resolved.append(
             {
                 "seg": int(seg),
@@ -249,7 +248,7 @@ def resolve_segment_overrides(
                 "prompt_strength": override_item.get("prompt_strength"),
                 "base_prompt": override_item.get("base_prompt"),
                 "local_prompt": override_item.get("local_prompt"),
-                "resolved_prompt": override_item.get("resolved_prompt"),
+                "resolved_prompt": resolved_prompt_text,
             }
         )
     return resolved
@@ -329,12 +328,12 @@ def build_prompt_resolution(runtime_prompt_plan, execution_segments, exp_dir):
                 "motion_trend": plan_item.get("motion_trend"),
                 "match_source": plan_item.get("match_source"),
                 "prompt_source": str(plan_item.get("prompt_source", "") or PROMPT_SOURCE_RUNTIME_PLAN),
-                "base_prompt": str(plan_item.get("base_prompt", runtime_prompt_plan.get("prompt", "")) or ""),
+                "base_prompt": str(plan_item.get("base_prompt", runtime_prompt_plan.get("base_prompt", "")) or ""),
                 "local_prompt": str(plan_item.get("local_prompt", "") or ""),
-                "resolved_prompt": str(plan_item.get("resolved_prompt", "") or runtime_prompt_plan.get("prompt", "")),
+                "resolved_prompt": str(plan_item.get("resolved_prompt", "") or runtime_prompt_plan.get("base_prompt", "")),
                 "negative_prompt": str(plan_item.get("negative_prompt", "") or runtime_prompt_plan.get("negative_prompt", "")),
                 "prompt_strength": float(plan_item.get("prompt_strength", 0.5) or 0.5),
-                "prompt_preview": _prompt_preview(plan_item.get("resolved_prompt", "")),
+                "prompt_preview": _prompt_preview(plan_item.get("resolved_prompt", "") or runtime_prompt_plan.get("base_prompt", "")),
             }
         )
 

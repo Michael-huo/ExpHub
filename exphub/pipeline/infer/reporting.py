@@ -172,6 +172,7 @@ def build_infer_report(infer_dir, runs_plan_obj, prompt_resolution, backend_meta
         },
         "artifact_contract": {
             "formal_files": ["runs_plan.json", REPORT_FILENAME],
+            "formal_prompt_inputs": ["runtime_prompt_plan.json"],
             "obsolete_outputs_pruned": True,
             "obsolete_output_count": int(len(OBSOLETE_INFER_OUTPUT_NAMES)),
         },
