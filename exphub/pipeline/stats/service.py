@@ -175,29 +175,17 @@ def _build_compression(exp_dir, segment_report, prompt_report, warnings):
 
 def _build_quality(eval_report, slam_report):
     traj_metrics = dict(eval_report.get("traj_eval") or {}) if isinstance(eval_report.get("traj_eval"), dict) else {}
-    image_metrics = dict(eval_report.get("image_eval") or {}) if isinstance(eval_report.get("image_eval"), dict) else {}
-    slam_metrics = dict(eval_report.get("slam_friendly_eval") or {}) if isinstance(eval_report.get("slam_friendly_eval"), dict) else {}
 
     primary_track = str(_get_nested(slam_report, ("primary_track",)) or "")
     return {
         "eval_status": str(eval_report.get("eval_status", "") or ""),
         "traj_status": str(traj_metrics.get("eval_status", "") or ""),
-        "image_status": str(image_metrics.get("eval_status", "") or ""),
-        "slam_status": str(slam_metrics.get("eval_status", "") or ""),
         "ape_rmse": _pick_float(traj_metrics, [("ape_trans", "rmse")]),
         "rpe_trans_rmse": _pick_float(traj_metrics, [("rpe_trans", "rmse")]),
         "rpe_rot_rmse": _pick_float(traj_metrics, [("rpe_rot", "rmse")]),
         "matched_pose_count": _pick_int(traj_metrics, [("matched_pose_count",)]),
         "ori_path_length_m": _pick_float(traj_metrics, [("ori_path_length_m",)]),
         "gen_path_length_m": _pick_float(traj_metrics, [("gen_path_length_m",)]),
-        "psnr_mean": _pick_float(image_metrics, [("psnr", "mean")]),
-        "ms_ssim_mean": _pick_float(image_metrics, [("ms_ssim", "mean")]),
-        "lpips_mean": _pick_float(image_metrics, [("lpips", "mean")]),
-        "image_frame_count": _pick_int(image_metrics, [("frame_count",)]),
-        "slam_reference_source": str(slam_metrics.get("reference_source", "") or ""),
-        "slam_inlier_ratio_mean": _pick_float(slam_metrics, [("inlier_ratio", "mean")]),
-        "slam_pose_success_rate": _pick_float(slam_metrics, [("pose_success_rate",)]),
-        "slam_valid_pair_count": _pick_int(slam_metrics, [("valid_pair_count",)]),
         "primary_track": primary_track,
     }
 

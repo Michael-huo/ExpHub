@@ -390,14 +390,8 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
 
     eval_report = _read_json_dict(exp_dir / "eval" / "report.json")
     traj_metrics = dict(eval_report.get("traj_eval") or {}) if isinstance(eval_report.get("traj_eval"), dict) else {}
-    image_metrics = dict(eval_report.get("image_eval") or {}) if isinstance(eval_report.get("image_eval"), dict) else {}
-    slam_metrics = dict(eval_report.get("slam_friendly_eval") or {}) if isinstance(eval_report.get("slam_friendly_eval"), dict) else {}
     if not traj_metrics:
-        traj_metrics = _read_json_dict(exp_dir / "eval" / "traj_metrics.json")
-    if not image_metrics:
-        image_metrics = _read_json_dict(exp_dir / "eval" / "image_metrics.json")
-    if not slam_metrics:
-        slam_metrics = _read_json_dict(exp_dir / "eval" / "slam_metrics.json")
+        traj_metrics = _read_json_dict(exp_dir / "eval" / "metrics" / "traj_eval.json")
     stats_report = _read_json_dict(exp_dir / "stats" / "final_report.json")
     if not stats_report:
         stats_report = _read_json_dict(exp_dir / "stats" / "report.json")
@@ -473,13 +467,6 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
             "ori_len": _pick_float(traj_metrics, ["ori_path_length_m"]),
             "gen_len": _pick_float(traj_metrics, ["gen_path_length_m"]),
             "poses": _pick_int(traj_metrics, ["matched_pose_count"]),
-            "img_psnr": _pick_float(image_metrics, ["psnr", "mean"]),
-            "img_ms_ssim": _pick_float(image_metrics, ["ms_ssim", "mean"]),
-            "img_lpips": _pick_float(image_metrics, ["lpips", "mean"]),
-            "img_frames": _pick_int(image_metrics, ["frame_count"]),
-            "slam_inlier": _pick_float(slam_metrics, ["inlier_ratio", "mean"]),
-            "slam_pose_sr": _pick_float(slam_metrics, ["pose_success_rate"]),
-            "slam_ref": str(slam_metrics.get("reference_source", "unavailable") or "unavailable"),
         },
         "compression": {
             "ratio": ratio_bytes,
@@ -529,14 +516,7 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
         ("rpe_rot", _fmt_metric(_as_float_or_none(quality.get("rpe_rot")), unit="deg")),
         ("ori_len", _fmt_metric(_as_float_or_none(quality.get("ori_len")), unit="m")),
         ("gen_len", _fmt_metric(_as_float_or_none(quality.get("gen_len")), unit="m")),
-        ("img.psnr", _fmt_metric(_as_float_or_none(quality.get("img_psnr")), unit="dB")),
-        ("img.ms_ssim", _fmt_metric(_as_float_or_none(quality.get("img_ms_ssim")))),
-        ("img.lpips", _fmt_metric(_as_float_or_none(quality.get("img_lpips")))),
-        ("slam.inlier", _fmt_metric(_as_float_or_none(quality.get("slam_inlier")))),
-        ("slam.pose_sr", _fmt_metric(_as_float_or_none(quality.get("slam_pose_sr")))),
-        ("slam.ref", str(quality.get("slam_ref") or "unavailable")),
         ("poses", _fmt_count(_as_int_or_none(quality.get("poses")))),
-        ("img_frames", _fmt_count(_as_int_or_none(quality.get("img_frames")))),
     ]
 
     compression_rows = [

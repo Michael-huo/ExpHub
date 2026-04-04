@@ -136,6 +136,32 @@ def _curve_payload(result):
     }
 
 
+def _traj_detail_records(ref_traj, est_traj, ape_result):
+    ref_xyz = np.asarray(getattr(ref_traj, "positions_xyz", None), dtype=np.float64)
+    est_xyz = np.asarray(getattr(est_traj, "positions_xyz", None), dtype=np.float64)
+    timestamps = np.asarray(getattr(ref_traj, "timestamps", []), dtype=np.float64).reshape(-1)
+    errors = np.asarray(getattr(ape_result, "np_arrays", {}).get("error_array", []), dtype=np.float64).reshape(-1)
+    size = min(ref_xyz.shape[0], est_xyz.shape[0], timestamps.shape[0], errors.shape[0])
+    if size <= 0:
+        return []
+    rows = []
+    for idx in range(size):
+        rows.append(
+            {
+                "pose_idx": int(idx),
+                "timestamp": float(timestamps[idx]) if np.isfinite(timestamps[idx]) else None,
+                "ape_trans_m": float(errors[idx]) if np.isfinite(errors[idx]) else None,
+                "ref_x": float(ref_xyz[idx, 0]) if ref_xyz.shape[1] > 0 and np.isfinite(ref_xyz[idx, 0]) else None,
+                "ref_y": float(ref_xyz[idx, 1]) if ref_xyz.shape[1] > 1 and np.isfinite(ref_xyz[idx, 1]) else None,
+                "ref_z": float(ref_xyz[idx, 2]) if ref_xyz.shape[1] > 2 and np.isfinite(ref_xyz[idx, 2]) else None,
+                "est_x": float(est_xyz[idx, 0]) if est_xyz.shape[1] > 0 and np.isfinite(est_xyz[idx, 0]) else None,
+                "est_y": float(est_xyz[idx, 1]) if est_xyz.shape[1] > 1 and np.isfinite(est_xyz[idx, 1]) else None,
+                "est_z": float(est_xyz[idx, 2]) if est_xyz.shape[1] > 2 and np.isfinite(est_xyz[idx, 2]) else None,
+            }
+        )
+    return rows
+
+
 def _setup_matplotlib():
     if not os.environ.get("MPLBACKEND"):
         os.environ["MPLBACKEND"] = "Agg"
@@ -665,7 +691,7 @@ def _save_traj_plot(out_dir, ref_traj, est_traj, ape_result, metrics_obj, keyfra
     return plot_path
 
 
-def run_traj_eval(config, emit_terminal_summary=False):
+def run_traj_eval(config):
     metrics_obj = _base_metrics(config)
     out_dir = Path(_get_arg(config, "out_dir")).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -674,16 +700,16 @@ def run_traj_eval(config, emit_terminal_summary=False):
     est_path = Path(metrics_obj["estimate_path"]).resolve()
     if not ref_path.is_file():
         append_warning(metrics_obj, "missing reference trajectory: {}".format(ref_path))
-        return {"metrics": metrics_obj, "overview": {}}
+        return {"metrics": metrics_obj, "overview": {}, "records": []}
     if not est_path.is_file():
         append_warning(metrics_obj, "missing estimate trajectory: {}".format(est_path))
-        return {"metrics": metrics_obj, "overview": {}}
+        return {"metrics": metrics_obj, "overview": {}, "records": []}
 
     try:
         file_interface, evo_metrics, evo_sync, evo_units, evo_ape, evo_rpe = _load_evo_modules()
     except Exception as exc:
         append_warning(metrics_obj, "evo unavailable for trajectory eval: {}".format(exc))
-        return {"metrics": metrics_obj, "overview": {}}
+        return {"metrics": metrics_obj, "overview": {}, "records": []}
 
     try:
         log_info("eval load trajectories")
@@ -691,13 +717,13 @@ def run_traj_eval(config, emit_terminal_summary=False):
         traj_est = file_interface.read_tum_trajectory_file(str(est_path))
     except Exception as exc:
         append_warning(metrics_obj, "failed to load trajectories: {}".format(exc))
-        return {"metrics": metrics_obj, "overview": {}}
+        return {"metrics": metrics_obj, "overview": {}, "records": []}
 
     metrics_obj["reference_pose_count"] = int(getattr(traj_ref, "num_poses", 0))
     metrics_obj["estimate_pose_count"] = int(getattr(traj_est, "num_poses", 0))
     if metrics_obj["reference_pose_count"] <= 0 or metrics_obj["estimate_pose_count"] <= 0:
         append_warning(metrics_obj, "trajectory pose count is zero after loading")
-        return {"metrics": metrics_obj, "overview": {}}
+        return {"metrics": metrics_obj, "overview": {}, "records": []}
 
     try:
         log_info("eval synchronize trajectories")
@@ -711,12 +737,12 @@ def run_traj_eval(config, emit_terminal_summary=False):
         )
     except Exception as exc:
         append_warning(metrics_obj, "trajectory synchronization failed: {}".format(exc))
-        return {"metrics": metrics_obj, "overview": {}}
+        return {"metrics": metrics_obj, "overview": {}, "records": []}
 
     metrics_obj["matched_pose_count"] = int(getattr(sync_ref, "num_poses", 0))
     if metrics_obj["matched_pose_count"] <= 0:
         append_warning(metrics_obj, "no matched poses after synchronization")
-        return {"metrics": metrics_obj, "overview": {}}
+        return {"metrics": metrics_obj, "overview": {}, "records": []}
 
     align, correct_scale, align_origin = _alignment_flags(metrics_obj["alignment_mode"])
     try:
@@ -733,13 +759,11 @@ def run_traj_eval(config, emit_terminal_summary=False):
         metrics_obj["ape_trans"] = _stats_dict(ape_result.stats)
     except Exception as exc:
         append_warning(metrics_obj, "failed to compute APE translation: {}".format(exc))
-        return {"metrics": metrics_obj, "overview": {}}
+        return {"metrics": metrics_obj, "overview": {}, "records": []}
 
-    aligned_ref = None
-    aligned_est = None
     trajectories = getattr(ape_result, "trajectories", {}) or {}
-    aligned_ref = trajectories.get(str(metrics_obj["reference_name"]))
-    aligned_est = trajectories.get(str(metrics_obj["estimate_name"]))
+    aligned_ref = trajectories.get(str(metrics_obj["reference_name"])) or sync_ref
+    aligned_est = trajectories.get(str(metrics_obj["estimate_name"])) or sync_est
     metrics_obj["ori_path_length_m"] = _path_length(getattr(aligned_ref, "positions_xyz", None))
     metrics_obj["gen_path_length_m"] = _path_length(getattr(aligned_est, "positions_xyz", None))
 
@@ -797,6 +821,7 @@ def run_traj_eval(config, emit_terminal_summary=False):
     return {
         "metrics": metrics_obj,
         "overview": overview,
+        "records": _traj_detail_records(aligned_ref, aligned_est, ape_result),
         "artifacts": {
             "traj_xy_plot": str(traj_plot) if traj_plot is not None else "",
         },
