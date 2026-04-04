@@ -71,10 +71,7 @@ class PipelineRuntime:
         return self._phase_python_cache[phase_key]
 
     def prompt_phase_name(self):
-        backend = str(self.args.prompt_backend or "smolvlm2").strip().lower()
-        if backend == "smolvlm2":
-            return "prompt_smol"
-        return "prompt"
+        return "prompt_smol"
 
     def prompt_model_ref(self):
         if str(self.args.prompt_model_dir or "").strip():
@@ -136,12 +133,9 @@ class PipelineRuntime:
                 "base_idx": self.args.base_idx,
                 "seed_base": self.args.seed_base,
                 "gpus": self.args.gpus,
-                "prompt_backend": self.args.prompt_backend,
                 "prompt_model_dir": self.args.prompt_model_dir,
                 "infer_backend": self.args.infer_backend,
                 "infer_model_dir": self.args.infer_model_dir,
-                "prompt_sample_mode": self.args.prompt_sample_mode,
-                "prompt_num_images": self.args.prompt_num_images,
                 "droid_seq": self.args.droid_seq,
                 "viz_enable": self.viz_enable,
                 "keep_level": self.args.keep_level,
@@ -229,9 +223,7 @@ def _run_step(runtime, step_name, service_module):
 def _doctor(runtime):
     log_info("STEP doctor: begin")
     has_critical_missing = False
-    phase_names = ["segment", "prompt", runtime.infer_phase_name(), "slam"]
-    if str(runtime.args.prompt_backend or "smolvlm2").strip().lower() == "smolvlm2":
-        phase_names.append("prompt_smol")
+    phase_names = ["segment", "prompt_smol", runtime.infer_phase_name(), "slam"]
 
     for phase_name in phase_names:
         python_bin = get_phase_python_config(phase_name)

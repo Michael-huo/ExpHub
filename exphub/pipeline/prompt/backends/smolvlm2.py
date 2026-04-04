@@ -9,22 +9,11 @@ from .base import PromptBackend
 DEFAULT_SMOLVLM2_MODEL_ID = "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
 
 
-def _torch_dtype_from_name(torch_mod, dtype_name):
-    # type: (object, str) -> object
-    name = str(dtype_name or "bfloat16").strip().lower()
-    if name == "bfloat16":
-        return torch_mod.bfloat16
-    if name == "float16":
-        return torch_mod.float16
-    raise SystemExit("[ERR] unsupported prompt dtype: {}".format(dtype_name))
-
-
 class SmolVlm2PromptBackend(PromptBackend):
     name = "smolvlm2"
 
-    def __init__(self, model_ref="", dtype="bfloat16", max_new_tokens=48):
+    def __init__(self, model_ref="", max_new_tokens=48):
         self.model_ref = str(model_ref or DEFAULT_SMOLVLM2_MODEL_ID).strip() or DEFAULT_SMOLVLM2_MODEL_ID
-        self.requested_dtype = str(dtype or "bfloat16").strip().lower()
         self.max_new_tokens = int(max_new_tokens)
         self.processor = None
         self.model = None
@@ -35,7 +24,7 @@ class SmolVlm2PromptBackend(PromptBackend):
             "model_dir": "",
             "model_id": self.model_ref,
             "attn_impl": "sdpa",
-            "dtype": self.requested_dtype,
+            "dtype": "bfloat16",
             "processor_load_sec": 0.0,
             "model_load_sec": 0.0,
         }
@@ -51,7 +40,6 @@ class SmolVlm2PromptBackend(PromptBackend):
 
         self._torch = torch
         self._pil_image = Image
-        torch_dtype = _torch_dtype_from_name(torch, self.requested_dtype)
 
         t0 = time.time()
         self.processor = AutoProcessor.from_pretrained(self.model_ref)
@@ -60,7 +48,7 @@ class SmolVlm2PromptBackend(PromptBackend):
         t1 = time.time()
         self.model = AutoModelForImageTextToText.from_pretrained(
             self.model_ref,
-            torch_dtype=torch_dtype,
+            torch_dtype=torch.bfloat16,
             device_map="auto",
             attn_implementation="sdpa",
         ).eval()

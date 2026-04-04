@@ -15,6 +15,7 @@ from exphub.common.io import ensure_dir, ensure_file, write_json_atomic
 from exphub.common.logging import log_info, log_prog
 from exphub.contracts import prompt as prompt_contract
 from exphub.pipeline.prompt.base_prompt import build_base_prompt_payload
+from exphub.pipeline.prompt.scene_encoding import build_state_scene_encoding
 from exphub.pipeline.prompt.reporting import (
     build_prompt_report,
     cleanup_legacy_prompt_outputs,
@@ -52,6 +53,9 @@ def run(runtime):
         "--backend_python_phase",
         str(prompt_phase),
     ]
+    prompt_model_ref = str(runtime.prompt_model_ref() or "").strip()
+    if prompt_model_ref:
+        cmd.extend(["--prompt_model_ref", prompt_model_ref])
     runtime.step_runner.run_env_python(cmd, phase_name=prompt_phase, log_name="prompt.log", cwd=runtime.exphub_root)
 
     ensure_file(contract.artifacts[prompt_contract.REPORT], "prompt report")
@@ -108,9 +112,19 @@ def _run_formal_mainline(args):
         prompt_dir=prompt_dir,
         base_prompt_path=prompt_dir / "base_prompt.json",
     )
+    state_scene_encoding = build_state_scene_encoding(
+        segment_inputs=segment_inputs,
+        frames_dir=frames_dir,
+        prompt_model_ref=str(args.prompt_model_ref or ""),
+    )
+    backend_meta = dict(state_scene_encoding.get("backend_meta") or {})
+    if backend_meta:
+        log_info("processor loaded in {:.2f}s".format(float(backend_meta.get("processor_load_sec", 0.0) or 0.0)))
+        log_info("model weights loaded in {:.2f}s".format(float(backend_meta.get("model_load_sec", 0.0) or 0.0)))
     runtime_prompt_plan = build_runtime_prompt_plan(
         segment_inputs=segment_inputs,
         state_prompt_manifest=state_prompt_manifest,
+        state_scene_encoding=state_scene_encoding,
         base_prompt_payload=base_prompt_payload,
         prompt_dir=prompt_dir,
     )
@@ -128,7 +142,9 @@ def _run_formal_mainline(args):
         total_sec=float(time.time() - total_t0),
         assembly_notes={
             "clip_profile_mode": "removed_from_mainline",
-            "scene_prompt_mode": "reserved_slot_placeholder",
+            "scene_prompt_mode": str(state_scene_encoding.get("scene_prompt_mode", "") or "state_v2t_primary_frame"),
+            "scene_encoding_backend": str(state_scene_encoding.get("backend", "") or ""),
+            "state_scene_segment_count": int(len(list(state_scene_encoding.get("state_segments") or []))),
             "state_control_mode": "minimal_state_control",
             "backend_python_phase": str(args.backend_python_phase or ""),
         },
@@ -138,7 +154,7 @@ def _run_formal_mainline(args):
     report_path = write_prompt_report(prompt_dir, prompt_report)
     cleanup_legacy_prompt_outputs(prompt_dir)
 
-    log_prog("prompt runtime plan assembled from invariant base + per-segment scene slot + minimal state control")
+    log_prog("prompt runtime plan assembled from invariant base + per-state scene encoding + minimal state control")
     log_info(
         "state control sources: segment_manifest={} state_segments={} deploy_schedule={}".format(
             str(((segment_inputs.get("source_files") or {}).get("segment_manifest", "")) or "<missing>"),
@@ -147,8 +163,14 @@ def _run_formal_mainline(args):
         )
     )
     log_info("state control manifest generated: count={}".format(int(state_prompt_manifest.get("state_segment_count", 0) or 0)))
+    log_info(
+        "state scene encoding generated: count={} backend={}".format(
+            int(len(list(state_scene_encoding.get("state_segments") or []))),
+            str(state_scene_encoding.get("backend", "") or "<missing>"),
+        )
+    )
     log_info("runtime prompt plan generated: count={}".format(int(runtime_prompt_plan.get("deploy_segment_count", 0) or 0)))
-    log_info("scene prompt mode: {}".format(str(runtime_prompt_plan.get("scene_prompt_mode", "") or "per_segment_slot_reserved")))
+    log_info("scene prompt mode: {}".format(str(runtime_prompt_plan.get("scene_prompt_mode", "") or "state_v2t_primary_frame")))
     log_info("wrote: {}".format(prompt_dir / "base_prompt.json"))
     log_info("wrote: {}".format(prompt_dir / "state_prompt_manifest.json"))
     log_info("wrote: {}".format(prompt_dir / "runtime_prompt_plan.json"))
@@ -162,6 +184,7 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir")
     parser.add_argument("--segment_manifest", required=True, help="formal segment_manifest.json path")
     parser.add_argument("--fps", type=float, required=True)
+    parser.add_argument("--prompt_model_ref", default="")
     parser.add_argument("--backend_python_phase", default="prompt_smol")
     return parser
 

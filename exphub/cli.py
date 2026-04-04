@@ -648,33 +648,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--droid_weights", default=_def_droid_w)
 
     ap.add_argument(
-        "--prompt_backend",
-        default="smolvlm2",
-        choices=["smolvlm2"],
-        help="prompt backend for the current workflow",
-    )
-    ap.add_argument(
         "--prompt_model_dir",
         default="",
         help="override SmolVLM2 model dir or model id",
-    )
-    ap.add_argument(
-        "--prompt_dtype",
-        default="bfloat16",
-        choices=["bfloat16", "float16"],
-        help="SmolVLM2 torch dtype hint",
-    )
-    ap.add_argument(
-        "--prompt_sample_mode",
-        default="even",
-        choices=["quartiles", "even", "first", "last"],
-        help="frame sampling strategy inside each prompt clip",
-    )
-    ap.add_argument(
-        "--prompt_num_images",
-        type=int,
-        default=5,
-        help="number of representative images sampled for prompt generation",
     )
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))

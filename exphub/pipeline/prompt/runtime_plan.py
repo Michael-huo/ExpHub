@@ -27,15 +27,19 @@ def _relative_to_exp(exp_dir, target_path):
         return str(target)
 
 
-def _join_prompt_parts(base_prompt, scene_prompt):
-    # type: (str, str) -> str
-    base = _collapse_ws(base_prompt)
-    scene = _collapse_ws(scene_prompt)
-    if not base:
-        return scene
-    if not scene:
-        return base
-    return _collapse_ws("{} {}".format(base, scene))
+def _safe_int(value, default=0):
+    # type: (object, int) -> int
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _join_prompt_parts(*parts):
+    # type: (*str) -> str
+    values = [_collapse_ws(part) for part in list(parts or [])]
+    values = [item for item in values if item]
+    return _collapse_ws(" ".join(values))
 
 
 def _join_negative_prompt(base_negative_prompt, negative_delta):
@@ -73,15 +77,40 @@ def _as_state_control(state_row):
     }
 
 
-def _resolve_scene_prompt(deploy_item, state_row):
-    # type: (Dict[str, object], Dict[str, object]) -> Tuple[str, str]
-    deploy_scene_prompt = _collapse_ws(deploy_item.get("scene_prompt", ""))
-    if deploy_scene_prompt:
-        return deploy_scene_prompt, "deploy_schedule"
-    state_scene_prompt = _collapse_ws(state_row.get("scene_prompt", ""))
-    if state_scene_prompt:
-        return state_scene_prompt, "state_manifest"
-    return "", "scene_prompt_unset"
+def _state_control_prompt(state_control):
+    # type: (Dict[str, object]) -> str
+    motion_trend = str(state_control.get("motion_trend", "unknown_interval") or "unknown_interval")
+    if motion_trend == "risk_interval":
+        return "Preserve continuity through stronger viewpoint change"
+    if motion_trend == "stable_interval":
+        return "Keep motion calm and continuity steady"
+    return "Preserve continuity through uncertain motion"
+
+
+def _labeled_prompt_clause(label, text):
+    # type: (str, str) -> str
+    body = _collapse_ws(text).rstrip(" ,;:.")
+    if not body:
+        return ""
+    return "{}: {}.".format(str(label), body)
+
+
+def _build_scene_prompt_map(state_scene_encoding):
+    # type: (Dict[str, object]) -> Dict[int, Dict[str, object]]
+    scene_segments = list(_as_dict(state_scene_encoding).get("state_segments") or [])
+    if not scene_segments:
+        raise RuntimeError("state_scene_encoding has no encoded state segments")
+    out = {}
+    for raw_item in scene_segments:
+        item = _as_dict(raw_item)
+        state_segment_id = _safe_int(item.get("state_segment_id"), -1)
+        if state_segment_id < 0:
+            raise RuntimeError("state_scene_encoding contains invalid state_segment_id")
+        scene_prompt = _collapse_ws(item.get("scene_prompt", ""))
+        if not scene_prompt:
+            raise RuntimeError("state_scene_encoding contains empty scene_prompt for state_segment_id={}".format(state_segment_id))
+        out[int(state_segment_id)] = item
+    return out
 
 
 def _pick_state_segment(raw_start, raw_end, state_segments):
@@ -128,8 +157,8 @@ def _pick_state_segment(raw_start, raw_end, state_segments):
     return dict(nearest_segment), 0, "nearest_state_segment"
 
 
-def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, base_prompt_payload, prompt_dir):
-    # type: (Dict[str, object], Dict[str, object], Dict[str, object], Path) -> Dict[str, object]
+def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, state_scene_encoding, base_prompt_payload, prompt_dir):
+    # type: (Dict[str, object], Dict[str, object], Dict[str, object], Dict[str, object], Path) -> Dict[str, object]
     deploy_schedule = _as_dict(segment_inputs.get("deploy_schedule_payload"))
     deploy_segments = list(deploy_schedule.get("segments") or [])
     if not deploy_segments:
@@ -138,6 +167,7 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, base_prompt
     state_segments = list(_as_dict(state_prompt_manifest).get("state_segments") or [])
     if not state_segments:
         raise RuntimeError("state_prompt_manifest has no state_segments")
+    scene_prompt_map = _build_scene_prompt_map(state_scene_encoding)
 
     exp_dir = Path(segment_inputs.get("exp_dir")).resolve()
     prompt_root = Path(prompt_dir).resolve()
@@ -157,9 +187,20 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, base_prompt
         raw_start_idx = int(item.get("raw_start_idx", deploy_start_idx) or deploy_start_idx)
         raw_end_idx = int(item.get("raw_end_idx", deploy_end_idx) or deploy_end_idx)
         state_row, overlap_frames, match_source = _pick_state_segment(raw_start_idx, raw_end_idx, state_segments)
-        scene_prompt, scene_prompt_source = _resolve_scene_prompt(item, state_row)
         state_control = _as_state_control(state_row)
+        state_control_text = _state_control_prompt(state_control)
         negative_prompt_delta = str(state_control.get("negative_prompt_delta", "") or "")
+        state_segment_id = int(state_row.get("state_segment_id", 0) or 0)
+        scene_info = _as_dict(scene_prompt_map.get(state_segment_id))
+        if not scene_info:
+            raise RuntimeError("missing state scene encoding for state_segment_id={}".format(state_segment_id))
+        representative_frame = _as_dict(scene_info.get("representative_frame"))
+        scene_prompt = _collapse_ws(scene_info.get("scene_prompt", ""))
+        resolved_prompt = _join_prompt_parts(
+            base_prompt_text,
+            _labeled_prompt_clause("Scene", scene_prompt),
+            _labeled_prompt_clause("Motion control", state_control_text),
+        )
         runtime_segments.append(
             {
                 "seg": int(deploy_segment_id),
@@ -184,13 +225,23 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, base_prompt
                 "num_frames": int(item.get("num_frames", deploy_end_idx - deploy_start_idx + 1) or (deploy_end_idx - deploy_start_idx + 1)),
                 "boundary_shift": int(item.get("boundary_shift", 0) or 0),
                 "gap_error": int(item.get("gap_error", 0) or 0),
-                "state_segment_id": int(state_row.get("state_segment_id", 0) or 0),
+                "state_segment_id": int(state_segment_id),
                 "state_label": str(state_row.get("state_label", "unknown") or "unknown"),
                 "state_control": dict(state_control),
+                "state_control_text": str(state_control_text),
                 "base_prompt": base_prompt_text,
                 "scene_prompt": scene_prompt,
-                "scene_prompt_source": str(scene_prompt_source),
-                "resolved_prompt": _join_prompt_parts(base_prompt_text, scene_prompt),
+                "scene_prompt_source": str(scene_info.get("scene_prompt_source", "state_v2t_primary_frame") or "state_v2t_primary_frame"),
+                "scene_encoding_backend": str(scene_info.get("scene_encoding_backend", "") or ""),
+                "scene_prompt_frame_idx": int(representative_frame.get("frame_idx", raw_start_idx) or raw_start_idx),
+                "scene_prompt_image": str(representative_frame.get("image_path", "") or ""),
+                "scene_prompt_selection_source": str(
+                    representative_frame.get("selection_source", "") or "segment_keyframe_nearest_midpoint"
+                ),
+                "scene_prompt_candidate_keyframe_count": int(
+                    representative_frame.get("candidate_keyframe_count", 0) or 0
+                ),
+                "resolved_prompt": str(resolved_prompt),
                 "negative_prompt": _join_negative_prompt(base_negative_prompt, negative_prompt_delta),
                 "negative_prompt_delta": negative_prompt_delta,
                 "prompt_strength": float(state_control.get("prompt_strength", 0.5) or 0.5),
@@ -205,12 +256,13 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, base_prompt
         "version": 2,
         "schema": "runtime_prompt_plan.v2",
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "source": "runtime_prompt_plan_rebaseline_step_a",
+        "source": "runtime_prompt_plan_rebaseline_step_b",
         "schedule_source": "segment_manifest.deploy_schedule",
         "execution_backend": schedule_backend,
         "base_prompt": base_prompt_text,
         "negative_prompt": base_negative_prompt,
-        "scene_prompt_mode": "per_segment_slot_reserved",
+        "scene_prompt_mode": str(_as_dict(state_scene_encoding).get("scene_prompt_mode", "") or "state_v2t_primary_frame"),
+        "scene_encoding_backend": str(_as_dict(state_scene_encoding).get("backend", "") or ""),
         "state_prompt_manifest_path": _relative_to_exp(exp_dir, state_manifest_path),
         "deploy_segment_count": int(len(runtime_segments)),
         "source_files": {

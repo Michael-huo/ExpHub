@@ -14,7 +14,7 @@
 - `segment/visuals/state_overview.png` 是唯一正式 state 总览图
 - `prompt` 对下游唯一正式 prompt 契约是 `prompt/runtime_prompt_plan.json`
 - `prompt` 会同时写出 `base_prompt.json` 与 `state_prompt_manifest.json` 作为阶段内部支撑与追溯产物
-- `prompt` 当前正式主链按 invariant base prompt + per-segment scene prompt 槽位 + minimal state control 组装 runtime plan
+- `prompt` 当前正式主链按 invariant base prompt + per-state V2T scene prompt + minimal state control 组装 runtime plan
 - `infer` 正式消费 `prompt/runtime_prompt_plan.json`
 - `infer` 正式输出 `runs_plan.json` 与 `report.json`
 - `merge` 必须按 `infer/runs_plan.json` 的真实边界拼接
