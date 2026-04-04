@@ -27,11 +27,11 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 - `segment` 负责产出标准帧序列、关键帧事实源、嵌入 `segment_manifest.json` 的 deploy schedule / state 区间，以及唯一正式 state 可视化 `visuals/state_overview.png`
 - `segment` 的正式内部链路收敛在 `service.py -> state/detector.py -> state/policies/state.py -> state/signal_extraction/extract.py -> state/state_segmentation/formal.py`
 - `prompt` 负责把 invariant base prompt、per-state V2T scene prompt、minimal state control 组装成 `runtime_prompt_plan.json`，并保留 `base_prompt.json`、`state_prompt_manifest.json`、`report.json` 作为阶段内部支撑与追溯产物
-- `infer` 直接消费 `prompt/runtime_prompt_plan.json`，产出 `runs_plan.json` 与 `report.json`
-- `merge` 只按 `infer/runs_plan.json` 的真实边界拼接
-- `slam` 在 `ori` 与 `gen` 两条轨道上估计位姿，对外正式聚合出口是 `slam/report.json` 与 `slam/traj_est.txt`
+- `infer` 直接消费 `prompt/runtime_prompt_plan.json`，产出 `infer/runs/`、`infer/runs_plan.json` 与 `infer/report.json`
+- `merge` 只按 `infer/runs_plan.json` 的真实边界拼接，并写出 `merge/merge_manifest.json` 作为正式拼接事实源
+- `slam` 在 `ori` 与 `gen` 两条轨道上估计位姿，对外正式聚合出口是 `slam/report.json` 与 `slam/traj_est.txt`；`slam/<track>/` 下的轨道文件保留为阶段内部支撑产物
 - `eval` 只保留 trajectory-only 评估，围绕 `slam/report.json` 声明的 reference / estimate 轨迹写出 `eval/report.json`、`eval/metrics/traj_eval.json`、`eval/details.csv` 与轨迹图
-- `stats` 汇总阶段报告、压缩统计与实验摘要，正式输出为 `stats/final_report.json`
+- `stats` 汇总阶段报告、压缩统计与实验摘要，当前输出为 `stats/final_report.json` 与 `stats/compression.json`
 
 如果只记最关键的事实源，请先记住：
 
@@ -42,6 +42,8 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 - `prompt/base_prompt.json` 与 `prompt/state_prompt_manifest.json` 不是下游正式契约
 - `prompt` 当前正式主链只保留 invariant base prompt、per-state scene prompt、minimal state control
 - `infer/runs_plan.json` 是 `merge` 的真实执行边界来源
+- `merge/merge_manifest.json` 是 `slam` 的正式拼接输入事实源
+- `slam/<track>/traj_est.tum`、`slam/<track>/traj_est.npz`、`slam/<track>/run_meta.json` 仍会保留，但不再作为下游正式契约概念对外暴露
 
 ## 代码与配置边界
 

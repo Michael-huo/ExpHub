@@ -19,6 +19,7 @@
 - `infer` 正式消费 `prompt/runtime_prompt_plan.json`
 - `infer` 正式输出 `runs_plan.json` 与 `report.json`
 - `merge` 必须按 `infer/runs_plan.json` 的真实边界拼接
+- `merge/merge_manifest.json` 是 `slam` 的正式拼接输入事实源
 - 下游阶段只能消费上游结果，不能回写上游目录
 
 ## 2. 阶段依赖总览
@@ -28,10 +29,10 @@
 | `segment` | `exphub/pipeline/segment/service.py` | 数据集、标定、phase Python | `segment/frames/`, `segment/keyframes/`, `segment/segment_manifest.json`, `segment/report.json`, `segment/visuals/state_overview.png`, `timestamps.txt`, `calib.txt` | `prompt`, `infer`, `slam` |
 | `prompt` | `exphub/pipeline/prompt/service.py` | `segment/frames/`, `segment/segment_manifest.json` | `prompt/runtime_prompt_plan.json`, `prompt/report.json`, 以及内部支撑产物 `prompt/base_prompt.json`、`prompt/state_prompt_manifest.json` | `infer`, `stats` |
 | `infer` | `exphub/pipeline/infer/service.py` | `segment/frames/`, `prompt/runtime_prompt_plan.json` | `infer/runs/`, `infer/runs_plan.json`, `infer/report.json` | `merge`, `stats` |
-| `merge` | `exphub/pipeline/merge/service.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
+| `merge` | `exphub/pipeline/merge/service.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_manifest.json`, `merge/report.json` | `slam`, `stats` |
 | `slam` | `exphub/pipeline/slam/service.py` | `segment/` 或 `merge/` 轨道数据 | `slam/report.json`, `slam/traj_est.txt`, 以及 `slam/<track>/traj_est.tum`, `slam/<track>/traj_est.npz`, `slam/<track>/run_meta.json` | `eval` |
 | `eval` | `exphub/pipeline/eval/service.py` | `slam/report.json` 中声明的正式 reference / estimate 轨迹路径 | `eval/report.json`, `eval/summary.txt`, `eval/details.csv`, `eval/metrics/traj_eval.json`, `eval/plots/traj_xy.png`, `eval/plots/metrics_overview.png` | `stats`, 人工分析 |
-| `stats` | `exphub/pipeline/stats/service.py` | `segment/report.json`, `prompt/report.json`, `infer/report.json`, `merge/step_meta.json` 与日志 | `stats/final_report.json`, `stats/compression.json` | 汇总出口 |
+| `stats` | `exphub/pipeline/stats/service.py` | `segment/report.json`, `prompt/report.json`, `infer/report.json`, `merge/report.json`, `slam/report.json`, `eval/report.json` | `stats/final_report.json`, `stats/compression.json` | 汇总出口 |
 
 ## 3. 各阶段最小契约
 
@@ -63,7 +64,6 @@
 
 - 正式 prompt 输入固定为 `prompt/runtime_prompt_plan.json`
 - execution segments 来自 `prompt/runtime_prompt_plan.json`
-- deploy schedule 缺失时允许回退到 `fallback_kf_gap`
 - 不再在前端重拼 prompt 文本
 - `runs_plan.json` 必须保存真实 `start_idx / end_idx / num_frames`
 
@@ -77,7 +77,7 @@
 - `ori` 轨读取 `segment/`
 - `gen` 轨读取 `merge/`
 - 正式聚合输出保留 `slam/report.json` 与 `slam/traj_est.txt`
-- `eval` 正式只依赖 `slam/report.json` 中声明的 reference / estimate trajectory path；轨道内部附属文件不再作为 eval 契约项暴露
+- `eval` 正式只依赖 `slam/report.json` 中声明的 reference / estimate trajectory path；`slam/<track>/traj_est.tum`、`slam/<track>/traj_est.npz` 与 `slam/<track>/run_meta.json` 只作为阶段内部支撑产物保留
 
 ### `eval`
 

@@ -183,20 +183,11 @@ class ExperimentPaths:
     def stats_compression_path(self):
         return self.stats_dir / "compression.json"
 
-    def slam_track_dir(self, track):
-        return self.slam_dir / str(track)
-
     def slam_traj_path(self, track):
-        return self.slam_track_dir(track) / "traj_est.tum"
-
-    def slam_npz_path(self, track):
-        return self.slam_track_dir(track) / "traj_est.npz"
+        return self.slam_dir / str(track) / "traj_est.tum"
 
     def slam_run_meta_path(self, track):
-        return self.slam_track_dir(track) / "run_meta.json"
-
-    def eval_artifact_path(self, name):
-        return self.eval_dir / str(name)
+        return self.slam_dir / str(track) / "run_meta.json"
 
 
 @dataclass(frozen=True)
@@ -369,20 +360,11 @@ class ExperimentContext:
     def stats_compression_path(self):
         return self.paths.stats_compression_path
 
-    def slam_track_dir(self, track):
-        return self.paths.slam_track_dir(track)
-
     def slam_traj_path(self, track):
         return self.paths.slam_traj_path(track)
 
-    def slam_npz_path(self, track):
-        return self.paths.slam_npz_path(track)
-
     def slam_run_meta_path(self, track):
         return self.paths.slam_run_meta_path(track)
-
-    def eval_artifact_path(self, name):
-        return self.paths.eval_artifact_path(name)
 
     def frames_available(self):
         frames_dir = self.segment_frames_dir
