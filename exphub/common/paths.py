@@ -56,22 +56,6 @@ class ExperimentPaths:
         return self.segment_visuals_dir / "state_overview.png"
 
     @property
-    def segment_state_dir(self):
-        return self.segment_dir / "state_segmentation"
-
-    @property
-    def segment_state_segments_path(self):
-        return self.segment_state_dir / "state_segments.json"
-
-    @property
-    def segment_state_report_path(self):
-        return self.segment_state_dir / "state_report.json"
-
-    @property
-    def segment_state_overview_legacy_path(self):
-        return self.segment_state_dir / "state_overview.png"
-
-    @property
     def prompt_dir(self):
         return self.exp_dir / "prompt"
 
@@ -116,16 +100,8 @@ class ExperimentPaths:
         return self.segment_dir / "calib.txt"
 
     @property
-    def segment_deploy_schedule_path(self):
-        return self.segment_dir / "deploy_schedule.json"
-
-    @property
     def segment_timestamps_path(self):
         return self.segment_dir / "timestamps.txt"
-
-    @property
-    def segment_preprocess_meta_path(self):
-        return self.segment_dir / "preprocess_meta.json"
 
     @property
     def segment_clip_prompts_path(self):
@@ -352,14 +328,6 @@ class ExperimentContext:
     @property
     def segment_timestamps_path(self):
         return self.paths.segment_timestamps_path
-
-    @property
-    def segment_deploy_schedule_path(self):
-        return self.paths.segment_deploy_schedule_path
-
-    @property
-    def segment_preprocess_meta_path(self):
-        return self.paths.segment_preprocess_meta_path
 
     @property
     def segment_clip_prompts_path(self):

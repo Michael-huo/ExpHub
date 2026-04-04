@@ -6,7 +6,6 @@ from pathlib import Path
 
 import numpy as np
 
-from exphub.common.io import ensure_dir, write_json_atomic
 from exphub.pipeline.segment.state.observed_signals.kinematics import moving_average
 from exphub.pipeline.segment.state.signal_extraction import (
     FORMAL_STATE_INPUT_COLUMNS,
@@ -31,20 +30,6 @@ DEFAULT_MIN_LOW_LEN = 24
 DEFAULT_GLITCH_MERGE_LEN = 12
 
 REPORT_SCHEMA_VERSION = "state_report.v3"
-_OUTPUT_JSON_NAME = "state_segments.json"
-_OUTPUT_REPORT_NAME = "state_report.json"
-
-_LEGACY_STATE_OUTPUT_NAMES = [
-    "density_schedule.csv",
-    "density_schedule_overview.png",
-    "state_segments.csv",
-    "state_timeline.csv",
-    "state_candidate_compare.json",
-    "state_segmentation_meta.json",
-    "state_segmentation_overview.png",
-    "state_signal_overlay.png",
-    "state_signal_candidate_compare.png",
-]
 
 _DETECTOR_TYPE = "high_risk_interval_detector"
 
@@ -63,9 +48,7 @@ def _coerce_signal_rows(rows):
             {
                 "frame_idx": int(row.get("frame_idx", 0) or 0),
                 "timestamp": float(row.get("timestamp", row.get("ts_sec", 0.0)) or 0.0),
-                "appearance_delta": float(row.get("appearance_delta", 0.0) or 0.0),
                 "motion_velocity": float(row.get("motion_velocity", 0.0) or 0.0),
-                "blur_score": float(row.get("blur_score", 0.0) or 0.0),
                 "semantic_velocity": float(row.get("semantic_velocity", 0.0) or 0.0),
                 "motion_velocity_state_input": _optional_float(row.get("motion_velocity_state_input")),
                 "semantic_velocity_state_input": _optional_float(row.get("semantic_velocity_state_input")),
@@ -97,10 +80,6 @@ def _resolve_formal_state_inputs(rows):
             "signal_names": list(DEFAULT_INPUT_SIGNALS),
             "processed_columns": dict(FORMAL_STATE_INPUT_COLUMNS),
             "signals": {},
-            "analysis_only_note": (
-                "Signals outside formal_state_inputs remain analysis sidecar observations and do not "
-                "enter the official state mainline score."
-            ),
         }
 
     persisted_meta = {}
@@ -128,7 +107,6 @@ def _resolve_formal_state_inputs(rows):
             "processed_columns": dict(rebuilt_meta.get("processed_columns", {}) or {}),
             "pipeline": list(rebuilt_meta.get("pipeline", []) or []),
             "signals": dict(rebuilt_meta.get("signals", {}) or {}),
-            "analysis_only_note": str(rebuilt_meta.get("analysis_only_note", "") or ""),
         }
 
     rebuilt_rows, rebuild_meta = build_formal_state_input_rows(rows)
@@ -877,12 +855,13 @@ def build_state_report(result):
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "source_exp_dir": str(meta.get("source_exp_dir", "") or ""),
         "artifact_contract": {
-            "default_outputs": [
-                _OUTPUT_REPORT_NAME,
-                "state_overview.png",
-                _OUTPUT_JSON_NAME,
+            "embedded_outputs": [
+                "segment_manifest.state_segments",
+                "segment_manifest.state_report",
+                "segment/report.json.state.report",
             ],
-            "fact_source": _OUTPUT_JSON_NAME,
+            "overview_path": "segment/visuals/state_overview.png",
+            "fact_source": "segment_manifest.state_segments",
         },
         "formal_inputs": {
             "signal_names": list(meta.get("input_signals", []) or []),
@@ -935,21 +914,6 @@ def build_state_report(result):
     return report
 
 
-def write_state_report(path, report):
-    write_json_atomic(path, report, indent=2)
-
-
-def _remove_legacy_state_outputs(output_dir):
-    output_dir = Path(output_dir).resolve()
-    for name in _LEGACY_STATE_OUTPUT_NAMES:
-        path = output_dir / name
-        try:
-            if path.is_file() or path.is_symlink():
-                path.unlink()
-        except Exception:
-            continue
-
-
 def _build_detector_report_meta(detector_meta, detector_window_meta, enter_th, exit_th, min_high_len, glitch_merge_len):
     return {
         "detector_type": str(detector_meta.get("detector_type", _DETECTOR_TYPE) or _DETECTOR_TYPE),
@@ -974,6 +938,8 @@ def _build_detector_report_meta(detector_meta, detector_window_meta, enter_th, e
         "dropped_short_interval_count": int(((detector_meta.get("short_interval_filter", {}) or {}).get("dropped_count", 0) or 0)),
         "dropped_low_score_interval_count": int(((detector_meta.get("score_level_filter", {}) or {}).get("dropped_count", 0) or 0)),
     }
+
+
 def compute_state_segments(
     rows,
     exp_dir=None,
@@ -1117,19 +1083,4 @@ def compute_state_segments(
         "segments": segments,
         "meta": meta,
         "json_payload": json_payload,
-    }
-
-
-def write_state_segmentation_outputs(result):
-    output_dir = ensure_dir(result["output_dir"], name="state segmentation output dir")
-    json_path = output_dir / _OUTPUT_JSON_NAME
-    report_path = output_dir / _OUTPUT_REPORT_NAME
-    report = build_state_report(result)
-    write_json_atomic(json_path, result["json_payload"], indent=2)
-    write_state_report(report_path, report)
-    _remove_legacy_state_outputs(output_dir)
-    return {
-        "json_path": json_path,
-        "report_path": report_path,
-        "report": report,
     }

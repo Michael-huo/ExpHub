@@ -9,9 +9,9 @@ from exphub.pipeline.segment.state.signal_extraction import (
 from exphub.pipeline.segment.state.state_segmentation import (
     STATE_HIGH,
     STATE_LOW,
+    build_state_report,
     compute_state_segments,
     save_state_segmentation_plots,
-    write_state_segmentation_outputs,
 )
 
 
@@ -537,11 +537,14 @@ def build_policy_plan(context):
                 "state_frame_ranges": [],
                 "density_schedule_summary": [],
             },
+            "state_segments_payload": {},
+            "state_report_payload": {},
+            "state_overview_path": None,
         }
 
     exp_dir = context["root_dir"].parent
     segment_dir = context["root_dir"]
-    state_output_dir = segment_dir / "state_segmentation"
+    state_visuals_dir = segment_dir / "visuals"
     used_frame_paths = list(context["frame_paths"][:frame_count_used])
     used_timestamps = list(context["timestamps"][:frame_count_used])
 
@@ -557,15 +560,13 @@ def build_policy_plan(context):
         exp_dir=exp_dir,
         segment_dir=segment_dir,
         keyframes_meta={"policy_name": STATE_POLICY_NAME},
-        output_dir=context["policy_cache_dir"] / "formal_state_inputs",
-        cache_dir=context["policy_cache_dir"],
     )
 
     state_result = compute_state_segments(
         rows=signal_payload["rows"],
         exp_dir=exp_dir,
         input_csv=None,
-        output_dir=state_output_dir,
+        output_dir=state_visuals_dir,
         smoothing_window=DEFAULT_SMOOTHING_WINDOW,
         enter_th=DEFAULT_ENTER_TH,
         exit_th=DEFAULT_EXIT_TH,
@@ -667,9 +668,8 @@ def build_policy_plan(context):
         "short_segment_merge_meta": short_segment_meta,
     }
 
-    write_state_segmentation_outputs(state_result)
-    save_state_segmentation_plots(
-        output_dir=state_result["output_dir"],
+    visual_result = save_state_segmentation_plots(
+        output_dir=state_visuals_dir,
         frame_rows=state_result["frame_rows"],
         segments=state_result["segments"],
         enter_th=DEFAULT_ENTER_TH,
@@ -679,6 +679,7 @@ def build_policy_plan(context):
         uniform_indices=safe_base_indices,
         signal_rows=signal_payload["rows"],
     )
+    state_report_payload = build_state_report(state_result)
 
     log_info(
         "state policy selected: safe_base={} segments={} transition_bands={} final={} min_gap={} short_merge={}".format(
@@ -699,4 +700,7 @@ def build_policy_plan(context):
         "keyframe_items": keyframe_items,
         "summary": summary,
         "policy_meta": policy_meta,
+        "state_segments_payload": dict(state_result["json_payload"]),
+        "state_report_payload": dict(state_report_payload),
+        "state_overview_path": visual_result["overview_path"],
     }

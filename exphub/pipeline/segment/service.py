@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import sys
 import time
@@ -13,7 +12,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_file, list_frames_sorted
+from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted
 from exphub.common.logging import log_err, log_info, log_prog, log_warn
 from exphub.contracts import segment as segment_contract
 from exphub.pipeline.segment import artifacts as segment_artifacts
@@ -76,11 +75,14 @@ def run(runtime):
 
     runtime.step_runner.run_ros(cmd, log_name="segment.log", cwd=runtime.exphub_root)
 
+    ensure_dir(contract.artifacts["frames_dir"], "segment frames dir")
+    ensure_dir(contract.artifacts["keyframes_dir"], "segment keyframes dir")
+    ensure_file(contract.artifacts["keyframes_meta"], "segment keyframes meta")
     ensure_file(contract.artifacts["manifest"], "segment manifest")
     ensure_file(contract.artifacts["report"], "segment report")
+    ensure_file(contract.artifacts["overview"], "segment state overview")
     ensure_file(contract.artifacts["calib"], "segment calib")
     ensure_file(contract.artifacts["timestamps"], "segment timestamps")
-    ensure_file(contract.artifacts["preprocess_meta"], "segment preprocess meta")
     return contract.artifacts["manifest"]
 
 
@@ -346,8 +348,6 @@ def _extract_frames(args, paths):
     prev_msg = None
     k = 0
     timestamps_lines = []
-    preprocess_meta = {}
-
     for _topic, msg, stamp in _maybe_progress(bag.read_messages(topics=[args.topic], start_time=st, end_time=et)):
         cur_t = float(stamp.to_sec())
         if prev_t is None:
@@ -386,36 +386,6 @@ def _extract_frames(args, paths):
                 calib_out = [fx2, fy2, cx2, cy2]
                 if dist is not None and dist.size > 0:
                     calib_out.extend([float(item) for item in dist])
-
-                preprocess_meta = {
-                    "version": "segment.mainline.v1",
-                    "method": "cropResize",
-                    "bag": str(Path(args.bag).resolve()),
-                    "topic": args.topic,
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
-                    "first_time_abs": float(first_time),
-                    "start_time_abs": float(start_time_abs),
-                    "duration_sec": float(duration),
-                    "fps": float(fps),
-                    "output_count": int(out_count),
-                    "spatial": transform,
-                    "intrinsics_in": {
-                        "fx": float(fx),
-                        "fy": float(fy),
-                        "cx": float(cx),
-                        "cy": float(cy),
-                        "dist": dist.tolist() if dist is not None else [],
-                    },
-                    "intrinsics_out": {
-                        "fx": float(fx2),
-                        "fy": float(fy2),
-                        "cx": float(cx2),
-                        "cy": float(cy2),
-                        "dist": dist.tolist() if dist is not None else [],
-                    },
-                }
-                with paths.preprocess_meta_path.open("w", encoding="utf-8") as handle:
-                    json.dump(preprocess_meta, handle, ensure_ascii=False, indent=2)
                 np.savetxt(
                     str(paths.calib_path),
                     np.array(calib_out, dtype=np.float64).reshape(1, -1),
@@ -443,35 +413,6 @@ def _extract_frames(args, paths):
             calib_out = [fx2, fy2, cx2, cy2]
             if dist is not None and dist.size > 0:
                 calib_out.extend([float(item) for item in dist])
-            preprocess_meta = {
-                "version": "segment.mainline.v1",
-                "method": "cropResize",
-                "bag": str(Path(args.bag).resolve()),
-                "topic": args.topic,
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-                "first_time_abs": float(first_time),
-                "start_time_abs": float(start_time_abs),
-                "duration_sec": float(duration),
-                "fps": float(fps),
-                "output_count": int(out_count),
-                "spatial": transform,
-                "intrinsics_in": {
-                    "fx": float(fx),
-                    "fy": float(fy),
-                    "cx": float(cx),
-                    "cy": float(cy),
-                    "dist": dist.tolist() if dist is not None else [],
-                },
-                "intrinsics_out": {
-                    "fx": float(fx2),
-                    "fy": float(fy2),
-                    "cx": float(cx2),
-                    "cy": float(cy2),
-                    "dist": dist.tolist() if dist is not None else [],
-                },
-            }
-            with paths.preprocess_meta_path.open("w", encoding="utf-8") as handle:
-                json.dump(preprocess_meta, handle, ensure_ascii=False, indent=2)
             np.savetxt(
                 str(paths.calib_path),
                 np.array(calib_out, dtype=np.float64).reshape(1, -1),
@@ -490,7 +431,6 @@ def _extract_frames(args, paths):
 
     actual_frame_count = len(list_frames_sorted(paths.frames_dir))
     return {
-        "preprocess_meta": preprocess_meta,
         "frame_count": int(actual_frame_count),
         "timestamps_count": int(len(timestamps_lines)),
     }
@@ -518,75 +458,17 @@ def _build_keyframes_meta(plan, kf_gap, keyframes_mode, actual_mode, keyframe_by
     }
 
 
-def _build_step_meta(args, paths, keyframes_meta, deploy_schedule, actual_frame_count, frames_bytes_sum, keyframes_bytes_sum):
-    projection_stats = dict(deploy_schedule.get("projection_stats") or {})
-    return {
-        "step": "segment",
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "inputs": {
-            "bag": str(Path(args.bag).resolve()),
-            "topic": str(args.topic),
-        },
-        "params": {
-            "w": int(args.width),
-            "h": int(args.height),
-            "fps": float(args.fps),
-            "dur": float(args.duration),
-            "start_sec": float(args.start_sec),
-            "start_idx": int(args.start_idx),
-            "kf_gap": int(args.kf_gap),
-            "segment_policy": "state",
-        },
-        "outputs": {
-            "frame_count": int(actual_frame_count),
-            "bytes_sum": int(frames_bytes_sum),
-            "timestamps_count": int(actual_frame_count),
-            "keyframes_frame_count": int(keyframes_meta.get("keyframe_count", 0) or 0),
-            "keyframes_bytes_sum": int(keyframes_bytes_sum),
-            "keyframe_count": int(keyframes_meta.get("keyframe_count", 0) or 0),
-            "keyframe_bytes_sum": int(keyframes_bytes_sum),
-            "ori": {
-                "frame_count": int(actual_frame_count),
-                "bytes_sum": int(frames_bytes_sum),
-            },
-            "keyframes": {
-                "frame_count": int(keyframes_meta.get("keyframe_count", 0) or 0),
-                "bytes_sum": int(keyframes_bytes_sum),
-            },
-            "keyframe_policy": {
-                "policy_name": "state",
-                "uniform_base_count": int((keyframes_meta.get("summary") or {}).get("num_uniform_base", 0)),
-                "final_keyframe_count": int((keyframes_meta.get("summary") or {}).get("num_final_keyframes", 0)),
-                "extra_kf_ratio": float((keyframes_meta.get("summary") or {}).get("extra_kf_ratio", 0.0)),
-                "state_segment_count": int((keyframes_meta.get("policy_meta") or {}).get("state_segment_count", 0)),
-                "high_state_count": int((keyframes_meta.get("policy_meta") or {}).get("high_state_count", 0)),
-                "low_state_count": int((keyframes_meta.get("policy_meta") or {}).get("low_state_count", 0)),
-            },
-            "deploy_schedule": {
-                "path": segment_artifacts.relative_to_exp(paths.exp_dir, paths.deploy_schedule_path),
-                "backend": str(deploy_schedule.get("backend", "") or ""),
-                "segment_count": int(projection_stats.get("segment_count", 0) or 0),
-                "mean_abs_boundary_shift": float(projection_stats.get("mean_abs_boundary_shift", 0.0) or 0.0),
-                "max_abs_gap_error": int(projection_stats.get("max_abs_gap_error", 0) or 0),
-            },
-            "formal_contract": {
-                "segment_manifest": segment_artifacts.relative_to_exp(paths.exp_dir, paths.manifest_path),
-                "segment_report": segment_artifacts.relative_to_exp(paths.exp_dir, paths.report_path),
-            },
-        },
-    }
-
-
 def _run_formal_mainline(args):
     from exphub.pipeline.segment.state.detector import run_state_mainline
     from exphub.pipeline.segment.state.visualize import materialize_formal_visuals
 
     paths = segment_artifacts.build_paths(args.exp_dir)
+    segment_artifacts.remove_stale_formal_segment_outputs(paths)
     segment_artifacts.ensure_layout(paths)
     total_started = time.time()
 
     extract_started = time.time()
-    extraction_result = _extract_frames(args, paths)
+    _extract_frames(args, paths)
     extract_sec = float(time.time() - extract_started)
     log_info("segment frame extraction completed in {:.2f}s".format(extract_sec))
 
@@ -616,14 +498,12 @@ def _run_formal_mainline(args):
     )
     deploy_schedule = build_wan_r4_deploy_schedule(keyframes_meta)
     segment_artifacts.write_keyframes_meta(paths, keyframes_meta)
-    segment_artifacts.write_deploy_schedule(paths, deploy_schedule)
     visual_result = materialize_formal_visuals(paths, detector_result)
     materialize_sec = float(time.time() - materialize_started)
     log_info("segment artifact materialization completed in {:.2f}s".format(materialize_sec))
 
-    state_payloads = segment_artifacts.load_state_payloads(paths)
-    state_segments_payload = state_payloads["state_segments"] or detector_result["state_segments_payload"]
-    state_report_payload = state_payloads["state_report"] or detector_result["state_report_payload"]
+    state_segments_payload = dict(detector_result["state_segments_payload"])
+    state_report_payload = dict(detector_result["state_report_payload"])
 
     frames_file_count, frames_bytes_sum = _dir_file_stats(paths.frames_dir)
     keyframes_file_count, _ = _dir_file_stats(paths.keyframes_dir)
@@ -661,19 +541,8 @@ def _run_formal_mainline(args):
         state_report_payload=state_report_payload,
         timings=timings,
     )
-    step_meta = _build_step_meta(
-        args=args,
-        paths=paths,
-        keyframes_meta=keyframes_meta,
-        deploy_schedule=deploy_schedule,
-        actual_frame_count=frames_file_count,
-        frames_bytes_sum=frames_bytes_sum,
-        keyframes_bytes_sum=keyframe_bytes_sum,
-    )
-    step_meta["outputs"]["timestamps_count"] = int(extraction_result.get("timestamps_count", frames_file_count) or frames_file_count)
     segment_artifacts.write_segment_manifest(paths, manifest)
     segment_artifacts.write_segment_report(paths, report)
-    segment_artifacts.write_step_meta(paths, step_meta)
 
     log_prog(
         "segment summary: frames={} policy=state keyframes={}".format(

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from exphub.common.logging import log_info, log_warn
+from exphub.common.logging import log_info
 from exphub.pipeline.segment.state.observed_signals import (
     compute_frame_signal_rows,
     compute_motion_rows,
@@ -24,10 +24,6 @@ FORMAL_STATE_INPUT_SIGNALS = [
 FORMAL_STATE_INPUT_COLUMNS = {
     "motion_velocity": "motion_velocity_state_input",
     "semantic_velocity": "semantic_velocity_state_input",
-}
-
-RAW_SIGNAL_DISPLAY_NAMES = {
-    "blur_score": "blur_score_raw (sharpness proxy)",
 }
 
 FORMAL_STATE_INPUT_DISPLAY_NAMES = {
@@ -48,35 +44,14 @@ FORMAL_STATE_INPUT_PREPROCESSING = {
     },
 }
 
-SELECTED_SIGNALS = [
-    "feature_motion",
-    "appearance_delta",
-    "brightness_jump",
-    "blur_score",
-    "motion_displacement",
-    "motion_velocity",
-    "motion_acceleration",
-    "semantic_delta",
-    "semantic_velocity",
-    "semantic_acceleration",
-]
-
 _SIGNAL_DESCRIPTIONS = {
-    "feature_motion": "Visual feature drift estimated from adjacent frames.",
-    "appearance_delta": "Appearance change magnitude between adjacent frames.",
-    "brightness_jump": "Frame-to-frame brightness variation magnitude.",
-    "blur_score": "Raw sharpness proxy from grayscale Laplacian variance; higher means sharper, not higher blur risk.",
-    "motion_displacement": "Motion displacement magnitude from the motion estimator.",
     "motion_velocity": "Velocity-like motion signal used by current state segmentation.",
-    "motion_acceleration": "Acceleration-like motion signal derived from velocity changes.",
-    "semantic_delta": "Semantic embedding distance between adjacent frames.",
     "semantic_velocity": "Velocity-like semantic change signal.",
-    "semantic_acceleration": "Acceleration-like semantic change signal.",
 }
 
 
 def _raw_signal_display_name(signal_name):
-    return str(RAW_SIGNAL_DISPLAY_NAMES.get(signal_name, signal_name))
+    return str(signal_name)
 
 
 def _formal_state_input_display_name(signal_name):
@@ -108,109 +83,6 @@ def _quiet_semantic_library_noise():
     finally:
         for logger, level in logger_states:
             logger.setLevel(level)
-
-
-def _resolve_inline_outputs(segment_dir=None, output_dir=None, cache_dir=None):
-    segment_dir = Path(segment_dir).resolve() if segment_dir is not None else None
-    if output_dir is None:
-        if segment_dir is None:
-            raise ValueError("output_dir or segment_dir is required for inline signal extraction")
-        output_dir = segment_dir / "signal_extraction"
-    output_dir = Path(output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    if cache_dir is None:
-        if segment_dir is None:
-            raise ValueError("cache_dir or segment_dir is required for inline signal extraction")
-        cache_dir = segment_dir / ".segment_cache" / "signal_extraction"
-    cache_dir = Path(cache_dir).resolve()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    return {
-        "segment_dir": segment_dir,
-        "output_dir": output_dir,
-        "cache_dir": cache_dir,
-    }
-
-
-def _normalize_cache_policy_name(policy_name):
-    name = str(policy_name or "").strip().lower()
-    if not name:
-        name = "state"
-    return name
-
-
-def _existing_semantic_cache_dirs(segment_dir, keyframes_meta):
-    cache_root = (segment_dir / ".segment_cache").resolve()
-    candidates = []
-    seen = set()
-
-    policy_name = _normalize_cache_policy_name(
-        keyframes_meta.get("policy_name", "") or keyframes_meta.get("policy", "") or ""
-    )
-    if policy_name:
-        cache_dir = cache_root / policy_name
-        cache_path = cache_dir / "semantic_embeddings.npz"
-        if cache_path.is_file():
-            resolved_dir = cache_dir.resolve()
-            cache_key = str(resolved_dir)
-            if cache_key not in seen:
-                seen.add(cache_key)
-                candidates.append(resolved_dir)
-
-    if cache_root.is_dir():
-        for cache_path in sorted(cache_root.rglob("semantic_embeddings.npz")):
-            resolved_dir = cache_path.parent.resolve()
-            cache_key = str(resolved_dir)
-            if cache_key in seen:
-                continue
-            seen.add(cache_key)
-            candidates.append(resolved_dir)
-
-    return candidates
-
-
-def _resolve_semantic_cache_dir(segment_dir, keyframes_meta, extraction_cache_dir):
-    existing_dirs = _existing_semantic_cache_dirs(segment_dir, keyframes_meta)
-    if existing_dirs:
-        cache_dir = existing_dirs[0]
-        cache_path = cache_dir / "semantic_embeddings.npz"
-        log_info("signal extraction reuse semantic cache: {}".format(cache_path))
-        return {
-            "cache_dir": cache_dir,
-            "cache_path": cache_path,
-            "cache_reused": True,
-            "cache_source": "existing",
-        }
-
-    cache_dir = Path(extraction_cache_dir).resolve()
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / "semantic_embeddings.npz"
-    log_warn(
-        "signal extraction semantic cache missing under {} ; will rebuild embeddings into {}".format(
-            segment_dir / ".segment_cache",
-            cache_path,
-        )
-    )
-    return {
-        "cache_dir": cache_dir,
-        "cache_path": cache_path,
-        "cache_reused": False,
-        "cache_source": "signal_extraction_rebuild",
-    }
-
-
-def _build_selected_rows(frame_rows):
-    selected_rows = []
-    for row in frame_rows:
-        item = {
-            "frame_idx": int(row.get("frame_idx", 0)),
-            "timestamp": float(row.get("ts_sec", 0.0) or 0.0),
-        }
-        for signal_name in SELECTED_SIGNALS:
-            item[signal_name] = float(row.get(signal_name, 0.0) or 0.0)
-        selected_rows.append(item)
-    return selected_rows
 
 
 def _series_stats(values):
@@ -259,18 +131,20 @@ def build_formal_state_input_rows(rows):
         return [], {
             "signal_names": list(FORMAL_STATE_INPUT_SIGNALS),
             "processed_columns": dict(FORMAL_STATE_INPUT_COLUMNS),
-            "display_names": dict((signal_name, _formal_state_input_display_name(signal_name)) for signal_name in FORMAL_STATE_INPUT_SIGNALS),
-            "raw_display_names": dict((signal_name, _raw_signal_display_name(signal_name)) for signal_name in FORMAL_STATE_INPUT_SIGNALS),
+            "display_names": dict(
+                (signal_name, _formal_state_input_display_name(signal_name))
+                for signal_name in FORMAL_STATE_INPUT_SIGNALS
+            ),
+            "raw_display_names": dict(
+                (signal_name, _raw_signal_display_name(signal_name))
+                for signal_name in FORMAL_STATE_INPUT_SIGNALS
+            ),
             "pipeline": [
                 "robust_clip",
                 "minmax_normalize",
                 "moving_average",
             ],
             "signals": {},
-            "analysis_only_note": (
-                "Signals outside formal_state_inputs may still be extracted and plotted for analysis, "
-                "but they do not enter the current official state mainline score."
-            ),
         }
 
     processed_values = {}
@@ -322,18 +196,20 @@ def build_formal_state_input_rows(rows):
     return processed_rows, {
         "signal_names": list(FORMAL_STATE_INPUT_SIGNALS),
         "processed_columns": dict(FORMAL_STATE_INPUT_COLUMNS),
-        "display_names": dict((signal_name, _formal_state_input_display_name(signal_name)) for signal_name in FORMAL_STATE_INPUT_SIGNALS),
-        "raw_display_names": dict((signal_name, _raw_signal_display_name(signal_name)) for signal_name in FORMAL_STATE_INPUT_SIGNALS),
+        "display_names": dict(
+            (signal_name, _formal_state_input_display_name(signal_name))
+            for signal_name in FORMAL_STATE_INPUT_SIGNALS
+        ),
+        "raw_display_names": dict(
+            (signal_name, _raw_signal_display_name(signal_name))
+            for signal_name in FORMAL_STATE_INPUT_SIGNALS
+        ),
         "pipeline": [
             "robust_clip",
             "minmax_normalize",
             "moving_average",
         ],
         "signals": signal_meta,
-        "analysis_only_note": (
-            "Signals outside formal_state_inputs may still be extracted and plotted for analysis, "
-            "but they do not enter the current official state mainline score."
-        ),
     }
 
 
@@ -346,6 +222,10 @@ def extract_signal_timeseries_from_frames(
     output_dir=None,
     cache_dir=None,
 ):
+    del keyframes_meta
+    del output_dir
+    del cache_dir
+
     frame_paths = [Path(path).resolve() for path in list(frame_paths or [])]
     timestamps = [float(value) for value in list(timestamps or [])]
     if not frame_paths:
@@ -357,27 +237,15 @@ def extract_signal_timeseries_from_frames(
             )
         )
 
-    inline_outputs = _resolve_inline_outputs(
-        segment_dir=segment_dir,
-        output_dir=output_dir,
-        cache_dir=cache_dir,
-    )
-    segment_dir = inline_outputs["segment_dir"] or Path(frame_paths[0]).resolve().parent.parent
+    segment_dir = Path(segment_dir).resolve() if segment_dir is not None else Path(frame_paths[0]).resolve().parent.parent
     exp_dir = Path(exp_dir).resolve() if exp_dir is not None else segment_dir.parent
-    keyframes_meta = dict(keyframes_meta or {})
 
     log_info("signal extraction start: exp_dir={} frames={}".format(exp_dir, len(frame_paths)))
-    semantic_cache = _resolve_semantic_cache_dir(
-        segment_dir,
-        keyframes_meta,
-        inline_outputs["cache_dir"],
-    )
 
     try:
         with _quiet_semantic_library_noise():
             semantic_rows, semantic_meta = compute_semantic_rows(
                 frame_paths,
-                semantic_cache["cache_dir"],
                 timestamps=timestamps,
             )
     except ModuleNotFoundError as e:
@@ -402,27 +270,24 @@ def extract_signal_timeseries_from_frames(
         frame_paths,
         timestamps=timestamps,
     )
-    log_info("signal extraction frame signal compose start: frames={}".format(len(frame_paths)))
+    log_info(
+        "signal extraction compose official state inputs: {}".format(
+            ", ".join(FORMAL_STATE_INPUT_SIGNALS)
+        )
+    )
     frame_rows, frame_signal_meta = compute_frame_signal_rows(
         frame_paths,
         timestamps,
         semantic_rows=semantic_rows,
         motion_rows=motion_rows,
     )
-    selected_rows = _build_selected_rows(frame_rows)
-    log_info(
-        "signal extraction preprocess official state inputs: {}".format(
-            ", ".join(FORMAL_STATE_INPUT_SIGNALS)
-        )
-    )
-    selected_rows, formal_state_input_meta = build_formal_state_input_rows(selected_rows)
+    frame_rows, formal_state_input_meta = build_formal_state_input_rows(frame_rows)
     return {
         "exp_dir": exp_dir,
         "segment_dir": segment_dir,
-        "output_dir": inline_outputs["output_dir"],
-        "rows": selected_rows,
+        "output_dir": None,
+        "rows": frame_rows,
         "timestamps": timestamps,
-        "semantic_cache": semantic_cache,
         "semantic_meta": semantic_meta,
         "motion_meta": motion_meta,
         "frame_signal_meta": frame_signal_meta,

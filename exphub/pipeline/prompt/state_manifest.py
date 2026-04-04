@@ -54,16 +54,6 @@ def _relative_to_exp(exp_dir, target_path):
         return str(target)
 
 
-def _resolve_artifact_path(exp_dir, segment_manifest_path, artifact_rel, default_path):
-    # type: (Path, Path, str, Path) -> Path
-    raw_rel = str(artifact_rel or "").strip()
-    if raw_rel:
-        candidate = (Path(exp_dir).resolve() / raw_rel).resolve()
-        if candidate.is_file():
-            return candidate
-    return Path(default_path).resolve()
-
-
 def _preset_for_state_label(state_label):
     # type: (str) -> Dict[str, object]
     name = str(state_label or "unknown").strip() or "unknown"
@@ -78,48 +68,31 @@ def load_segment_prompt_inputs(segment_manifest_path):
         raise RuntimeError("invalid segment manifest: {}".format(manifest_path))
 
     exp_dir = manifest_path.parent.parent.resolve()
-    artifacts = _as_dict(manifest.get("artifacts"))
     state_segments_payload = _as_dict(manifest.get("state_segments"))
     deploy_schedule_payload = _as_dict(manifest.get("deploy_schedule"))
 
-    state_segments_path = _resolve_artifact_path(
-        exp_dir,
-        manifest_path,
-        artifacts.get("state_segments_compat", ""),
-        manifest_path.parent / "state_segmentation" / "state_segments.json",
-    )
-    deploy_schedule_path = _resolve_artifact_path(
-        exp_dir,
-        manifest_path,
-        artifacts.get("deploy_schedule", ""),
-        manifest_path.parent / "deploy_schedule.json",
-    )
-
     if not state_segments_payload:
-        state_segments_payload = read_json_dict(state_segments_path)
-    if not deploy_schedule_payload:
-        deploy_schedule_payload = read_json_dict(deploy_schedule_path)
-
-    if not state_segments_payload:
-        raise RuntimeError("segment manifest missing state_segments payload: {}".format(manifest_path))
+        raise RuntimeError("segment manifest missing embedded state_segments payload: {}".format(manifest_path))
     if not deploy_schedule_payload:
         raise RuntimeError("segment manifest missing deploy_schedule payload: {}".format(manifest_path))
 
     frames_meta = _as_dict(manifest.get("frames"))
+    state_segments_source = "{}#state_segments".format(_relative_to_exp(exp_dir, manifest_path))
+    deploy_schedule_source = "{}#deploy_schedule".format(_relative_to_exp(exp_dir, manifest_path))
     return {
         "segment_manifest_path": manifest_path,
         "segment_manifest": manifest,
-        "state_segments_path": state_segments_path,
+        "state_segments_path": manifest_path,
         "state_segments_payload": state_segments_payload,
-        "deploy_schedule_path": deploy_schedule_path,
+        "deploy_schedule_path": manifest_path,
         "deploy_schedule_payload": deploy_schedule_payload,
         "frame_count": int(frames_meta.get("frame_count", 0) or 0),
         "frame_count_used": int(frames_meta.get("frame_count_used", 0) or 0),
         "exp_dir": exp_dir,
         "source_files": {
             "segment_manifest": _relative_to_exp(exp_dir, manifest_path),
-            "state_segments": _relative_to_exp(exp_dir, state_segments_path),
-            "deploy_schedule": _relative_to_exp(exp_dir, deploy_schedule_path),
+            "state_segments": state_segments_source,
+            "deploy_schedule": deploy_schedule_source,
         },
     }
 

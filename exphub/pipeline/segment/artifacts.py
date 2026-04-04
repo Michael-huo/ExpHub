@@ -4,9 +4,8 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
 
-from exphub.common.io import read_json_dict, write_json_atomic
+from exphub.common.io import write_json_atomic
 from exphub.contracts import segment as segment_contract
 
 
@@ -17,17 +16,10 @@ class SegmentArtifactPaths:
     frames_dir: Path
     keyframes_dir: Path
     keyframes_meta_path: Path
-    deploy_schedule_path: Path
     manifest_path: Path
     report_path: Path
     visuals_dir: Path
     state_overview_path: Path
-    state_dir: Path
-    state_segments_path: Path
-    state_report_path: Path
-    state_overview_source_path: Path
-    step_meta_path: Path
-    preprocess_meta_path: Path
     calib_path: Path
     timestamps_path: Path
 
@@ -41,31 +33,12 @@ def build_paths(exp_dir):
         frames_dir=(root / "frames").resolve(),
         keyframes_dir=(root / "keyframes").resolve(),
         keyframes_meta_path=(root / "keyframes" / "keyframes_meta.json").resolve(),
-        deploy_schedule_path=(root / "deploy_schedule.json").resolve(),
         manifest_path=(root / segment_contract.SEGMENT_MANIFEST_NAME).resolve(),
         report_path=(root / segment_contract.SEGMENT_REPORT_NAME).resolve(),
         visuals_dir=(root / segment_contract.SEGMENT_VISUALS_DIRNAME).resolve(),
         state_overview_path=(
             root / segment_contract.SEGMENT_VISUALS_DIRNAME / segment_contract.SEGMENT_OVERVIEW_NAME
         ).resolve(),
-        state_dir=(root / segment_contract.SEGMENT_STATE_DIRNAME).resolve(),
-        state_segments_path=(
-            root
-            / segment_contract.SEGMENT_STATE_DIRNAME
-            / segment_contract.SEGMENT_STATE_SEGMENTS_NAME
-        ).resolve(),
-        state_report_path=(
-            root
-            / segment_contract.SEGMENT_STATE_DIRNAME
-            / segment_contract.SEGMENT_STATE_REPORT_NAME
-        ).resolve(),
-        state_overview_source_path=(
-            root
-            / segment_contract.SEGMENT_STATE_DIRNAME
-            / segment_contract.SEGMENT_OVERVIEW_NAME
-        ).resolve(),
-        step_meta_path=(root / "step_meta.json").resolve(),
-        preprocess_meta_path=(root / "preprocess_meta.json").resolve(),
         calib_path=(root / "calib.txt").resolve(),
         timestamps_path=(root / "timestamps.txt").resolve(),
     )
@@ -85,6 +58,29 @@ def ensure_layout(paths):
     paths.frames_dir.mkdir(parents=True, exist_ok=True)
     paths.keyframes_dir.mkdir(parents=True, exist_ok=True)
     paths.visuals_dir.mkdir(parents=True, exist_ok=True)
+
+
+def remove_stale_formal_segment_outputs(paths):
+    stale_paths = [
+        paths.root / "state_segmentation",
+        paths.root / "state_segments.json",
+        paths.root / "state_report.json",
+        paths.root / "signal_extraction",
+        paths.root / ".segment_cache",
+        paths.root / "deploy_schedule.json",
+        paths.root / "step_meta.json",
+        paths.root / "preprocess_meta.json",
+    ]
+    for stale_path in stale_paths:
+        try:
+            if stale_path.is_symlink() or stale_path.is_file():
+                stale_path.unlink()
+            elif stale_path.is_dir():
+                shutil.rmtree(str(stale_path), ignore_errors=True)
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
 
 
 def materialize_keyframes(frames_dir, keyframes_dir, keyframe_indices, mode_requested):
@@ -138,11 +134,6 @@ def write_keyframes_meta(paths, keyframes_meta):
     return paths.keyframes_meta_path
 
 
-def write_deploy_schedule(paths, deploy_schedule):
-    write_json_atomic(paths.deploy_schedule_path, deploy_schedule, indent=2)
-    return paths.deploy_schedule_path
-
-
 def write_segment_manifest(paths, manifest):
     write_json_atomic(paths.manifest_path, manifest, indent=2)
     return paths.manifest_path
@@ -151,27 +142,6 @@ def write_segment_manifest(paths, manifest):
 def write_segment_report(paths, report):
     write_json_atomic(paths.report_path, report, indent=2)
     return paths.report_path
-
-
-def write_step_meta(paths, step_meta):
-    write_json_atomic(paths.step_meta_path, step_meta, indent=2)
-    return paths.step_meta_path
-
-
-def load_state_payloads(paths):
-    return {
-        "state_segments": read_json_dict(paths.state_segments_path),
-        "state_report": read_json_dict(paths.state_report_path),
-    }
-
-
-def copy_overview_to_formal_visuals(paths, source_path):
-    source = Path(source_path).resolve()
-    if not source.is_file():
-        return None
-    paths.visuals_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(source), str(paths.state_overview_path))
-    return paths.state_overview_path
 
 
 def build_manifest(
@@ -196,9 +166,6 @@ def build_manifest(
             "visuals_dir": relative_to_exp(paths.exp_dir, paths.visuals_dir),
             "state_overview": relative_to_exp(paths.exp_dir, paths.state_overview_path),
             "keyframes_meta": relative_to_exp(paths.exp_dir, paths.keyframes_meta_path),
-            "deploy_schedule": relative_to_exp(paths.exp_dir, paths.deploy_schedule_path),
-            "state_segments_compat": relative_to_exp(paths.exp_dir, paths.state_segments_path),
-            "state_report_compat": relative_to_exp(paths.exp_dir, paths.state_report_path),
         },
         "frames": {
             "dir": relative_to_exp(paths.exp_dir, paths.frames_dir),
@@ -263,7 +230,7 @@ def build_report(
         },
         "state": {
             "summary": dict(state_summary),
-            "report_summary": dict(state_report_payload.get("summary") or {}),
+            "report": dict(state_report_payload),
         },
         "timings_sec": dict(timings or {}),
     }
