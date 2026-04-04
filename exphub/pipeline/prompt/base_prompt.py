@@ -49,11 +49,5 @@ def build_base_prompt_payload():
         "schema": "base_prompt.v2",
         "base_prompt": get_invariant_base_prompt(),
         "negative_prompt": get_invariant_negative_prompt(),
-        "source": "prompt_invariant_base_v2",
-        "rules_hit": [
-            "invariant_base_only",
-            "clip_profile_removed_from_base_prompt",
-            "scene_prompt_excluded_from_base_prompt",
-            "state_control_separated_from_scene_prompt",
-        ],
+        "source": "invariant_base_prompt",
     }

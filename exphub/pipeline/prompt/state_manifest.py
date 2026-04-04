@@ -2,26 +2,30 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 from exphub.common.io import ensure_file, read_json_dict
 
 
-STATE_CONTROL_PRESETS = {
+DEFAULT_STATE_CONTROL = {
+    "prompt_strength": 0.50,
+    "negative_prompt_delta": "",
+    "motion_trend": "uncertain_interval",
+    "continuity_emphasis": "balanced",
+}  # type: Dict[str, object]
+
+STATE_CONTROL_BY_LABEL = {
     "low_state": {
         "prompt_strength": 0.35,
         "negative_prompt_delta": "",
         "motion_trend": "stable_interval",
+        "continuity_emphasis": "steady",
     },
     "high_state": {
         "prompt_strength": 0.75,
         "negative_prompt_delta": "abrupt perspective jumps, transition discontinuity, motion tearing",
         "motion_trend": "risk_interval",
-    },
-    "unknown": {
-        "prompt_strength": 0.50,
-        "negative_prompt_delta": "",
-        "motion_trend": "unknown_interval",
+        "continuity_emphasis": "reinforced",
     },
 }  # type: Dict[str, Dict[str, object]]
 
@@ -43,10 +47,12 @@ def _relative_to_exp(exp_dir, target_path):
         return str(target)
 
 
-def _preset_for_state_label(state_label):
+def _state_control_for_label(state_label):
     # type: (str) -> Dict[str, object]
-    name = str(state_label or "unknown").strip() or "unknown"
-    return dict(STATE_CONTROL_PRESETS.get(name, STATE_CONTROL_PRESETS["unknown"]))
+    name = str(state_label or "").strip()
+    control = dict(DEFAULT_STATE_CONTROL)
+    control.update(_as_dict(STATE_CONTROL_BY_LABEL.get(name)))
+    return control
 
 
 def load_segment_prompt_inputs(segment_manifest_path):
@@ -86,8 +92,8 @@ def load_segment_prompt_inputs(segment_manifest_path):
     }
 
 
-def build_state_prompt_manifest(segment_inputs, prompt_dir, base_prompt_path):
-    # type: (Dict[str, object], Path, Path) -> Dict[str, object]
+def build_state_prompt_manifest(segment_inputs):
+    # type: (Dict[str, object]) -> Dict[str, object]
     payload = _as_dict(segment_inputs.get("state_segments_payload"))
     state_rows = list(payload.get("segments") or [])
     if not state_rows:
@@ -100,31 +106,31 @@ def build_state_prompt_manifest(segment_inputs, prompt_dir, base_prompt_path):
         end_frame = int(item.get("end_frame", 0) or 0)
         if end_frame < start_frame:
             raise RuntimeError("invalid state segment range at index {}".format(idx))
-        state_label = str(item.get("state_label", "unknown") or "unknown")
-        preset = _preset_for_state_label(state_label)
+        state_label = str(item.get("state_label", "state_unlabeled") or "state_unlabeled")
+        control = _state_control_for_label(state_label)
+        state_segment_id = int(item.get("segment_id", idx) or idx)
         segments.append(
             {
-                "state_segment_id": int(item.get("segment_id", idx) or idx),
+                "state_segment_id": int(state_segment_id),
+                "scene_segment_id": int(state_segment_id),
                 "start_frame": int(start_frame),
                 "end_frame": int(end_frame),
                 "state_label": state_label,
                 "state_control": {
-                    "prompt_strength": float(preset.get("prompt_strength", 0.5) or 0.5),
-                    "negative_prompt_delta": str(preset.get("negative_prompt_delta", "") or ""),
-                    "motion_trend": str(preset.get("motion_trend", "unknown_interval") or "unknown_interval"),
+                    "prompt_strength": float(control.get("prompt_strength", 0.5) or 0.5),
+                    "negative_prompt_delta": str(control.get("negative_prompt_delta", "") or ""),
+                    "motion_trend": str(control.get("motion_trend", "uncertain_interval") or "uncertain_interval"),
+                    "continuity_emphasis": str(control.get("continuity_emphasis", "balanced") or "balanced"),
                 },
-                "source_segment_id": int(item.get("segment_id", idx) or idx),
+                "source_segment_id": int(state_segment_id),
             }
         )
 
-    exp_dir = Path(segment_inputs.get("exp_dir")).resolve()
-    prompt_root = Path(prompt_dir).resolve()
     return {
         "version": 2,
         "schema": "state_prompt_manifest.v2",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "manifest_type": "state_control_manifest",
-        "base_prompt_path": _relative_to_exp(exp_dir, base_prompt_path),
         "state_segment_count": int(len(segments)),
         "source_files": dict(segment_inputs.get("source_files") or {}),
         "state_segments": segments,
@@ -132,7 +138,7 @@ def build_state_prompt_manifest(segment_inputs, prompt_dir, base_prompt_path):
             "state_segment_count": int(len(segments)),
             "frame_count": int(segment_inputs.get("frame_count", 0) or 0),
             "frame_count_used": int(segment_inputs.get("frame_count_used", 0) or 0),
-            "prompt_dir": _relative_to_exp(exp_dir, prompt_root),
             "state_control_mode": "minimal_state_control",
+            "scene_binding_key": "state_segment_id",
         },
     }

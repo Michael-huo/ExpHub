@@ -68,12 +68,12 @@ class SmolVlm2PromptBackend(PromptBackend):
                 images.append(image_obj.convert("RGB").copy())
         return images
 
-    def _build_inputs(self, prompt_text, images):
+    def _build_inputs(self, chat_text, images):
         attempts = [
-            {"text": [prompt_text], "images": images},
-            {"text": prompt_text, "images": images},
-            {"text": [prompt_text], "images": [images]},
-            {"text": prompt_text, "images": [images]},
+            {"text": [chat_text], "images": images},
+            {"text": chat_text, "images": images},
+            {"text": [chat_text], "images": [images]},
+            {"text": chat_text, "images": [images]},
         ]
         last_error = None
         for kwargs in attempts:
@@ -94,9 +94,9 @@ class SmolVlm2PromptBackend(PromptBackend):
                 "content": [{"type": "image"} for _ in image_paths] + [{"type": "text", "text": instruction}],
             }
         ]
-        prompt_text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        chat_text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         images = self._load_images(image_paths)
-        inputs = self._build_inputs(prompt_text, images).to(self.model.device)
+        inputs = self._build_inputs(chat_text, images).to(self.model.device)
 
         with self._torch.inference_mode():
             generated = self.model.generate(

@@ -104,10 +104,6 @@ class ExperimentPaths:
         return self.segment_dir / "timestamps.txt"
 
     @property
-    def prompt_profile_path(self):
-        return self.prompt_dir / "profile.json"
-
-    @property
     def prompt_report_path(self):
         return self.prompt_dir / "report.json"
 
@@ -324,10 +320,6 @@ class ExperimentContext:
     @property
     def segment_timestamps_path(self):
         return self.paths.segment_timestamps_path
-
-    @property
-    def prompt_profile_path(self):
-        return self.paths.prompt_profile_path
 
     @property
     def prompt_report_path(self):

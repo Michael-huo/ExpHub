@@ -370,7 +370,7 @@ def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_ref=""):
             {
                 "state_segment_id": _safe_int(state_row.get("segment_id"), idx),
                 "source_segment_id": _safe_int(state_row.get("segment_id"), idx),
-                "state_label": str(state_row.get("state_label", "unknown") or "unknown"),
+                "state_label": str(state_row.get("state_label", "state_unlabeled") or "state_unlabeled"),
                 "start_frame": int(state_row.get("start_frame", 0) or 0),
                 "end_frame": int(state_row.get("end_frame", 0) or 0),
                 "scene_prompt": str(scene_prompt),

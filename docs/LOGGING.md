@@ -93,4 +93,4 @@
 - `scene_prompt`
 - `state_control`
 
-`base_prompt` 与 `state_prompt_manifest` 仍可出现在 prompt 阶段内部追溯日志中，但不再作为下游正式 prompt 契约概念使用。旧的 clip-level profile 聚合已退出正式 prompt 主链。
+`base_prompt` 与 `state_prompt_manifest` 仍可出现在 prompt 阶段内部追溯日志中，但不再作为下游正式 prompt 契约概念使用。当前正式 prompt 结构固定为 base + scene + control。
