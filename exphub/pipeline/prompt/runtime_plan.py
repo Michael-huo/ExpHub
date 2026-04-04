@@ -27,15 +27,15 @@ def _relative_to_exp(exp_dir, target_path):
         return str(target)
 
 
-def _join_prompt_parts(base_prompt, local_prompt):
+def _join_prompt_parts(base_prompt, scene_prompt):
     # type: (str, str) -> str
     base = _collapse_ws(base_prompt)
-    local = _collapse_ws(local_prompt)
+    scene = _collapse_ws(scene_prompt)
     if not base:
-        return local
-    if not local:
+        return scene
+    if not scene:
         return base
-    return _collapse_ws("{} {}".format(base, local))
+    return _collapse_ws("{} {}".format(base, scene))
 
 
 def _join_negative_prompt(base_negative_prompt, negative_delta):
@@ -61,6 +61,27 @@ def _overlap_len(start_a, end_a, start_b, end_b):
 def _segment_midpoint(start_frame, end_frame):
     # type: (int, int) -> float
     return 0.5 * float(int(start_frame) + int(end_frame))
+
+
+def _as_state_control(state_row):
+    # type: (Dict[str, object]) -> Dict[str, object]
+    control = _as_dict(state_row.get("state_control"))
+    return {
+        "prompt_strength": float(control.get("prompt_strength", 0.5) or 0.5),
+        "negative_prompt_delta": _collapse_ws(control.get("negative_prompt_delta", "")),
+        "motion_trend": str(control.get("motion_trend", "unknown_interval") or "unknown_interval"),
+    }
+
+
+def _resolve_scene_prompt(deploy_item, state_row):
+    # type: (Dict[str, object], Dict[str, object]) -> Tuple[str, str]
+    deploy_scene_prompt = _collapse_ws(deploy_item.get("scene_prompt", ""))
+    if deploy_scene_prompt:
+        return deploy_scene_prompt, "deploy_schedule"
+    state_scene_prompt = _collapse_ws(state_row.get("scene_prompt", ""))
+    if state_scene_prompt:
+        return state_scene_prompt, "state_manifest"
+    return "", "scene_prompt_unset"
 
 
 def _pick_state_segment(raw_start, raw_end, state_segments):
@@ -103,7 +124,7 @@ def _pick_state_segment(raw_start, raw_end, state_segments):
             nearest_segment = state_segment
 
     if nearest_segment is None:
-        raise RuntimeError("cannot match deploy segment to state prompt segment")
+        raise RuntimeError("cannot match deploy segment to state segment")
     return dict(nearest_segment), 0, "nearest_state_segment"
 
 
@@ -136,8 +157,9 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, base_prompt
         raw_start_idx = int(item.get("raw_start_idx", deploy_start_idx) or deploy_start_idx)
         raw_end_idx = int(item.get("raw_end_idx", deploy_end_idx) or deploy_end_idx)
         state_row, overlap_frames, match_source = _pick_state_segment(raw_start_idx, raw_end_idx, state_segments)
-        local_prompt = _collapse_ws(state_row.get("prompt_text", ""))
-        negative_prompt_delta = _collapse_ws(state_row.get("negative_prompt_delta", ""))
+        scene_prompt, scene_prompt_source = _resolve_scene_prompt(item, state_row)
+        state_control = _as_state_control(state_row)
+        negative_prompt_delta = str(state_control.get("negative_prompt_delta", "") or "")
         runtime_segments.append(
             {
                 "seg": int(deploy_segment_id),
@@ -164,13 +186,15 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, base_prompt
                 "gap_error": int(item.get("gap_error", 0) or 0),
                 "state_segment_id": int(state_row.get("state_segment_id", 0) or 0),
                 "state_label": str(state_row.get("state_label", "unknown") or "unknown"),
+                "state_control": dict(state_control),
                 "base_prompt": base_prompt_text,
-                "local_prompt": local_prompt,
-                "resolved_prompt": _join_prompt_parts(base_prompt_text, local_prompt),
+                "scene_prompt": scene_prompt,
+                "scene_prompt_source": str(scene_prompt_source),
+                "resolved_prompt": _join_prompt_parts(base_prompt_text, scene_prompt),
                 "negative_prompt": _join_negative_prompt(base_negative_prompt, negative_prompt_delta),
                 "negative_prompt_delta": negative_prompt_delta,
-                "prompt_strength": float(state_row.get("prompt_strength", 0.5) or 0.5),
-                "motion_trend": str(state_row.get("motion_trend", "unknown_interval") or "unknown_interval"),
+                "prompt_strength": float(state_control.get("prompt_strength", 0.5) or 0.5),
+                "motion_trend": str(state_control.get("motion_trend", "unknown_interval") or "unknown_interval"),
                 "match_source": str(match_source),
                 "overlap_frames": int(overlap_frames),
                 "prompt_source": "runtime_prompt_plan",
@@ -178,14 +202,15 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, base_prompt
         )
 
     return {
-        "version": 1,
-        "schema": "runtime_prompt_plan.v1",
+        "version": 2,
+        "schema": "runtime_prompt_plan.v2",
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "source": "runtime_prompt_plan_v1",
+        "source": "runtime_prompt_plan_rebaseline_step_a",
         "schedule_source": "segment_manifest.deploy_schedule",
         "execution_backend": schedule_backend,
         "base_prompt": base_prompt_text,
         "negative_prompt": base_negative_prompt,
+        "scene_prompt_mode": "per_segment_slot_reserved",
         "state_prompt_manifest_path": _relative_to_exp(exp_dir, state_manifest_path),
         "deploy_segment_count": int(len(runtime_segments)),
         "source_files": {

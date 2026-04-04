@@ -7,31 +7,20 @@ from typing import Dict, List
 from exphub.common.io import ensure_file, read_json_dict
 
 
-STATE_PROMPT_PRESETS = {
+STATE_CONTROL_PRESETS = {
     "low_state": {
-        "prompt_text": (
-            "Within this interval, keep motion transitions gentle and preserve stable first-person continuity, "
-            "local geometry, and temporal consistency."
-        ),
-        "negative_prompt_delta": "",
         "prompt_strength": 0.35,
+        "negative_prompt_delta": "",
         "motion_trend": "stable_interval",
     },
     "high_state": {
-        "prompt_text": (
-            "Within this interval, treat the motion as high-risk and preserve first-person continuity, "
-            "local geometry, exposure stability, and temporal coherence under stronger viewpoint change."
-        ),
-        "negative_prompt_delta": "abrupt perspective jumps, transition discontinuity, motion tearing",
         "prompt_strength": 0.75,
+        "negative_prompt_delta": "abrupt perspective jumps, transition discontinuity, motion tearing",
         "motion_trend": "risk_interval",
     },
     "unknown": {
-        "prompt_text": (
-            "Within this interval, preserve first-person continuity, stable geometry, and temporal coherence."
-        ),
-        "negative_prompt_delta": "",
         "prompt_strength": 0.50,
+        "negative_prompt_delta": "",
         "motion_trend": "unknown_interval",
     },
 }  # type: Dict[str, Dict[str, object]]
@@ -57,7 +46,7 @@ def _relative_to_exp(exp_dir, target_path):
 def _preset_for_state_label(state_label):
     # type: (str) -> Dict[str, object]
     name = str(state_label or "unknown").strip() or "unknown"
-    return dict(STATE_PROMPT_PRESETS.get(name, STATE_PROMPT_PRESETS["unknown"]))
+    return dict(STATE_CONTROL_PRESETS.get(name, STATE_CONTROL_PRESETS["unknown"]))
 
 
 def load_segment_prompt_inputs(segment_manifest_path):
@@ -119,10 +108,11 @@ def build_state_prompt_manifest(segment_inputs, prompt_dir, base_prompt_path):
                 "start_frame": int(start_frame),
                 "end_frame": int(end_frame),
                 "state_label": state_label,
-                "prompt_text": str(preset.get("prompt_text", "") or ""),
-                "negative_prompt_delta": str(preset.get("negative_prompt_delta", "") or ""),
-                "prompt_strength": float(preset.get("prompt_strength", 0.5) or 0.5),
-                "motion_trend": str(preset.get("motion_trend", "unknown_interval") or "unknown_interval"),
+                "state_control": {
+                    "prompt_strength": float(preset.get("prompt_strength", 0.5) or 0.5),
+                    "negative_prompt_delta": str(preset.get("negative_prompt_delta", "") or ""),
+                    "motion_trend": str(preset.get("motion_trend", "unknown_interval") or "unknown_interval"),
+                },
                 "source_segment_id": int(item.get("segment_id", idx) or idx),
             }
         )
@@ -130,10 +120,10 @@ def build_state_prompt_manifest(segment_inputs, prompt_dir, base_prompt_path):
     exp_dir = Path(segment_inputs.get("exp_dir")).resolve()
     prompt_root = Path(prompt_dir).resolve()
     return {
-        "version": 1,
-        "schema": "state_prompt_manifest.v1",
+        "version": 2,
+        "schema": "state_prompt_manifest.v2",
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "manifest_type": "interval_prompt_manifest",
+        "manifest_type": "state_control_manifest",
         "base_prompt_path": _relative_to_exp(exp_dir, base_prompt_path),
         "state_segment_count": int(len(segments)),
         "source_files": dict(segment_inputs.get("source_files") or {}),
@@ -143,5 +133,6 @@ def build_state_prompt_manifest(segment_inputs, prompt_dir, base_prompt_path):
             "frame_count": int(segment_inputs.get("frame_count", 0) or 0),
             "frame_count_used": int(segment_inputs.get("frame_count_used", 0) or 0),
             "prompt_dir": _relative_to_exp(exp_dir, prompt_root),
+            "state_control_mode": "minimal_state_control",
         },
     }
