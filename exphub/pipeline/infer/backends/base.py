@@ -153,9 +153,9 @@ class ConfiguredInferBackend(InferBackend):
             config_path = self._config_path
         return {
             "infer_backend": str(self.name),
-            "infer_model_dir": str(model_dir) if model_dir else None,
-            "infer_model_id": str(model_id) if model_id else None,
-            "infer_config_path": str(config_path) if config_path else None,
+            "model_dir": str(model_dir) if model_dir else None,
+            "model_id": str(model_id) if model_id else None,
+            "config_path": str(config_path) if config_path else None,
             "backend_python_phase": str(self.backend_python_phase),
             "backend_entry_type": str(self.backend_entry_type),
         }

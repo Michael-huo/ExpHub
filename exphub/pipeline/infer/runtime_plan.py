@@ -10,8 +10,6 @@ from exphub.common.io import ensure_file, write_json_atomic
 
 
 PROMPT_SOURCE_RUNTIME_PLAN = "runtime_prompt_plan"
-COMPAT_RESOLVED_PROMPT_KEY = "final" "_prompt"
-COMPAT_NEGATIVE_PROMPT_KEY = "final" "_neg_prompt"
 
 
 def _collapse_ws(text):
@@ -111,7 +109,6 @@ def _normalize_runtime_segment(item, idx, default_prompt, default_negative_promp
         "match_source": _collapse_ws(item.get("match_source", "")) or None,
         "prompt_source": str(prompt_source),
         "base_prompt": _collapse_ws(item.get("base_prompt", "")) or str(default_prompt),
-        "local_prompt": _collapse_ws(item.get("local_prompt", "")),
         "resolved_prompt": str(resolved_prompt),
         "negative_prompt": str(negative_prompt),
         "prompt_strength": float(item.get("prompt_strength", 0.5) or 0.5),
@@ -175,33 +172,8 @@ def load_runtime_prompt_plan(path, default_prompt="", default_negative_prompt=""
     }
 
 
-def load_runtime_prompt_plan_for_infer(path, default_prompt="", default_negative_prompt=""):
-    # type: (str, str, str) -> dict
-    plan = load_runtime_prompt_plan(path, default_prompt=default_prompt, default_negative_prompt=default_negative_prompt)
-    segment_overrides = []
-    for raw_item in list(plan.get("segments", []) or []):
-        item = _as_dict(raw_item)
-        if not item:
-            continue
-        # Keep the old backend-facing aliases inside the adapter only.
-        compat_item = dict(item)
-        compat_item[COMPAT_RESOLVED_PROMPT_KEY] = str(item.get("resolved_prompt", "") or "")
-        compat_item[COMPAT_NEGATIVE_PROMPT_KEY] = str(item.get("negative_prompt", "") or "")
-        segment_overrides.append(compat_item)
-    return {
-        "version": int(plan.get("version", 1) or 1),
-        "schema": str(plan.get("schema", "") or "runtime_prompt_plan.v1"),
-        "base_prompt": str(plan.get("base_prompt", "")),
-        "prompt": str(plan.get("base_prompt", "")),
-        "negative_prompt": str(plan.get("negative_prompt", "")),
-        "source": str(plan.get("source", "")),
-        "segment_overrides": segment_overrides,
-        "_raw": dict(plan.get("_raw", {}) or {}),
-    }
-
-
-def resolve_segment_overrides(
-    manifest_info,
+def resolve_runtime_prompt_segments(
+    runtime_prompt_plan,
     num_segments,
     default_prompt,
     default_negative_prompt,
@@ -210,11 +182,11 @@ def resolve_segment_overrides(
 ):
     # type: (dict, int, str, str, int, float) -> List[dict]
     count = max(0, int(num_segments))
-    prompt = _collapse_ws(manifest_info.get("base_prompt", "")) or _collapse_ws(manifest_info.get("prompt", "")) or _collapse_ws(default_prompt)
-    negative_prompt = _collapse_ws(manifest_info.get("negative_prompt", "")) or _collapse_ws(default_negative_prompt)
-    source = str(manifest_info.get("source", "") or PROMPT_SOURCE_RUNTIME_PLAN)
+    prompt = _collapse_ws(runtime_prompt_plan.get("base_prompt", "")) or _collapse_ws(default_prompt)
+    negative_prompt = _collapse_ws(runtime_prompt_plan.get("negative_prompt", "")) or _collapse_ws(default_negative_prompt)
+    source = str(runtime_prompt_plan.get("source", "") or PROMPT_SOURCE_RUNTIME_PLAN)
     override_map = {}
-    for raw_item in list(manifest_info.get("segment_overrides") or []):
+    for raw_item in list(runtime_prompt_plan.get("segments") or []):
         item = _as_dict(raw_item)
         seg = _safe_int(item.get("seg"), -1)
         if seg is None or int(seg) < 0:
@@ -230,13 +202,13 @@ def resolve_segment_overrides(
         guidance_scale = override_item.get("guidance_scale", default_guidance_scale)
         if guidance_scale in (None, ""):
             guidance_scale = default_guidance_scale
-        resolved_prompt_text = _collapse_ws(override_item.get("resolved_prompt", "")) or _collapse_ws(override_item.get(COMPAT_RESOLVED_PROMPT_KEY, "")) or str(prompt)
-        resolved_negative_text = _collapse_ws(override_item.get("negative_prompt", "")) or _collapse_ws(override_item.get(COMPAT_NEGATIVE_PROMPT_KEY, "")) or str(negative_prompt)
+        resolved_prompt_text = _collapse_ws(override_item.get("resolved_prompt", "")) or str(prompt)
+        resolved_negative_text = _collapse_ws(override_item.get("negative_prompt", "")) or str(negative_prompt)
         resolved.append(
             {
                 "seg": int(seg),
-                COMPAT_RESOLVED_PROMPT_KEY: str(resolved_prompt_text),
-                COMPAT_NEGATIVE_PROMPT_KEY: str(resolved_negative_text),
+                "resolved_prompt": str(resolved_prompt_text),
+                "negative_prompt": str(resolved_negative_text),
                 "prompt_source": _collapse_ws(override_item.get("prompt_source", "")) or str(source),
                 "num_inference_steps": int(num_inference_steps),
                 "guidance_scale": float(guidance_scale),
@@ -247,8 +219,6 @@ def resolve_segment_overrides(
                 "match_source": override_item.get("match_source"),
                 "prompt_strength": override_item.get("prompt_strength"),
                 "base_prompt": override_item.get("base_prompt"),
-                "local_prompt": override_item.get("local_prompt"),
-                "resolved_prompt": resolved_prompt_text,
             }
         )
     return resolved
@@ -329,7 +299,6 @@ def build_prompt_resolution(runtime_prompt_plan, execution_segments, exp_dir):
                 "match_source": plan_item.get("match_source"),
                 "prompt_source": str(plan_item.get("prompt_source", "") or PROMPT_SOURCE_RUNTIME_PLAN),
                 "base_prompt": str(plan_item.get("base_prompt", runtime_prompt_plan.get("base_prompt", "")) or ""),
-                "local_prompt": str(plan_item.get("local_prompt", "") or ""),
                 "resolved_prompt": str(plan_item.get("resolved_prompt", "") or runtime_prompt_plan.get("base_prompt", "")),
                 "negative_prompt": str(plan_item.get("negative_prompt", "") or runtime_prompt_plan.get("negative_prompt", "")),
                 "prompt_strength": float(plan_item.get("prompt_strength", 0.5) or 0.5),
@@ -351,7 +320,7 @@ def build_prompt_resolution(runtime_prompt_plan, execution_segments, exp_dir):
         "prompt_source_counts": dict(prompt_source_counts),
         "state_motion_trend_counts": dict(state_motion_trend_counts),
         "state_label_counts": dict(state_label_counts),
-        "prompt_file_used": str(raw_path) if raw_path is not None else "",
+        "runtime_prompt_plan_used": str(raw_path) if raw_path is not None else "",
         "source_files": {
             "runtime_prompt_plan": (
                 _relative_path(exp_root, raw_path) if raw_path is not None else ""
@@ -379,8 +348,8 @@ def build_prompt_resolution(runtime_prompt_plan, execution_segments, exp_dir):
         "state_prompt_enabled": bool(len(resolution_items) > 0),
         "state_prompt_segment_count": int(len(list(runtime_prompt_plan.get("segments") or []))),
         "matched_execution_segment_count": int(len(resolution_items)),
-        "prompt_file_version": int(runtime_prompt_plan.get("version", 1) or 1),
-        "prompt_file_source": str(runtime_prompt_plan.get("source", "") or PROMPT_SOURCE_RUNTIME_PLAN),
+        "runtime_prompt_plan_version": int(runtime_prompt_plan.get("version", 1) or 1),
+        "runtime_prompt_plan_source": str(runtime_prompt_plan.get("source", "") or PROMPT_SOURCE_RUNTIME_PLAN),
         "prompt_source_counts": dict(prompt_source_counts),
         "state_motion_trend_counts": dict(state_motion_trend_counts),
         "state_label_counts": dict(state_label_counts),
@@ -417,7 +386,6 @@ def merge_prompt_resolution_into_runs_plan(plan_obj, segment_resolutions):
         seg_item["state_label"] = resolved.get("state_label")
         seg_item["motion_trend"] = resolved.get("motion_trend")
         seg_item["base_prompt"] = resolved.get("base_prompt")
-        seg_item["local_prompt"] = resolved.get("local_prompt")
         seg_item["resolved_prompt"] = resolved.get("resolved_prompt")
         seg_item["negative_prompt"] = resolved.get("negative_prompt")
         seg_item["prompt_strength"] = resolved.get("prompt_strength")

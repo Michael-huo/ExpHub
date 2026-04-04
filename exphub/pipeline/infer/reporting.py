@@ -118,8 +118,8 @@ def build_infer_report(infer_dir, runs_plan_obj, prompt_resolution, backend_meta
         "state_prompt_enabled": bool((runtime_summary or {}).get("state_prompt_enabled", False)),
         "state_prompt_segment_count": int((runtime_summary or {}).get("state_prompt_segment_count", 0) or 0),
         "matched_execution_segment_count": int((runtime_summary or {}).get("matched_execution_segment_count", 0) or 0),
-        "prompt_file_version": int((runtime_summary or {}).get("prompt_file_version", 0) or 0),
-        "prompt_file_source": str((runtime_summary or {}).get("prompt_file_source", "") or ""),
+        "runtime_prompt_plan_version": int((runtime_summary or {}).get("runtime_prompt_plan_version", 0) or 0),
+        "runtime_prompt_plan_source": str((runtime_summary or {}).get("runtime_prompt_plan_source", "") or ""),
         "prompt_source_counts": dict((runtime_summary or {}).get("prompt_source_counts", {}) or {}),
         "state_motion_trend_counts": dict((runtime_summary or {}).get("state_motion_trend_counts", {}) or {}),
         "state_label_counts": dict((runtime_summary or {}).get("state_label_counts", {}) or {}),
@@ -137,9 +137,9 @@ def build_infer_report(infer_dir, runs_plan_obj, prompt_resolution, backend_meta
             "backend_entry_type": str((backend_meta or {}).get("backend_entry_type", "") or ""),
             "backend_python_phase": str((backend_meta or {}).get("backend_python_phase", "") or ""),
             "videox_root": str((backend_meta or {}).get("videox_root", "") or ""),
-            "model_dir": str((backend_meta or {}).get("model_dir", "") or (backend_meta or {}).get("infer_model_dir", "") or ""),
-            "model_id": str((backend_meta or {}).get("model_id", "") or (backend_meta or {}).get("infer_model_id", "") or ""),
-            "config_path": str((backend_meta or {}).get("config_path", "") or (backend_meta or {}).get("infer_config_path", "") or ""),
+            "model_dir": str((backend_meta or {}).get("model_dir", "") or ""),
+            "model_id": str((backend_meta or {}).get("model_id", "") or ""),
+            "config_path": str((backend_meta or {}).get("config_path", "") or ""),
         },
         "schedule_summary": {
             "schedule_source": str((runtime_summary or {}).get("schedule_source", "") or ""),
@@ -202,7 +202,7 @@ def write_infer_report(infer_dir, report):
     return report_path
 
 
-def cleanup_legacy_infer_outputs(infer_dir):
+def cleanup_obsolete_infer_outputs(infer_dir):
     # type: (Path) -> None
     infer_dir = Path(infer_dir).resolve()
     for rel_name in OBSOLETE_INFER_OUTPUT_NAMES:

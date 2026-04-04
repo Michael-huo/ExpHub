@@ -209,7 +209,7 @@ def _build_stage_table(exp_dir, reports):
     return table
 
 
-def _build_legacy_compression(exp_dir, compression):
+def _build_compression_snapshot(exp_dir, compression):
     exp_root = Path(exp_dir).resolve()
     keyframe_dir = exp_root / "segment" / "keyframes"
     prompt_files = [
@@ -299,9 +299,9 @@ def _run_formal_mainline(args):
         },
     }
 
-    legacy_compression = _build_legacy_compression(exp_dir, compression)
+    compression_snapshot = _build_compression_snapshot(exp_dir, compression)
     write_json_atomic(contract.artifacts[stats_contract.FINAL_REPORT], final_report, indent=2)
-    write_json_atomic(contract.artifacts[stats_contract.COMPRESSION], legacy_compression, indent=2)
+    write_json_atomic(contract.artifacts[stats_contract.COMPRESSION], compression_snapshot, indent=2)
 
     log_prog("stats summary: final report generated")
     log_info("stats final report: {}".format(contract.artifacts[stats_contract.FINAL_REPORT]))

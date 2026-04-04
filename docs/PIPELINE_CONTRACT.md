@@ -66,6 +66,7 @@
 - execution segments 来自 `prompt/runtime_prompt_plan.json`
 - 不再在前端重拼 prompt 文本
 - `runs_plan.json` 必须保存真实 `start_idx / end_idx / num_frames`
+- infer 内部追溯元数据统一使用 `runtime_prompt_plan_*`、`resolved_prompt`、`negative_prompt` 等当前结构命名，不再保留旧式 prompt 别名字段
 
 ### `merge`
 
@@ -89,7 +90,7 @@
 ### `stats`
 
 - 正式输出为 `stats/final_report.json`
-- 保留 `stats/compression.json`，因为 `exphub/cli.py` 的实验摘要仍会读取它
+- 保留 `stats/compression.json`，因为 `exphub/cli.py` 的实验摘要仍会读取它；它是 CLI 用的压缩摘要快照，不额外承担 infer/prompt 兼容语义
 - `segment` 压缩统计来自 `segment/report.json`
 - 对缺失上游报告给出 `WARN`，而不是直接崩溃
 
