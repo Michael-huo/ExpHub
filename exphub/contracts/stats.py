@@ -12,11 +12,6 @@ EVAL_REPORT = "eval_report"
 FINAL_REPORT = "final_report"
 COMPRESSION = "compression"
 
-FORMAL_STATS_ARTIFACT_KEYS = (
-    FINAL_REPORT,
-    COMPRESSION,
-)
-
 
 def build_contract(paths):
     return StageContract(

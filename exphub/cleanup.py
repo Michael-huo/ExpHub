@@ -4,9 +4,6 @@ import os
 import shutil
 from pathlib import Path
 
-# NOTE: Python 3.7 compatibility:
-# - typing.Literal is not available in stdlib typing
-# - Path.unlink(missing_ok=...) is 3.8+
 KeepLevel = str  # "max" | "min"
 
 _KEEP_LEVELS = ("max", "min")
@@ -53,8 +50,9 @@ def _prune_dir_keep_names(root: Path, d: Path, keep_names) -> None:
 
 
 def _cleanup_min(exp_dir: Path) -> None:
-    # Aggressively prune heavy intermediates while preserving light metadata
-    # and final outputs for batch runs.
+    # `keep=min` is a retention policy, not a contract definition. These lists
+    # keep the current lightweight outputs we still want after the mainline run
+    # while pruning heavy intermediates that are no longer needed.
     heavy_dirs = [
         exp_dir / "segment" / "frames",
         exp_dir / "infer" / "runs",
