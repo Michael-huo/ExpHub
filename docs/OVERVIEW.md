@@ -63,6 +63,7 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 
 - 统一入口：`python -m exphub`
 - 主链自检：`python -m exphub --mode doctor ...`
+- prompt 前端当前只保留一个可选覆盖参数：`--prompt_model_dir`
 - 完整日志目录：`EXP_DIR/logs/`
 - 阶段输出目录：`segment/`、`prompt/`、`infer/`、`merge/`、`slam/`、`eval/`、`stats/`
 

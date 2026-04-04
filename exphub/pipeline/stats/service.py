@@ -15,6 +15,9 @@ from exphub.common.logging import log_info, log_prog, log_warn
 from exphub.contracts import stats as stats_contract
 
 
+_PROMPT_PHASE = "prompt_smol"
+
+
 def _as_int_or_none(value):
     try:
         if value is None:
@@ -317,7 +320,7 @@ def run(runtime):
     ]
     runtime.step_runner.run_env_python(
         cmd,
-        phase_name=runtime.prompt_phase_name(),
+        phase_name=_PROMPT_PHASE,
         log_name="stats.log",
         cwd=runtime.exphub_root,
     )

@@ -333,7 +333,7 @@ def _pick_primary_frame(state_row, keyframe_indices, frames_dir):
     }
 
 
-def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_ref=""):
+def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_dir=""):
     # type: (Dict[str, object], Path, str) -> Dict[str, object]
     manifest = _as_dict(segment_inputs.get("segment_manifest"))
     state_payload = _as_dict(segment_inputs.get("state_segments_payload"))
@@ -345,7 +345,7 @@ def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_ref=""):
     exp_dir = Path(segment_inputs.get("exp_dir")).resolve()
     frames_root = Path(frames_dir).resolve()
 
-    backend = create_backend(model_ref=str(prompt_model_ref or ""))
+    backend = create_backend(model_ref=str(prompt_model_dir or ""))
     backend.load()
     backend_meta = dict(backend.meta() or {})
     backend_name = str(backend_meta.get("backend", "smolvlm2") or "smolvlm2")

@@ -70,14 +70,6 @@ class PipelineRuntime:
             self._phase_python_cache[phase_key] = resolve_phase_python(phase_key)
         return self._phase_python_cache[phase_key]
 
-    def prompt_phase_name(self):
-        return "prompt_smol"
-
-    def prompt_model_ref(self):
-        if str(self.args.prompt_model_dir or "").strip():
-            return str(self.args.prompt_model_dir).strip()
-        return ""
-
     def infer_phase_name(self):
         backend = str(self.args.infer_backend or "wan_fun_5b_inp").strip().lower()
         if backend == "wan_fun_5b_inp":
