@@ -213,8 +213,6 @@ def _resolve_eval_exp_root(path_candidates):
     for candidate in _candidate_exp_roots(path_candidates):
         if (candidate / "segment" / "segment_manifest.json").is_file():
             return candidate
-        if (candidate / "segment" / "keyframes" / "keyframes_meta.json").is_file():
-            return candidate
     return None
 
 
@@ -243,7 +241,6 @@ def _load_formal_keyframe_context(config, metrics_obj):
     empty_context = {
         "exp_root": None,
         "manifest_path": "",
-        "meta_path": "",
         "frame_indices": [],
         "timestamps_by_frame": {},
     }
@@ -253,27 +250,15 @@ def _load_formal_keyframe_context(config, metrics_obj):
 
     exp_root = Path(exp_root).resolve()
     manifest_path = exp_root / "segment" / "segment_manifest.json"
-    meta_path = exp_root / "segment" / "keyframes" / "keyframes_meta.json"
     manifest_obj = read_json(manifest_path) if manifest_path.is_file() else {}
     if not isinstance(manifest_obj, dict):
         manifest_obj = {}
-
-    if isinstance(manifest_obj.get("artifacts"), dict) and manifest_obj["artifacts"].get("keyframes_meta"):
-        candidate = (exp_root / str(manifest_obj["artifacts"].get("keyframes_meta"))).resolve()
-        if candidate.is_file():
-            meta_path = candidate
-
-    meta_obj = read_json(meta_path) if meta_path.is_file() else {}
-    if not isinstance(meta_obj, dict):
-        meta_obj = {}
 
     frame_indices = []
     seen = set()
     raw_indices = []
     if isinstance(manifest_obj.get("keyframes"), dict):
         raw_indices = list(manifest_obj["keyframes"].get("indices") or [])
-    if not raw_indices:
-        raw_indices = list(meta_obj.get("keyframe_indices") or [])
     for value in raw_indices:
         try:
             frame_idx = int(value)
@@ -289,27 +274,14 @@ def _load_formal_keyframe_context(config, metrics_obj):
         return empty_context
 
     timestamps_by_frame = {}
-    for item in list(meta_obj.get("keyframes") or []):
-        if not isinstance(item, dict):
-            continue
-        try:
-            frame_idx = int(item.get("frame_idx"))
-            ts_sec = float(item.get("ts_sec"))
-        except Exception:
-            continue
-        timestamps_by_frame[int(frame_idx)] = float(ts_sec)
-    if len(timestamps_by_frame) < len(frame_indices):
-        fallback = _segment_timestamp_map(exp_root)
-        for frame_idx in frame_indices:
-            if frame_idx in timestamps_by_frame:
-                continue
-            if frame_idx in fallback:
-                timestamps_by_frame[frame_idx] = float(fallback[frame_idx])
+    fallback = _segment_timestamp_map(exp_root)
+    for frame_idx in frame_indices:
+        if frame_idx in fallback:
+            timestamps_by_frame[frame_idx] = float(fallback[frame_idx])
 
     return {
         "exp_root": exp_root,
         "manifest_path": str(manifest_path) if manifest_path.is_file() else "",
-        "meta_path": str(meta_path) if meta_path.is_file() else "",
         "frame_indices": list(frame_indices),
         "timestamps_by_frame": dict(timestamps_by_frame),
     }

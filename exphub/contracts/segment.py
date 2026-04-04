@@ -55,7 +55,6 @@ def build_contract(paths):
             "report": paths.segment_report_path,
             "visuals_dir": paths.segment_visuals_dir,
             "overview": paths.segment_state_overview_path,
-            "keyframes_meta": paths.segment_keyframes_dir / "keyframes_meta.json",
             "calib": paths.segment_calib_path,
             "timestamps": paths.segment_timestamps_path,
         },

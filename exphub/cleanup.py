@@ -84,7 +84,6 @@ def _cleanup_min(exp_dir: Path) -> None:
             "visuals",
         },
     )
-    _prune_dir_keep_names(exp_dir, exp_dir / "segment" / "keyframes", {"keyframes_meta.json"})
     _prune_dir_keep_names(
         exp_dir,
         exp_dir / "prompt",

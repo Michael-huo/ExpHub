@@ -77,7 +77,6 @@ def run(runtime):
 
     ensure_dir(contract.artifacts["frames_dir"], "segment frames dir")
     ensure_dir(contract.artifacts["keyframes_dir"], "segment keyframes dir")
-    ensure_file(contract.artifacts["keyframes_meta"], "segment keyframes meta")
     ensure_file(contract.artifacts["manifest"], "segment manifest")
     ensure_file(contract.artifacts["report"], "segment report")
     ensure_file(contract.artifacts["overview"], "segment state overview")
@@ -497,7 +496,6 @@ def _run_formal_mainline(args):
         keyframe_bytes_sum=keyframe_bytes_sum,
     )
     deploy_schedule = build_wan_r4_deploy_schedule(keyframes_meta)
-    segment_artifacts.write_keyframes_meta(paths, keyframes_meta)
     visual_result = materialize_formal_visuals(paths, detector_result)
     materialize_sec = float(time.time() - materialize_started)
     log_info("segment artifact materialization completed in {:.2f}s".format(materialize_sec))
