@@ -127,15 +127,6 @@ def _build_compression(exp_dir, segment_report, prompt_report, warnings):
             ("outputs", "keyframes", "frame_count"),
         ],
     )
-    if keyframes_frames is None:
-        keyframes_frames = _pick_int(
-            read_json_dict(Path(exp_dir).resolve() / "segment" / "step_meta.json"),
-            [
-                ("outputs", "keyframes", "frame_count"),
-                ("outputs", "keyframes_frames"),
-                ("keyframes_frames",),
-            ],
-        )
 
     keyframes_bytes = _pick_int(
         segment_report,
@@ -143,15 +134,6 @@ def _build_compression(exp_dir, segment_report, prompt_report, warnings):
             ("keyframes", "bytes_sum"),
         ],
     )
-    if keyframes_bytes is None:
-        keyframes_bytes = _pick_int(
-            read_json_dict(Path(exp_dir).resolve() / "segment" / "step_meta.json"),
-            [
-                ("outputs", "keyframes", "bytes_sum"),
-                ("outputs", "keyframes_bytes"),
-                ("keyframes_bytes",),
-            ],
-        )
 
     prompt_bytes = _pick_int(
         prompt_report,

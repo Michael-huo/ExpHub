@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from exphub.common.io import list_frames_sorted
-
-
-def _read_json(path):
-    with Path(path).resolve().open("r", encoding="utf-8") as handle:
-        return json.load(handle)
-
 
 def _read_timestamps(path):
     values = []
@@ -187,23 +180,14 @@ def run_state_mainline(segment_dir, frames_dir, timestamps_path, kf_gap):
         "tail_drop": int(uniform_base["tail_drop"]),
         "uniform_base_indices": list(uniform_base["indices"]),
         "policy_name": "state",
-        "policy_cache_dir": (segment_dir_path / ".segment_cache" / "state").resolve(),
         "build_item": _build_keyframe_item_factory(frame_paths, timestamps),
     }
-    context["policy_cache_dir"].mkdir(parents=True, exist_ok=True)
-
-    plan = _normalize_plan(context, build_policy_plan(context))
-    state_dir = (segment_dir_path / "state_segmentation").resolve()
-    state_segments_path = state_dir / "state_segments.json"
-    state_report_path = state_dir / "state_report.json"
-    state_overview_path = state_dir / "state_overview.png"
+    policy_result = build_policy_plan(context)
+    plan = _normalize_plan(context, policy_result)
 
     return {
         "plan": plan,
-        "state_dir": state_dir,
-        "state_segments_path": state_segments_path,
-        "state_report_path": state_report_path,
-        "state_overview_path": state_overview_path,
-        "state_segments_payload": _read_json(state_segments_path),
-        "state_report_payload": _read_json(state_report_path),
+        "state_overview_path": policy_result.get("state_overview_path"),
+        "state_segments_payload": dict(policy_result.get("state_segments_payload") or {}),
+        "state_report_payload": dict(policy_result.get("state_report_payload") or {}),
     }

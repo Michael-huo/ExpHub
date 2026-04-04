@@ -10,8 +10,8 @@ from .formal import (
     DEFAULT_SMOOTHING_WINDOW,
     STATE_HIGH,
     STATE_LOW,
+    build_state_report,
     compute_state_segments,
-    write_state_segmentation_outputs,
 )
 from .visualize import save_state_segmentation_plots
 
@@ -24,7 +24,7 @@ __all__ = [
     "DEFAULT_SMOOTHING_WINDOW",
     "STATE_HIGH",
     "STATE_LOW",
+    "build_state_report",
     "compute_state_segments",
     "save_state_segmentation_plots",
-    "write_state_segmentation_outputs",
 ]

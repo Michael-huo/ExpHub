@@ -10,8 +10,8 @@
 
 - 主链顺序固定为 `segment -> prompt -> infer -> merge -> slam -> eval -> stats`
 - `segment/keyframes/keyframes_meta.json` 是 raw keyframe 事实源
-- `segment/deploy_schedule.json` 是执行投影，不回写 raw schedule
-- `segment/state_segmentation/state_segments.json` 是 state 区间事实源
+- `segment/segment_manifest.json` 是 `segment` 正式事实源，并内嵌 `deploy_schedule`、`state_segments` 与 `state_report`
+- `segment/visuals/state_overview.png` 是唯一正式 state 总览图
 - `prompt` 对下游唯一正式 prompt 契约是 `prompt/runtime_prompt_plan.json`
 - `prompt` 会同时写出 `base_prompt.json` 与 `state_prompt_manifest.json` 作为阶段内部支撑与追溯产物
 - `prompt` 正式 backend 固定为 `smolvlm2`
@@ -24,13 +24,13 @@
 
 | 阶段 | 正式实现 | 关键输入 | 关键输出 | 下游依赖 |
 |---|---|---|---|---|
-| `segment` | `exphub/pipeline/segment/service.py` | 数据集、标定、phase Python | `segment/frames/`, `segment/keyframes/keyframes_meta.json`, `segment/deploy_schedule.json`, `segment/state_segmentation/*`, `timestamps.txt`, `calib.txt`, `preprocess_meta.json`, `step_meta.json` | `prompt`, `infer`, `slam` |
-| `prompt` | `exphub/pipeline/prompt/service.py` | `segment/frames/`, `segment/state_segmentation/state_segments.json`, `segment/deploy_schedule.json` | `prompt/runtime_prompt_plan.json`, `prompt/report.json`, 以及内部支撑产物 `prompt/base_prompt.json`、`prompt/state_prompt_manifest.json` | `infer`, `stats` |
-| `infer` | `exphub/pipeline/infer/service.py` | `segment/frames/`, `prompt/runtime_prompt_plan.json`, `segment/deploy_schedule.json` | `infer/runs/`, `infer/runs_plan.json`, `infer/report.json` | `merge`, `stats` |
+| `segment` | `exphub/pipeline/segment/service.py` | 数据集、标定、phase Python | `segment/frames/`, `segment/keyframes/`, `segment/keyframes/keyframes_meta.json`, `segment/segment_manifest.json`, `segment/report.json`, `segment/visuals/state_overview.png`, `timestamps.txt`, `calib.txt` | `prompt`, `infer`, `slam` |
+| `prompt` | `exphub/pipeline/prompt/service.py` | `segment/frames/`, `segment/segment_manifest.json` | `prompt/runtime_prompt_plan.json`, `prompt/report.json`, 以及内部支撑产物 `prompt/base_prompt.json`、`prompt/state_prompt_manifest.json` | `infer`, `stats` |
+| `infer` | `exphub/pipeline/infer/service.py` | `segment/frames/`, `prompt/runtime_prompt_plan.json` | `infer/runs/`, `infer/runs_plan.json`, `infer/report.json` | `merge`, `stats` |
 | `merge` | `exphub/pipeline/merge/service.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
 | `slam` | `exphub/pipeline/slam/service.py` | `segment/` 或 `merge/` 轨道数据 | `slam/report.json`, `slam/traj_est.txt`, 以及 `slam/<track>/traj_est.tum`, `slam/<track>/traj_est.npz`, `slam/<track>/run_meta.json` | `eval` |
 | `eval` | `exphub/pipeline/eval/service.py` | `slam/report.json` 中声明的正式轨迹路径、`merge/frames/`、`segment/frames/` | `eval/report.json`, `eval/details.csv`, `eval/plots/traj_xy.png`, `eval/plots/metrics_overview.png` | 人工分析 |
-| `stats` | `exphub/pipeline/stats/service.py` | `segment/step_meta.json`, `prompt/report.json`, `infer/report.json`, `merge/step_meta.json` 与日志 | `stats/final_report.json`, `stats/compression.json` | 汇总出口 |
+| `stats` | `exphub/pipeline/stats/service.py` | `segment/report.json`, `prompt/report.json`, `infer/report.json`, `merge/step_meta.json` 与日志 | `stats/final_report.json`, `stats/compression.json` | 汇总出口 |
 
 ## 3. 各阶段最小契约
 
@@ -38,12 +38,14 @@
 
 - 必须写出 `segment/frames/`
 - 必须写出 `segment/keyframes/keyframes_meta.json`
-- 必须写出 `segment/deploy_schedule.json`
-- 必须写出 `segment/state_segmentation/state_segments.json`
+- 必须写出 `segment/segment_manifest.json`
+- 必须写出 `segment/report.json`
+- 必须写出 `segment/visuals/state_overview.png`
 - 当前 `state` 正式内部实现链固定为 `service.py -> state/detector.py -> state/policies/state.py -> state/signal_extraction/extract.py -> state/state_segmentation/formal.py`
 - `state/observed_signals/` 只承载正式链内部使用的原始观测后端，不是独立研究入口
 - `state` 正式输入只保留 `motion_velocity` 与 `semantic_velocity`
-- `segment/step_meta.json` 需要能支撑 `stats` 汇总
+- `segment_manifest.json` 内嵌 `deploy_schedule`、`state_segments` 与 `state_report`
+- `state_segments` 与 `deploy_schedule` 的正式下游读取链收敛到 `segment_manifest.json`
 
 ### `prompt`
 
@@ -52,12 +54,12 @@
 - 对下游唯一正式 prompt 契约文件是 `runtime_prompt_plan.json`
 - `report.json` 是阶段报告，不参与下游 prompt 契约
 - `base_prompt.json` 与 `state_prompt_manifest.json` 只作为 prompt 阶段内部支撑与追溯产物保留
-- `runtime_prompt_plan.json` 负责按 deploy schedule 展开可直接执行的 prompt plan
+- `runtime_prompt_plan.json` 负责按 `segment_manifest.json` 内嵌 deploy schedule 展开可直接执行的 prompt plan
 
 ### `infer`
 
 - 正式 prompt 输入固定为 `prompt/runtime_prompt_plan.json`
-- 优先从 `segment/deploy_schedule.json` 构建 execution segments
+- execution segments 来自 `prompt/runtime_prompt_plan.json`
 - deploy schedule 缺失时允许回退到 `fallback_kf_gap`
 - 不再在前端重拼 prompt 文本
 - `runs_plan.json` 必须保存真实 `start_idx / end_idx / num_frames`
@@ -84,6 +86,7 @@
 
 - 正式输出为 `stats/final_report.json`
 - 保留 `stats/compression.json`，因为 `exphub/cli.py` 的实验摘要仍会读取它
+- `segment` 压缩统计来自 `segment/report.json`
 - 对缺失上游报告给出 `WARN`，而不是直接崩溃
 
 ## 4. 非正式内容边界

@@ -12,9 +12,6 @@ SEGMENT_MANIFEST_NAME = "segment_manifest.json"
 SEGMENT_REPORT_NAME = "report.json"
 SEGMENT_VISUALS_DIRNAME = "visuals"
 SEGMENT_OVERVIEW_NAME = "state_overview.png"
-SEGMENT_STATE_DIRNAME = "state_segmentation"
-SEGMENT_STATE_SEGMENTS_NAME = "state_segments.json"
-SEGMENT_STATE_REPORT_NAME = "state_report.json"
 
 
 @dataclass(frozen=True)
@@ -53,15 +50,13 @@ def build_contract(paths):
         root=paths.segment_dir,
         artifacts={
             "frames_dir": paths.segment_frames_dir,
+            "keyframes_dir": paths.segment_keyframes_dir,
             "manifest": paths.segment_manifest_path,
             "report": paths.segment_report_path,
             "visuals_dir": paths.segment_visuals_dir,
+            "overview": paths.segment_state_overview_path,
             "keyframes_meta": paths.segment_keyframes_dir / "keyframes_meta.json",
-            "deploy_schedule": paths.segment_dir / "deploy_schedule.json",
-            "state_segments": paths.segment_dir / SEGMENT_STATE_DIRNAME / SEGMENT_STATE_SEGMENTS_NAME,
-            "step_meta": paths.segment_dir / "step_meta.json",
             "calib": paths.segment_calib_path,
             "timestamps": paths.segment_timestamps_path,
-            "preprocess_meta": paths.segment_preprocess_meta_path,
         },
     )
