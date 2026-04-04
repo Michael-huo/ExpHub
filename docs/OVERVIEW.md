@@ -26,7 +26,7 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 
 - `segment` 负责产出标准帧序列、关键帧事实源、嵌入 `segment_manifest.json` 的 deploy schedule / state 区间，以及唯一正式 state 可视化 `visuals/state_overview.png`
 - `segment` 的正式内部链路收敛在 `service.py -> state/detector.py -> state/policies/state.py -> state/signal_extraction/extract.py -> state/state_segmentation/formal.py`
-- `prompt` 负责把 invariant base prompt、per-segment scene prompt 槽位、minimal state control 组装成 `runtime_prompt_plan.json`，并保留 `base_prompt.json`、`state_prompt_manifest.json`、`report.json` 作为阶段内部支撑与追溯产物
+- `prompt` 负责把 invariant base prompt、per-state V2T scene prompt、minimal state control 组装成 `runtime_prompt_plan.json`，并保留 `base_prompt.json`、`state_prompt_manifest.json`、`report.json` 作为阶段内部支撑与追溯产物
 - `infer` 直接消费 `prompt/runtime_prompt_plan.json`，产出 `runs_plan.json` 与 `report.json`
 - `merge` 只按 `infer/runs_plan.json` 的真实边界拼接
 - `slam` 在 `ori` 与 `gen` 两条轨道上估计位姿，对外正式聚合出口是 `slam/report.json` 与 `slam/traj_est.txt`

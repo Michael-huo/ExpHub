@@ -53,7 +53,7 @@ def build_base_prompt_payload():
         "rules_hit": [
             "invariant_base_only",
             "clip_profile_removed_from_base_prompt",
-            "scene_prompt_reserved_for_per_segment_encoding",
+            "scene_prompt_excluded_from_base_prompt",
             "state_control_separated_from_scene_prompt",
         ],
     }
