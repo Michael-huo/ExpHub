@@ -68,7 +68,7 @@ def _run_formal_mainline(args):
 
 def run(runtime):
     contract = eval_contract.build_contract(runtime.paths)
-    ensure_file(contract.artifacts[eval_contract.INPUT_SLAM_REPORT], "slam report")
+    ensure_file(contract.artifacts[eval_contract.SLAM_REPORT], "slam report")
 
     runtime.remove_in_exp(runtime.paths.eval_dir)
     runtime.paths.eval_dir.mkdir(parents=True, exist_ok=True)
@@ -104,14 +104,25 @@ def run(runtime):
         check=False,
     )
 
-    if Path(contract.artifacts[eval_contract.REPORT]).is_file():
-        debug_info("STEP eval: report={}".format(contract.artifacts[eval_contract.REPORT]))
-    else:
-        log_warn("eval report missing: {}".format(contract.artifacts[eval_contract.REPORT]))
-    if Path(contract.artifacts[eval_contract.TRAJ_METRICS]).is_file():
-        debug_info("STEP eval: traj metrics={}".format(contract.artifacts[eval_contract.TRAJ_METRICS]))
-    else:
-        log_warn("eval traj metrics missing: {}".format(contract.artifacts[eval_contract.TRAJ_METRICS]))
+    required_artifacts = [
+        (eval_contract.REPORT, "eval report"),
+        (eval_contract.SUMMARY, "eval summary"),
+        (eval_contract.DETAILS, "eval details"),
+        (eval_contract.TRAJ_METRICS, "eval traj metrics"),
+        (eval_contract.METRICS_OVERVIEW_PLOT, "eval metrics overview plot"),
+    ]
+    for artifact_key, label in required_artifacts:
+        artifact_path = Path(contract.artifacts[artifact_key])
+        if artifact_path.is_file():
+            debug_info("STEP eval: {}={}".format(label, artifact_path))
+        else:
+            log_warn("{} missing: {}".format(label, artifact_path))
+
+    traj_plot_path = Path(contract.artifacts[eval_contract.TRAJ_PLOT])
+    if traj_plot_path.is_file():
+        debug_info("STEP eval: eval traj plot={}".format(traj_plot_path))
+    elif not runtime.args.no_viz:
+        log_warn("eval traj plot missing: {}".format(traj_plot_path))
     return contract.root
 
 

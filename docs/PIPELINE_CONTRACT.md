@@ -90,7 +90,7 @@
 ### `stats`
 
 - 正式输出为 `stats/final_report.json`
-- 保留 `stats/compression.json`，因为 `exphub/cli.py` 的实验摘要仍会读取它；它是 CLI 用的压缩摘要快照，不额外承担 infer/prompt 兼容语义
+- 保留 `stats/compression.json`，因为 `exphub/cli.py` 的实验摘要仍会读取它；它的职责是 CLI 用的 compression snapshot，不额外承担 infer/prompt 兼容语义
 - `segment` 压缩统计来自 `segment/report.json`
 - 对缺失上游报告给出 `WARN`，而不是直接崩溃
 
