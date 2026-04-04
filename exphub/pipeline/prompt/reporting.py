@@ -41,6 +41,36 @@ def _relative_path(base_dir, target_path):
         return str(target)
 
 
+def _collapse_ws(text):
+    # type: (object) -> str
+    return " ".join(str(text or "").strip().split()).strip()
+
+
+def _word_count(text):
+    # type: (object) -> int
+    collapsed = _collapse_ws(text)
+    if not collapsed:
+        return 0
+    return int(len([part for part in collapsed.split(" ") if part]))
+
+
+def _numeric_summary(values):
+    # type: (list) -> dict
+    nums = []
+    for value in list(values or []):
+        try:
+            nums.append(int(value))
+        except Exception:
+            continue
+    if not nums:
+        return {"min": 0, "max": 0, "avg": 0.0}
+    return {
+        "min": int(min(nums)),
+        "max": int(max(nums)),
+        "avg": float(sum(nums) / float(len(nums))),
+    }
+
+
 def _state_control_statistics(state_prompt_manifest, runtime_prompt_plan):
     # type: (dict, dict) -> dict
     state_segments = list((state_prompt_manifest or {}).get("state_segments") or [])
@@ -56,20 +86,69 @@ def _state_control_statistics(state_prompt_manifest, runtime_prompt_plan):
     }
 
 
-def _scene_prompt_statistics(runtime_prompt_plan):
-    # type: (dict) -> dict
+def _scene_prompt_examples(values, limit=6):
+    # type: (list, int) -> list
+    out = []
+    seen = set()
+    for raw_value in list(values or []):
+        value = _collapse_ws(raw_value)
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+        if len(out) >= int(limit):
+            break
+    return out
+
+
+def _scene_prompt_statistics(state_scene_encoding, runtime_prompt_plan):
+    # type: (dict, dict) -> dict
+    state_scene_segments = list((state_scene_encoding or {}).get("state_segments") or [])
     runtime_segments = list((runtime_prompt_plan or {}).get("segments") or [])
+    state_scene_prompts = []
+    runtime_scene_prompts = []
     nonempty = 0
     for item in runtime_segments:
         if not isinstance(item, dict):
             continue
-        if str(item.get("scene_prompt", "") or "").strip():
+        prompt = _collapse_ws(item.get("scene_prompt", ""))
+        if prompt:
             nonempty += 1
+            runtime_scene_prompts.append(prompt)
+
+    raw_word_counts = []
+    normalized_word_counts = []
+    changed_count = 0
+    for item in state_scene_segments:
+        if not isinstance(item, dict):
+            continue
+        prompt = _collapse_ws(item.get("scene_prompt", ""))
+        if prompt:
+            state_scene_prompts.append(prompt)
+        raw_count = item.get("raw_scene_prompt_word_count")
+        normalized_count = item.get("scene_prompt_word_count")
+        if raw_count is not None:
+            raw_word_counts.append(raw_count)
+        if normalized_count is not None:
+            normalized_word_counts.append(normalized_count)
+        if bool(dict(item.get("scene_prompt_normalization") or {}).get("changed")):
+            changed_count += 1
+
     return {
+        "state_scene_segment_count": int(len(state_scene_segments)),
         "deploy_segment_count": int(len(runtime_segments)),
         "scene_prompt_segment_count": int(nonempty),
         "empty_scene_prompt_segment_count": int(max(0, len(runtime_segments) - nonempty)),
+        "unique_state_scene_prompt_count": int(len(set(state_scene_prompts))),
+        "unique_runtime_scene_prompt_count": int(len(set(runtime_scene_prompts))),
         "scene_prompt_source_counts": dict(_count_by_key(runtime_segments, "scene_prompt_source")),
+        "runtime_scene_prompt_word_count": dict(_numeric_summary([_word_count(value) for value in runtime_scene_prompts])),
+        "state_scene_normalization": {
+            "changed_segment_count": int(changed_count),
+            "raw_word_count": dict(_numeric_summary(raw_word_counts)),
+            "normalized_word_count": dict(_numeric_summary(normalized_word_counts)),
+        },
+        "scene_prompt_examples": list(_scene_prompt_examples(state_scene_prompts or runtime_scene_prompts)),
     }
 
 
@@ -77,6 +156,7 @@ def build_prompt_report(
     prompt_dir,
     base_prompt_payload,
     state_prompt_manifest,
+    state_scene_encoding,
     runtime_prompt_plan,
     frame_files_count,
     total_sec,
@@ -93,13 +173,13 @@ def build_prompt_report(
     runtime_prompt_plan_bytes = runtime_prompt_plan_path.read_bytes()
 
     return {
-        "report_schema_version": "prompt_report.v2",
+        "report_schema_version": "prompt_report.v3",
         "step": "prompt",
         "prompt_status": "success",
-        "prompt_strategy": "rebaseline_step_b",
+        "prompt_strategy": "rebaseline_step_c",
         "prompt_assembly_mode": "invariant_base_plus_state_scene_plus_state_control",
-        "clip_profile_mode": "removed_from_mainline",
         "scene_prompt_mode": str((runtime_prompt_plan or {}).get("scene_prompt_mode", "") or "state_v2t_primary_frame"),
+        "scene_prompt_style": str((runtime_prompt_plan or {}).get("scene_prompt_style", "") or "compact_canonical_phrase_v1"),
         "prompt_total_sec": float(total_sec),
         "frames_count": int(frame_files_count),
         "assembly_notes": dict(assembly_notes or {}),
@@ -128,16 +208,7 @@ def build_prompt_report(
         "negative_prompt_preview": str((base_prompt_payload or {}).get("negative_prompt", "") or ""),
         "state_control_summary": dict((state_prompt_manifest or {}).get("summary", {}) or {}),
         "state_control_statistics": _state_control_statistics(state_prompt_manifest, runtime_prompt_plan),
-        "scene_prompt_statistics": _scene_prompt_statistics(runtime_prompt_plan),
-        "prompt_generation_summary": {
-            "prompt_strategy": "rebaseline_step_b",
-            "clip_profile_mode": "removed_from_mainline",
-            "scene_prompt_mode": str((runtime_prompt_plan or {}).get("scene_prompt_mode", "") or "state_v2t_primary_frame"),
-            "prompt_total_sec": float(total_sec),
-            "base_prompt_source": str((base_prompt_payload or {}).get("source", "") or ""),
-            "base_prompt_preview": str((base_prompt_payload or {}).get("base_prompt", "") or ""),
-            "negative_prompt_preview": str((base_prompt_payload or {}).get("negative_prompt", "") or ""),
-        },
+        "scene_prompt_statistics": _scene_prompt_statistics(state_scene_encoding, runtime_prompt_plan),
         "source_files": {
             "base_prompt": _relative_path(prompt_dir.parent, base_prompt_path),
             "state_prompt_manifest": _relative_path(prompt_dir.parent, state_prompt_manifest_path),

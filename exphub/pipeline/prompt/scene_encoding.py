@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from exphub.pipeline.prompt.backends import create_backend
 
 
 SCENE_PROMPT_INSTRUCTION = (
-    "Encode this single representative frame from a first-person video segment as one short scene prompt. "
-    "Describe only stable visible scene semantics such as environment type, layout, floor or path, lighting, "
-    "major obstacles or moving objects, and forward visibility. Do not mention camera motion, risk, image quality, "
-    "style, feelings, or uncertainty. Do not write full sentences. Output only one concise scene prompt."
+    "Encode this single representative frame from a first-person video segment as one compact scene prompt. "
+    "Prefer short scene phrases for environment, layout, path or corridor, surface, obstacles or pedestrians, "
+    "and forward visibility. Avoid full sentences, storytelling, image-quality notes, emotions, motion description, "
+    "uncertainty, and background filler. Keep it under 18 words. Output only the scene prompt."
 )
 
 _SCENE_PROMPT_PREFIXES = [
@@ -27,7 +28,86 @@ _SCENE_PROMPT_PREFIXES = [
     "a view of",
     "view of",
 ]
-_SCENE_PROMPT_WORD_LIMIT = 24
+_SCENE_PROMPT_WORD_LIMIT = 18
+_SCENE_PROMPT_MAX_PHRASES = 4
+
+_SCENE_PROMPT_LEADIN_PATTERNS = [
+    r"^(?:this|the)\s+(?:image|frame|scene|view)\s+(?:shows|depicts|features)\s+",
+    r"^(?:image|frame|scene)\s+(?:shows|depicts|features)\s+",
+    r"^(?:there is|there are)\s+",
+    r"^(?:showing|featuring)\s+",
+]
+_SCENE_PROMPT_DROP_PATTERNS = [
+    r"\bin the background\b",
+    r"\bin background\b",
+    r"\bin the distance\b",
+    r"\bin distance\b",
+    r"\bon it\b",
+    r"\bcan be seen\b",
+    r"\bcan be visible\b",
+    r"\bis visible\b",
+    r"\bare visible\b",
+    r"\bappears to be\b",
+    r"\bseems to be\b",
+]
+_SCENE_PROMPT_FILLER_WORDS = {
+    "clearly",
+    "fairly",
+    "mainly",
+    "mostly",
+    "overall",
+    "rather",
+    "somewhat",
+    "very",
+}
+_SCENE_PROMPT_WEAK_PHRASES = {
+    "image",
+    "frame",
+    "scene",
+    "view",
+}
+_SCENE_PROMPT_MODIFIER_ONLY = {
+    "bright",
+    "dim",
+    "long",
+    "narrow",
+    "open",
+    "straight",
+    "wide",
+}
+_SCENE_PROMPT_REPLACEMENTS = [
+    (r"\bfirst[\s-]?person(?:\s+view)?\b", ""),
+    (r"\bwalkway\b", "path"),
+    (r"\bpathway\b", "path"),
+    (r"\bhallway\b", "corridor"),
+    (r"\bindoors\b", "indoor"),
+    (r"\binside\b", "indoor"),
+    (r"\boutdoors\b", "outdoor"),
+    (r"\boutside\b", "outdoor"),
+    (r"\bwell[\s-]?lit\b", "bright"),
+    (r"\bbrightly lit\b", "bright"),
+    (r"\bdimly lit\b", "dim"),
+    (r"\blow[- ]light\b", "dim"),
+    (r"\bperson walking\b", "pedestrian"),
+    (r"\bpeople walking\b", "pedestrians"),
+    (r"\bperson\b", "pedestrian"),
+    (r"\bpeople\b", "pedestrians"),
+    (r"\bwalks? down\b", "on"),
+    (r"\bwalking down\b", "on"),
+    (r"\bwalking along\b", "on"),
+    (r"\bwalking on\b", "on"),
+    (r"\bstraight ahead\b", "forward"),
+    (r"\bview ahead\b", "forward visibility"),
+    (r"\bvisibility ahead\b", "forward visibility"),
+]
+_SCENE_PROMPT_CONNECTOR_REPLACEMENTS = [
+    (r"\s+with\s+", ", "),
+    (r"\s+featuring\s+", ", "),
+    (r"\s+showing\s+", ", "),
+    (r"\s+including\s+", ", "),
+    (r"\s+lined with\s+", ", "),
+    (r"\s+and\s+", ", "),
+]
 
 
 def _as_dict(value):
@@ -60,22 +140,138 @@ def _safe_int(value, default=0):
         return int(default)
 
 
-def _trim_scene_prompt(text):
-    # type: (object) -> str
-    prompt = _collapse_ws(text).strip(" \t\r\n\"'`")
+def _word_list(text):
+    # type: (object) -> List[str]
+    return [part for part in _collapse_ws(text).split(" ") if part]
+
+
+def _drop_filler_words(text):
+    # type: (str) -> str
+    kept = []
+    for token in _word_list(text):
+        if token in _SCENE_PROMPT_FILLER_WORDS:
+            continue
+        kept.append(token)
+    return " ".join(kept).strip()
+
+
+def _normalize_scene_phrase(text):
+    # type: (str) -> str
+    phrase = _collapse_ws(text).strip(" \t\r\n,;:.")
+    if not phrase:
+        return ""
+    phrase = re.sub(r"\b(?:a|an|the)\b\s*", "", phrase)
+    phrase = re.sub(r"\s+", " ", phrase)
+    phrase = _drop_filler_words(phrase)
+    phrase = re.sub(r"\b(?:photo|picture|image|frame)\b", "", phrase)
+    phrase = re.sub(r"\s+", " ", phrase)
+    return phrase.strip(" \t\r\n,;:.")
+
+
+def _dedupe_scene_phrases(phrases):
+    # type: (List[str]) -> List[str]
+    unique = []
+    seen = set()
+    for raw_phrase in list(phrases or []):
+        phrase = _normalize_scene_phrase(raw_phrase)
+        if not phrase:
+            continue
+        if phrase in _SCENE_PROMPT_WEAK_PHRASES:
+            continue
+        if phrase in seen:
+            continue
+        seen.add(phrase)
+        unique.append(phrase)
+        if len(unique) >= int(_SCENE_PROMPT_MAX_PHRASES):
+            break
+    return unique
+
+
+def _merge_scene_phrase_parts(parts):
+    # type: (List[str]) -> List[str]
+    merged = []
+    modifier_prefix = []
+    for raw_part in list(parts or []):
+        phrase = _normalize_scene_phrase(raw_part)
+        if not phrase:
+            continue
+        if phrase in _SCENE_PROMPT_MODIFIER_ONLY:
+            modifier_prefix.append(phrase)
+            continue
+        if modifier_prefix:
+            merged.append("{} {}".format(" ".join(modifier_prefix), phrase).strip())
+            modifier_prefix = []
+            continue
+        merged.append(phrase)
+    if modifier_prefix:
+        merged.append(" ".join(modifier_prefix).strip())
+    return merged
+
+
+def _trim_phrase_words(phrases, word_limit):
+    # type: (List[str], int) -> str
+    remaining = max(1, int(word_limit))
+    out = []
+    for phrase in list(phrases or []):
+        words = _word_list(phrase)
+        if not words:
+            continue
+        if remaining <= 0:
+            break
+        if len(words) > remaining:
+            phrase = " ".join(words[:remaining]).rstrip(" ,;:.")
+            words = _word_list(phrase)
+        if not words:
+            continue
+        out.append(" ".join(words))
+        remaining -= len(words)
+    return ", ".join(out).strip(" \t\r\n,;:.")
+
+
+def normalize_scene_prompt(text):
+    # type: (object) -> Tuple[str, Dict[str, object]]
+    raw_prompt = _collapse_ws(text).strip(" \t\r\n\"'`")
+    prompt = str(raw_prompt)
     prompt_lower = prompt.lower()
     for prefix in _SCENE_PROMPT_PREFIXES:
         if prompt_lower.startswith(prefix):
             prompt = prompt[len(prefix) :].strip(" \t\r\n:,-")
             prompt_lower = prompt.lower()
             break
-    for suffix in (".", ";", ",", ":"):
-        if prompt.endswith(suffix):
-            prompt = prompt[:-1].rstrip()
-    words = [part for part in prompt.split(" ") if part]
-    if len(words) > int(_SCENE_PROMPT_WORD_LIMIT):
-        prompt = " ".join(words[: int(_SCENE_PROMPT_WORD_LIMIT)]).rstrip(" ,;:.")
-    return _collapse_ws(prompt)
+
+    prompt = prompt.lower()
+    for pattern in _SCENE_PROMPT_LEADIN_PATTERNS:
+        prompt = re.sub(pattern, "", prompt)
+
+    prompt = re.sub(r"\s*;\s*", ", ", prompt)
+    prompt = re.sub(r"\s*:\s*", " ", prompt)
+    prompt = re.sub(r"\s*[/|]\s*", ", ", prompt)
+    prompt = re.sub(r"\s*[-]\s*", " ", prompt)
+    for pattern in _SCENE_PROMPT_DROP_PATTERNS:
+        prompt = re.sub(pattern, "", prompt)
+    for pattern, replacement in _SCENE_PROMPT_REPLACEMENTS:
+        prompt = re.sub(pattern, replacement, prompt)
+    for pattern, replacement in _SCENE_PROMPT_CONNECTOR_REPLACEMENTS:
+        prompt = re.sub(pattern, replacement, prompt)
+
+    prompt = re.sub(r"\b(?:maybe|perhaps|possibly|probably|likely|unclear|unknown)\b", "", prompt)
+    prompt = re.sub(r"\s+", " ", prompt)
+    prompt = re.sub(r"\s*,\s*", ", ", prompt)
+    prompt = re.sub(r"(?:,\s*){2,}", ", ", prompt)
+    prompt = prompt.strip(" \t\r\n,;:.")
+
+    phrases = _dedupe_scene_phrases(_merge_scene_phrase_parts([part for part in prompt.split(",") if part.strip()]))
+    normalized = _trim_phrase_words(phrases, _SCENE_PROMPT_WORD_LIMIT)
+    if not normalized:
+        normalized = _trim_phrase_words(_dedupe_scene_phrases([prompt]), _SCENE_PROMPT_WORD_LIMIT)
+    normalized = _collapse_ws(normalized).strip(" \t\r\n,;:.")
+
+    return normalized, {
+        "raw_word_count": int(len(_word_list(raw_prompt))),
+        "normalized_word_count": int(len(_word_list(normalized))),
+        "changed": bool(_collapse_ws(raw_prompt).lower() != str(normalized).lower()),
+        "phrase_count": int(len(list(phrases))),
+    }
 
 
 def _resolve_frame_path(frames_dir, start_frame, end_frame, preferred_frame):
@@ -163,7 +359,7 @@ def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_ref=""):
             frames_dir=frames_root,
         )
         raw_prompt = backend.generate([str(primary_frame["image_path"])], SCENE_PROMPT_INSTRUCTION)
-        scene_prompt = _trim_scene_prompt(raw_prompt)
+        scene_prompt, normalization_meta = normalize_scene_prompt(raw_prompt)
         if not scene_prompt:
             raise RuntimeError(
                 "scene encoding returned empty prompt for state segment {}".format(
@@ -178,6 +374,10 @@ def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_ref=""):
                 "start_frame": int(state_row.get("start_frame", 0) or 0),
                 "end_frame": int(state_row.get("end_frame", 0) or 0),
                 "scene_prompt": str(scene_prompt),
+                "raw_scene_prompt": _collapse_ws(raw_prompt),
+                "raw_scene_prompt_word_count": int(normalization_meta.get("raw_word_count", 0) or 0),
+                "scene_prompt_word_count": int(normalization_meta.get("normalized_word_count", 0) or 0),
+                "scene_prompt_normalization": dict(normalization_meta),
                 "scene_prompt_source": "state_v2t_primary_frame",
                 "scene_encoding_backend": str(backend_name),
                 "representative_frame": {
@@ -192,9 +392,10 @@ def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_ref=""):
 
     return {
         "version": 1,
-        "source": "state_level_scene_encoding_v1",
+        "source": "state_level_scene_encoding_v2",
         "scene_prompt_mode": "state_v2t_primary_frame",
         "backend": str(backend_name),
         "backend_meta": dict(backend_meta),
+        "scene_prompt_style": "compact_canonical_phrase_v1",
         "state_segments": encoded_segments,
     }

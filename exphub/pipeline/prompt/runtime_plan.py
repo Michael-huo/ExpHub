@@ -4,6 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from exphub.pipeline.prompt.scene_encoding import normalize_scene_prompt
+
 
 def _as_dict(value):
     # type: (object) -> Dict[str, object]
@@ -106,10 +108,13 @@ def _build_scene_prompt_map(state_scene_encoding):
         state_segment_id = _safe_int(item.get("state_segment_id"), -1)
         if state_segment_id < 0:
             raise RuntimeError("state_scene_encoding contains invalid state_segment_id")
-        scene_prompt = _collapse_ws(item.get("scene_prompt", ""))
+        scene_prompt, _ = normalize_scene_prompt(item.get("scene_prompt", ""))
+        scene_prompt = _collapse_ws(scene_prompt)
         if not scene_prompt:
             raise RuntimeError("state_scene_encoding contains empty scene_prompt for state_segment_id={}".format(state_segment_id))
-        out[int(state_segment_id)] = item
+        normalized_item = dict(item)
+        normalized_item["scene_prompt"] = scene_prompt
+        out[int(state_segment_id)] = normalized_item
     return out
 
 
@@ -195,7 +200,8 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, state_scene
         if not scene_info:
             raise RuntimeError("missing state scene encoding for state_segment_id={}".format(state_segment_id))
         representative_frame = _as_dict(scene_info.get("representative_frame"))
-        scene_prompt = _collapse_ws(scene_info.get("scene_prompt", ""))
+        scene_prompt, _ = normalize_scene_prompt(scene_info.get("scene_prompt", ""))
+        scene_prompt = _collapse_ws(scene_prompt)
         resolved_prompt = _join_prompt_parts(
             base_prompt_text,
             _labeled_prompt_clause("Scene", scene_prompt),
@@ -256,13 +262,14 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, state_scene
         "version": 2,
         "schema": "runtime_prompt_plan.v2",
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "source": "runtime_prompt_plan_rebaseline_step_b",
+        "source": "runtime_prompt_plan_rebaseline_step_c",
         "schedule_source": "segment_manifest.deploy_schedule",
         "execution_backend": schedule_backend,
         "base_prompt": base_prompt_text,
         "negative_prompt": base_negative_prompt,
         "scene_prompt_mode": str(_as_dict(state_scene_encoding).get("scene_prompt_mode", "") or "state_v2t_primary_frame"),
         "scene_encoding_backend": str(_as_dict(state_scene_encoding).get("backend", "") or ""),
+        "scene_prompt_style": str(_as_dict(state_scene_encoding).get("scene_prompt_style", "") or "compact_canonical_phrase_v1"),
         "state_prompt_manifest_path": _relative_to_exp(exp_dir, state_manifest_path),
         "deploy_segment_count": int(len(runtime_segments)),
         "source_files": {
