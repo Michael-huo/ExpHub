@@ -18,7 +18,7 @@ from exphub.contracts import infer as infer_contract
 from exphub.pipeline.infer.backends import create_backend
 from exphub.pipeline.infer.reporting import (
     build_infer_report,
-    cleanup_legacy_infer_outputs,
+    cleanup_obsolete_infer_outputs,
     write_infer_report,
 )
 from exphub.pipeline.infer.request import InferRequest
@@ -215,8 +215,8 @@ def _run_formal_mainline(args):
     plan_obj["state_prompt_enabled"] = bool(prompt_resolution.get("state_prompt_enabled", False))
     plan_obj["state_prompt_segment_count"] = int(prompt_resolution.get("state_prompt_segment_count", 0) or 0)
     plan_obj["matched_execution_segment_count"] = int(prompt_resolution.get("matched_execution_segment_count", 0) or 0)
-    plan_obj["prompt_file_version"] = int(prompt_resolution.get("prompt_file_version", 1) or 1)
-    plan_obj["prompt_file_source"] = str(prompt_resolution.get("prompt_file_source", "") or "")
+    plan_obj["runtime_prompt_plan_version"] = int(prompt_resolution.get("runtime_prompt_plan_version", 1) or 1)
+    plan_obj["runtime_prompt_plan_source"] = str(prompt_resolution.get("runtime_prompt_plan_source", "") or "")
     plan_obj["prompt_source_counts"] = dict(prompt_resolution.get("prompt_source_counts", {}) or {})
     plan_obj["state_motion_trend_counts"] = dict(prompt_resolution.get("state_motion_trend_counts", {}) or {})
     plan_obj["state_label_counts"] = dict(prompt_resolution.get("state_label_counts", {}) or {})
@@ -238,8 +238,8 @@ def _run_formal_mainline(args):
         "state_prompt_enabled": bool(prompt_resolution.get("state_prompt_enabled", False)),
         "state_prompt_segment_count": int(prompt_resolution.get("state_prompt_segment_count", 0) or 0),
         "matched_execution_segment_count": int(prompt_resolution.get("matched_execution_segment_count", 0) or 0),
-        "prompt_file_version": int(plan_obj.get("prompt_file_version", 1) or 1),
-        "prompt_file_source": str(plan_obj.get("prompt_file_source", "") or ""),
+        "runtime_prompt_plan_version": int(plan_obj.get("runtime_prompt_plan_version", 1) or 1),
+        "runtime_prompt_plan_source": str(plan_obj.get("runtime_prompt_plan_source", "") or ""),
         "prompt_source_counts": dict(prompt_resolution.get("prompt_source_counts", {}) or {}),
         "state_motion_trend_counts": dict(prompt_resolution.get("state_motion_trend_counts", {}) or {}),
         "state_label_counts": dict(prompt_resolution.get("state_label_counts", {}) or {}),
@@ -253,7 +253,7 @@ def _run_formal_mainline(args):
         runtime_summary=runtime_summary,
     )
     report_path = write_infer_report(infer_dir, infer_report)
-    cleanup_legacy_infer_outputs(infer_dir)
+    cleanup_obsolete_infer_outputs(infer_dir)
 
     log_info("infer finished: {:.2f}s".format(dt))
     log_info("report written: {}".format(report_path))

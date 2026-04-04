@@ -59,6 +59,7 @@ def ensure_layout(paths):
 
 
 def remove_stale_formal_segment_outputs(paths):
+    # Only prune transitional leftovers that can still shadow today's segment outputs.
     stale_paths = [
         paths.root / "state_segmentation",
         paths.root / "state_segments.json",
@@ -66,9 +67,6 @@ def remove_stale_formal_segment_outputs(paths):
         paths.root / "signal_extraction",
         paths.root / ".segment_cache",
         paths.root / "deploy_schedule.json",
-        paths.root / "step_meta.json",
-        paths.root / "preprocess_meta.json",
-        paths.root / "clip_prompts.json",
         paths.keyframes_dir / "keyframes_meta.json",
     ]
     for stale_path in stale_paths:

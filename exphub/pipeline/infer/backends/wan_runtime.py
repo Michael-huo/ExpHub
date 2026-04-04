@@ -13,7 +13,7 @@ from typing import Dict, Optional, Tuple
 
 from exphub.common.config import get_platform_config
 from exphub.common.logging import log_info
-from exphub.pipeline.infer.runtime_plan import load_runtime_prompt_plan_for_infer, resolve_segment_overrides
+from exphub.pipeline.infer.runtime_plan import load_runtime_prompt_plan, resolve_runtime_prompt_segments
 
 from .base import DirectInferBackend, _run_filtered
 
@@ -25,12 +25,10 @@ WAN_GPU_MEMORY_MODES = (
     "model_cpu_offload_and_qfloat8",
     "sequential_cpu_offload",
 )
-COMPAT_RESOLVED_PROMPT_KEY = "final" "_prompt"
-COMPAT_NEGATIVE_PROMPT_KEY = "final" "_neg_prompt"
 
 
 @dataclass
-class WanFunRuntimeProfile(object):
+class WanFunRuntimeConfig(object):
     backend_name: str
     default_phase: str
     model_config_keys: Tuple[str, ...] = field(default_factory=tuple)
@@ -64,7 +62,7 @@ class WanFunRuntimeProfile(object):
         "texture swimming, repeating patterns, text, watermark, low quality, JPEG compression artifacts, "
         "excessive noise, color shift, unnatural motion"
     )
-    profile_name: str = ""
+    config_name: str = ""
 
 
 @dataclass
@@ -84,39 +82,39 @@ class SegmentRunResult(object):
     prompt_hash8: str
 
 
-DEFAULT_WAN_FUN_RUNTIME_PROFILE = WanFunRuntimeProfile(
+DEFAULT_WAN_FUN_RUNTIME_CONFIG = WanFunRuntimeConfig(
     backend_name="wan_fun_runtime",
     default_phase="infer",
 )
 
 
-def _normalize_backend_profile(backend_profile):
-    # type: (object) -> WanFunRuntimeProfile
-    if isinstance(backend_profile, WanFunRuntimeProfile):
-        profile = WanFunRuntimeProfile(**backend_profile.__dict__)
-    elif isinstance(backend_profile, dict):
-        base = dict(DEFAULT_WAN_FUN_RUNTIME_PROFILE.__dict__)
-        base.update(backend_profile)
-        profile = WanFunRuntimeProfile(**base)
+def _normalize_backend_config(backend_config):
+    # type: (object) -> WanFunRuntimeConfig
+    if isinstance(backend_config, WanFunRuntimeConfig):
+        config = WanFunRuntimeConfig(**backend_config.__dict__)
+    elif isinstance(backend_config, dict):
+        base = dict(DEFAULT_WAN_FUN_RUNTIME_CONFIG.__dict__)
+        base.update(backend_config)
+        config = WanFunRuntimeConfig(**base)
     else:
-        profile = WanFunRuntimeProfile(**DEFAULT_WAN_FUN_RUNTIME_PROFILE.__dict__)
+        config = WanFunRuntimeConfig(**DEFAULT_WAN_FUN_RUNTIME_CONFIG.__dict__)
 
-    model_keys = tuple([str(x) for x in list(profile.model_config_keys or ()) if str(x).strip()])
-    profile.model_config_keys = model_keys
-    profile.backend_name = str(profile.backend_name or DEFAULT_WAN_FUN_RUNTIME_PROFILE.backend_name)
-    profile.default_phase = str(profile.default_phase or DEFAULT_WAN_FUN_RUNTIME_PROFILE.default_phase)
-    profile.profile_name = str(profile.profile_name or profile.backend_name)
-    if str(profile.gpu_memory_mode or "") not in WAN_GPU_MEMORY_MODES:
-        profile.gpu_memory_mode = DEFAULT_WAN_FUN_RUNTIME_PROFILE.gpu_memory_mode
-    return profile
+    model_keys = tuple([str(x) for x in list(config.model_config_keys or ()) if str(x).strip()])
+    config.model_config_keys = model_keys
+    config.backend_name = str(config.backend_name or DEFAULT_WAN_FUN_RUNTIME_CONFIG.backend_name)
+    config.default_phase = str(config.default_phase or DEFAULT_WAN_FUN_RUNTIME_CONFIG.default_phase)
+    config.config_name = str(config.config_name or config.backend_name)
+    if str(config.gpu_memory_mode or "") not in WAN_GPU_MEMORY_MODES:
+        config.gpu_memory_mode = DEFAULT_WAN_FUN_RUNTIME_CONFIG.gpu_memory_mode
+    return config
 
 
-def _resolve_platform_model_defaults(cfg, backend_profile):
-    # type: (Dict[str, object], WanFunRuntimeProfile) -> Tuple[str, str]
+def _resolve_platform_model_defaults(cfg, backend_config):
+    # type: (Dict[str, object], WanFunRuntimeConfig) -> Tuple[str, str]
     models_cfg = cfg.get("models", {})
     if not isinstance(models_cfg, dict):
         models_cfg = {}
-    for key in backend_profile.model_config_keys:
+    for key in backend_config.model_config_keys:
         item = models_cfg.get(str(key), {})
         if not isinstance(item, dict) or not item:
             continue
@@ -127,22 +125,22 @@ def _resolve_platform_model_defaults(cfg, backend_profile):
     return "", ""
 
 
-def _resolve_runtime_profile(backend_profile, cfg, model_dir="", config_path=""):
-    # type: (WanFunRuntimeProfile, Dict[str, object], str, str) -> WanFunRuntimeProfile
-    profile = _normalize_backend_profile(backend_profile)
-    platform_model_dir, platform_config_path = _resolve_platform_model_defaults(cfg, profile)
-    resolved_model_dir = str(model_dir or platform_model_dir or profile.default_model_dir or "").strip()
-    resolved_config_path = str(config_path or platform_config_path or profile.default_config_path or "").strip()
-    profile.default_model_dir = resolved_model_dir
-    profile.default_config_path = resolved_config_path
-    return profile
+def _resolve_runtime_config(backend_config, cfg, model_dir="", config_path=""):
+    # type: (WanFunRuntimeConfig, Dict[str, object], str, str) -> WanFunRuntimeConfig
+    config = _normalize_backend_config(backend_config)
+    platform_model_dir, platform_config_path = _resolve_platform_model_defaults(cfg, config)
+    resolved_model_dir = str(model_dir or platform_model_dir or config.default_model_dir or "").strip()
+    resolved_config_path = str(config_path or platform_config_path or config.default_config_path or "").strip()
+    config.default_model_dir = resolved_model_dir
+    config.default_config_path = resolved_config_path
+    return config
 
 
-def _format_backend_model_keys(backend_profile):
-    # type: (WanFunRuntimeProfile) -> str
-    if not backend_profile.model_config_keys:
+def _format_backend_model_keys(backend_config):
+    # type: (WanFunRuntimeConfig) -> str
+    if not backend_config.model_config_keys:
         return "models.<unset>"
-    return " / ".join(["models.{}".format(key) for key in backend_profile.model_config_keys])
+    return " / ".join(["models.{}".format(key) for key in backend_config.model_config_keys])
 
 
 def _parse_tri_bool(text, default):
@@ -201,7 +199,7 @@ def _format_segment_range(seg_spec):
 
 
 class WanFunInferBackend(DirectInferBackend):
-    backend_profile = DEFAULT_WAN_FUN_RUNTIME_PROFILE
+    backend_config = DEFAULT_WAN_FUN_RUNTIME_CONFIG
 
     def __init__(
         self,
@@ -215,12 +213,12 @@ class WanFunInferBackend(DirectInferBackend):
             model_ref=model_ref,
             backend_python_phase=backend_python_phase,
         )
-        self._runtime_profile = None  # type: Optional[WanFunRuntimeProfile]
+        self._runtime_config = None  # type: Optional[WanFunRuntimeConfig]
 
-    def _resolve_runtime_profile_for_meta(self):
-        # type: () -> WanFunRuntimeProfile
-        if self._runtime_profile is not None:
-            return self._runtime_profile
+    def _resolve_runtime_config_for_meta(self):
+        # type: () -> WanFunRuntimeConfig
+        if self._runtime_config is not None:
+            return self._runtime_config
         if self._loaded:
             model_dir = self._model_dir or ""
             config_path = self._config_path or ""
@@ -228,13 +226,13 @@ class WanFunInferBackend(DirectInferBackend):
             model_dir, _model_id, config_path = self._resolve_model_ref()
             model_dir = model_dir or ""
             config_path = config_path or ""
-        return _resolve_runtime_profile(self.backend_profile, self._cfg, model_dir=model_dir, config_path=config_path)
+        return _resolve_runtime_config(self.backend_config, self._cfg, model_dir=model_dir, config_path=config_path)
 
     def load(self):
         # type: () -> None
         super(WanFunInferBackend, self).load()
-        self._runtime_profile = _resolve_runtime_profile(
-            self.backend_profile,
+        self._runtime_config = _resolve_runtime_config(
+            self.backend_config,
             self._cfg,
             model_dir=str(self._model_dir or ""),
             config_path=str(self._config_path or ""),
@@ -243,12 +241,12 @@ class WanFunInferBackend(DirectInferBackend):
     def meta(self):
         # type: () -> dict
         meta = dict(super(WanFunInferBackend, self).meta())
-        profile = self._resolve_runtime_profile_for_meta()
+        runtime_config = self._resolve_runtime_config_for_meta()
         meta.update(
             {
-                "gpu_memory_mode": str(profile.gpu_memory_mode),
-                "quantized_transformer": bool(_mode_uses_quantization(profile.gpu_memory_mode)),
-                "backend_profile_name": str(profile.profile_name),
+                "gpu_memory_mode": str(runtime_config.gpu_memory_mode),
+                "quantized_transformer": bool(_mode_uses_quantization(runtime_config.gpu_memory_mode)),
+                "backend_config_name": str(runtime_config.config_name),
             }
         )
         return meta
@@ -299,12 +297,12 @@ class WanFunInferBackend(DirectInferBackend):
 
     def _run_direct(self, argv):
         # type: (list) -> None
-        run_wan_fun_backend_cli(argv, backend_profile=self._resolve_runtime_profile_for_meta())
+        run_wan_fun_backend_cli(argv, backend_config=self._resolve_runtime_config_for_meta())
 
 
-def run_wan_fun_backend_cli(argv=None, backend_profile=None):
+def run_wan_fun_backend_cli(argv=None, backend_config=None):
     # type: (object, object) -> None
-    backend_profile = _normalize_backend_profile(backend_profile)
+    backend_config = _normalize_backend_config(backend_config)
 
     import warnings
     from diffusers.utils import logging as diffusers_logging
@@ -437,7 +435,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         "--prefer_quantization",
         type=str,
         default="auto",
-        help="Override profile prefer_quantization with true/false/auto",
+        help="Override backend config prefer_quantization with true/false/auto",
     )
     parser.add_argument(
         "--compile_dit",
@@ -475,8 +473,8 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         raise SystemExit("[ERR] --frames_dir is required in --batch mode")
 
     cfg = get_platform_config()
-    backend_profile = _resolve_runtime_profile(
-        backend_profile,
+    backend_config = _resolve_runtime_config(
+        backend_config,
         cfg,
         model_dir=str(args.model_name or "").strip(),
         config_path=str(args.config_path or "").strip(),
@@ -489,29 +487,29 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         except Exception as exc:
             rprint("[WARN] failed to set local cuda device: {}".format(exc))
 
-    gpu_memory_mode = str(args.gpu_memory_mode or backend_profile.gpu_memory_mode).strip() or backend_profile.gpu_memory_mode
+    gpu_memory_mode = str(args.gpu_memory_mode or backend_config.gpu_memory_mode).strip() or backend_config.gpu_memory_mode
     if gpu_memory_mode not in WAN_GPU_MEMORY_MODES:
         raise SystemExit("[ERR] unsupported --gpu_memory_mode: {}".format(gpu_memory_mode))
-    prefer_quantization = _parse_tri_bool(args.prefer_quantization, backend_profile.prefer_quantization)
-    compile_dit = _parse_tri_bool(args.compile_dit, backend_profile.compile_dit)
-    enable_teacache = _parse_tri_bool(args.enable_teacache, backend_profile.enable_teacache)
+    prefer_quantization = _parse_tri_bool(args.prefer_quantization, backend_config.prefer_quantization)
+    compile_dit = _parse_tri_bool(args.compile_dit, backend_config.compile_dit)
+    enable_teacache = _parse_tri_bool(args.enable_teacache, backend_config.enable_teacache)
     teacache_threshold = (
         float(args.teacache_threshold)
         if float(args.teacache_threshold) >= 0
-        else float(backend_profile.teacache_threshold)
+        else float(backend_config.teacache_threshold)
     )
     cfg_skip_ratio = (
         float(args.cfg_skip_ratio)
         if float(args.cfg_skip_ratio) >= 0
-        else float(backend_profile.cfg_skip_ratio)
+        else float(backend_config.cfg_skip_ratio)
     )
-    fsdp_text_encoder_enabled = _parse_tri_bool(args.fsdp_text_encoder, backend_profile.fsdp_text_encoder)
+    fsdp_text_encoder_enabled = _parse_tri_bool(args.fsdp_text_encoder, backend_config.fsdp_text_encoder)
     fsdp_text_encoder = bool(fsdp_text_encoder_enabled and int(args.gpus) == 1)
     quantized_transformer = _mode_uses_quantization(gpu_memory_mode)
     if quantized_transformer and not prefer_quantization:
         rprint(
-            "[WARN] backend={} profile prefers non-quantized execution, but gpu_memory_mode={} enables qfloat8".format(
-                backend_profile.backend_name,
+            "[WARN] backend={} config prefers non-quantized execution, but gpu_memory_mode={} enables qfloat8".format(
+                backend_config.backend_name,
                 gpu_memory_mode,
             )
         )
@@ -519,41 +517,41 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
     ulysses_degree = int(args.gpus)
     ring_degree = 1
     fsdp_dit = False
-    enable_riflex = bool(backend_profile.enable_riflex)
-    riflex_k = int(backend_profile.riflex_k)
-    teacache_offload = bool(backend_profile.teacache_offload)
-    num_skip_start_steps = int(backend_profile.teacache_skip_start_steps)
-    sampler_name = str(backend_profile.sampler_name)
-    shift = float(backend_profile.flow_shift)
+    enable_riflex = bool(backend_config.enable_riflex)
+    riflex_k = int(backend_config.riflex_k)
+    teacache_offload = bool(backend_config.teacache_offload)
+    num_skip_start_steps = int(backend_config.teacache_skip_start_steps)
+    sampler_name = str(backend_config.sampler_name)
+    shift = float(backend_config.flow_shift)
 
-    default_model = str(backend_profile.default_model_dir or "").strip()
-    default_config = str(backend_profile.default_config_path or "").strip()
+    default_model = str(backend_config.default_model_dir or "").strip()
+    default_config = str(backend_config.default_config_path or "").strip()
     config_path = str(args.config_path or "").strip() or default_config
     model_name = str(args.model_name or "").strip() or default_model
     if not config_path:
         raise SystemExit(
             "[ERR] infer backend '{}' has no config configured. Set {}.config in config/platform.yaml or pass --config_path.".format(
-                backend_profile.backend_name,
-                _format_backend_model_keys(backend_profile),
+                backend_config.backend_name,
+                _format_backend_model_keys(backend_config),
             )
         )
     if not model_name:
         raise SystemExit(
             "[ERR] infer backend '{}' has no model configured. Set {}.path in config/platform.yaml or pass --model_name.".format(
-                backend_profile.backend_name,
-                _format_backend_model_keys(backend_profile),
+                backend_config.backend_name,
+                _format_backend_model_keys(backend_config),
             )
         )
     rprint(
         "[INFO] backend={} model_name={} config_path={}".format(
-            backend_profile.backend_name,
+            backend_config.backend_name,
             model_name,
             config_path,
         )
     )
     rprint(
-        "[INFO] runtime_profile={} gpu_memory_mode={} quantized_transformer={} prefer_quantization={}".format(
-            backend_profile.profile_name,
+        "[INFO] runtime_config={} gpu_memory_mode={} quantized_transformer={} prefer_quantization={}".format(
+            backend_config.config_name,
             gpu_memory_mode,
             quantized_transformer,
             prefer_quantization,
@@ -574,11 +572,11 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
     validation_image_start = str(args.start_image or "").strip() or None
     validation_image_end = str(args.end_image or "").strip() or None
 
-    prompt = str(backend_profile.prompt)
-    negative_prompt = str(backend_profile.negative_prompt)
-    guidance_scale = float(backend_profile.guidance_scale)
+    prompt = str(backend_config.prompt)
+    negative_prompt = str(backend_config.negative_prompt)
+    guidance_scale = float(backend_config.guidance_scale)
     seed = int(args.seed_base)
-    num_inference_steps = int(backend_profile.num_inference_steps)
+    num_inference_steps = int(backend_config.num_inference_steps)
 
     if str(args.prompt or "").strip():
         prompt = str(args.prompt).strip()
@@ -663,10 +661,10 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             "segments": segments,
         }
 
-    def _legacy_batch_execution_segments(base_idx, stride, num_segments):
+    def _fallback_batch_execution_segments(base_idx, stride, num_segments):
         # type: (int, int, int) -> list
         if stride <= 0:
-            raise ValueError("legacy batch stride must be > 0")
+            raise ValueError("fallback batch stride must be > 0")
         out = []
         for seg in range(int(num_segments)):
             start_idx = int(base_idx + seg * stride)
@@ -676,7 +674,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                     "seg": int(seg),
                     "segment_id": int(seg),
                     "schedule_source": "fallback_kf_gap",
-                    "execution_backend": "legacy_uniform",
+                    "execution_backend": "fallback_uniform",
                     "raw_start_idx": int(start_idx),
                     "raw_end_idx": int(end_idx),
                     "deploy_start_idx": int(start_idx),
@@ -788,12 +786,12 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             },
         )
         prompt_file_path = str(prompt_file_dst.resolve())
-    prompt_file_loaded = load_runtime_prompt_plan_for_infer(
+    runtime_prompt_plan = load_runtime_prompt_plan(
         prompt_file_path,
         default_prompt=prompt,
         default_negative_prompt=negative_prompt,
     )
-    prompt_digest8 = _sha1_hex(_canonical_json(prompt_file_loaded["_raw"]))[:8]
+    prompt_digest8 = _sha1_hex(_canonical_json(runtime_prompt_plan["_raw"]))[:8]
 
     batch_execution_segments = []
     execution_schedule_source = ""
@@ -809,17 +807,17 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 raise SystemExit("[ERR] --kf_gap is required in --batch mode when execution plan is missing")
             if int(args.num_segments) <= 0:
                 raise SystemExit("[ERR] --num_segments must be > 0 in batch mode when execution plan is missing")
-            batch_execution_segments = _legacy_batch_execution_segments(int(args.base_idx), int(args.kf_gap), int(args.num_segments))
+            batch_execution_segments = _fallback_batch_execution_segments(int(args.base_idx), int(args.kf_gap), int(args.num_segments))
             execution_schedule_source = "fallback_kf_gap"
-            execution_backend = "legacy_uniform"
+            execution_backend = "fallback_uniform"
         elif execution_schedule_source == "":
             execution_schedule_source = "execution_plan"
             if execution_backend == "":
                 execution_backend = "custom"
 
     resolved_prompt_count = int(len(batch_execution_segments)) if args.batch else 1
-    resolved_segments = resolve_segment_overrides(
-        prompt_file_loaded,
+    resolved_segments = resolve_runtime_prompt_segments(
+        runtime_prompt_plan,
         resolved_prompt_count,
         default_prompt=prompt,
         default_negative_prompt=negative_prompt,
@@ -827,7 +825,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         default_guidance_scale=guidance_scale,
     )
     for item in resolved_segments:
-        item["prompt_hash8"] = _sha1_hex(item[COMPAT_RESOLVED_PROMPT_KEY] + "\n||NEG||\n" + item[COMPAT_NEGATIVE_PROMPT_KEY])[:8]
+        item["prompt_hash8"] = _sha1_hex(item["resolved_prompt"] + "\n||NEG||\n" + item["negative_prompt"])[:8]
 
     if args.batch and batch_execution_segments:
         video_length = max([int(seg.get("num_frames", 1)) for seg in batch_execution_segments])
@@ -1178,10 +1176,10 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
         "num_segments": int(len(batch_execution_segments)) if args.batch else None,
         "schedule_source": str(execution_schedule_source) if args.batch else None,
         "execution_backend": str(execution_backend) if args.batch else None,
-        "prompt_file_path": os.path.abspath(prompt_file_path),
-        "prompt_digest8": prompt_digest8,
-        "prompt_version": int(prompt_file_loaded.get("version", 1)),
-        "prompt_source": str(prompt_file_loaded.get("source", "") or ""),
+        "runtime_prompt_plan_path": os.path.abspath(prompt_file_path),
+        "runtime_prompt_plan_digest8": prompt_digest8,
+        "runtime_prompt_plan_version": int(runtime_prompt_plan.get("version", 1)),
+        "runtime_prompt_plan_source": str(runtime_prompt_plan.get("source", "") or ""),
         "save_frames": bool(save_frames),
         "frame_ext": frame_ext,
         "is_batch": bool(args.batch),
@@ -1371,9 +1369,9 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             "negative_prompt": result.negative_prompt,
             "prompt_source": result.prompt_source,
             "prompt_hash8": result.prompt_hash8,
-            "prompt_file": save_context["prompt_file_path"],
-            "prompt_file_digest8": save_context["prompt_digest8"],
-            "prompt_file_version": int(save_context["prompt_version"]),
+            "runtime_prompt_plan": save_context["runtime_prompt_plan_path"],
+            "runtime_prompt_plan_digest8": save_context["runtime_prompt_plan_digest8"],
+            "runtime_prompt_plan_version": int(save_context["runtime_prompt_plan_version"]),
             "output_dir": run_dir,
             "output_video": "preview.mp4",
             "frames_dir": "frames" if save_context["save_frames"] else None,
@@ -1434,8 +1432,8 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                         "num_frames": int(desired_frames),
                         "seed": int(seg_seed),
                         "run_name": run_name,
-                        "prompt": str(resolved_info.get(COMPAT_RESOLVED_PROMPT_KEY, "") or ""),
-                        "negative_prompt": str(resolved_info.get(COMPAT_NEGATIVE_PROMPT_KEY, "") or ""),
+                        "prompt": str(resolved_info.get("resolved_prompt", "") or ""),
+                        "negative_prompt": str(resolved_info.get("negative_prompt", "") or ""),
                         "prompt_hash8": resolved_info.get("prompt_hash8"),
                         "prompt_source": str(resolved_info.get("prompt_source", "")),
                         "num_inference_steps": int(resolved_info.get("num_inference_steps", num_inference_steps)),
@@ -1463,10 +1461,10 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
                 "base_idx": int(base_idx_exec),
                 "num_segments": int(total),
                 "seed_base": int(args.seed_base),
-                "prompt_file": os.path.abspath(prompt_file_path),
-                "prompt_file_digest8": prompt_digest8,
-                "prompt_file_version": int(prompt_file_loaded.get("version", 1)),
-                "prompt_file_source": str(prompt_file_loaded.get("source", "") or ""),
+                "runtime_prompt_plan": os.path.abspath(prompt_file_path),
+                "runtime_prompt_plan_digest8": prompt_digest8,
+                "runtime_prompt_plan_version": int(runtime_prompt_plan.get("version", 1)),
+                "runtime_prompt_plan_source": str(runtime_prompt_plan.get("source", "") or ""),
                 "default_num_inference_steps": int(num_inference_steps),
                 "default_guidance_scale": float(guidance_scale),
                 "segments": segs,
@@ -1485,7 +1483,7 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             seg_seed = int(args.seed_base) + int(seg)
             segment_prompt = prompt
             segment_negative_prompt = negative_prompt
-            segment_prompt_source = str(prompt_file_loaded.get("source", "") or "runtime_default")
+            segment_prompt_source = str(runtime_prompt_plan.get("source", "") or "runtime_default")
             segment_num_inference_steps = int(num_inference_steps)
             segment_guidance_scale = float(guidance_scale)
             seg_i = int(seg) + 1
@@ -1519,8 +1517,8 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
             )
             if int(seg) < len(resolved_segments):
                 prompt_info = resolved_segments[int(seg)]
-                segment_prompt = prompt_info[COMPAT_RESOLVED_PROMPT_KEY]
-                segment_negative_prompt = prompt_info[COMPAT_NEGATIVE_PROMPT_KEY]
+                segment_prompt = prompt_info["resolved_prompt"]
+                segment_negative_prompt = prompt_info["negative_prompt"]
                 segment_prompt_source = str(prompt_info.get("prompt_source", "") or segment_prompt_source)
                 segment_num_inference_steps = int(prompt_info.get("num_inference_steps", num_inference_steps))
                 segment_guidance_scale = float(prompt_info.get("guidance_scale", guidance_scale))
@@ -1581,13 +1579,13 @@ def run_wan_fun_backend_cli(argv=None, backend_profile=None):
     else:
         segment_prompt = prompt
         segment_negative_prompt = negative_prompt
-        segment_prompt_source = str(prompt_file_loaded.get("source", "") or "runtime_default")
+        segment_prompt_source = str(runtime_prompt_plan.get("source", "") or "runtime_default")
         segment_num_inference_steps = int(num_inference_steps)
         segment_guidance_scale = float(guidance_scale)
         prompt_info = resolved_segments[0] if len(resolved_segments) > 0 else None
         if prompt_info is not None:
-            segment_prompt = prompt_info[COMPAT_RESOLVED_PROMPT_KEY]
-            segment_negative_prompt = prompt_info[COMPAT_NEGATIVE_PROMPT_KEY]
+            segment_prompt = prompt_info["resolved_prompt"]
+            segment_negative_prompt = prompt_info["negative_prompt"]
             segment_prompt_source = str(prompt_info.get("prompt_source", "") or segment_prompt_source)
             segment_num_inference_steps = int(prompt_info.get("num_inference_steps", num_inference_steps))
             segment_guidance_scale = float(prompt_info.get("guidance_scale", guidance_scale))

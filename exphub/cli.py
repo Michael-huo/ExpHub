@@ -395,57 +395,69 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
     stats_report = _read_json_dict(exp_dir / "stats" / "final_report.json")
     if not stats_report:
         stats_report = _read_json_dict(exp_dir / "stats" / "report.json")
-    stats_legacy = _read_json_dict(exp_dir / "stats" / "compression.json")
+    stats_compression_snapshot = _read_json_dict(exp_dir / "stats" / "compression.json")
     infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
 
     compression_obj = {}
     if isinstance(stats_report.get("compression"), dict):
         compression_obj = dict(stats_report.get("compression") or {})
 
-    legacy_ori = dict(stats_legacy.get("ori") or {}) if isinstance(stats_legacy.get("ori"), dict) else {}
-    legacy_comp = dict(stats_legacy.get("compressed") or {}) if isinstance(stats_legacy.get("compressed"), dict) else {}
-    legacy_ratios = dict(stats_legacy.get("ratios") or {}) if isinstance(stats_legacy.get("ratios"), dict) else {}
+    snapshot_ori = (
+        dict(stats_compression_snapshot.get("ori") or {})
+        if isinstance(stats_compression_snapshot.get("ori"), dict)
+        else {}
+    )
+    snapshot_comp = (
+        dict(stats_compression_snapshot.get("compressed") or {})
+        if isinstance(stats_compression_snapshot.get("compressed"), dict)
+        else {}
+    )
+    snapshot_ratios = (
+        dict(stats_compression_snapshot.get("ratios") or {})
+        if isinstance(stats_compression_snapshot.get("ratios"), dict)
+        else {}
+    )
 
     ori_bytes = _pick_first_int(
         compression_obj,
         [["ori_bytes"]],
     )
     if ori_bytes is None:
-        ori_bytes = _pick_first_int(legacy_ori, [["bytes_sum"]])
+        ori_bytes = _pick_first_int(snapshot_ori, [["bytes_sum"]])
 
     keyframes_bytes = _pick_first_int(
         compression_obj,
         [["keyframes_bytes"]],
     )
     if keyframes_bytes is None:
-        keyframes_bytes = _pick_first_int(legacy_comp, [["keyframe_bytes_sum"]])
+        keyframes_bytes = _pick_first_int(snapshot_comp, [["keyframe_bytes_sum"]])
 
     prompt_bytes = _pick_first_int(
         compression_obj,
         [["prompt_bytes"]],
     )
     if prompt_bytes is None:
-        prompt_bytes = _pick_first_int(legacy_comp, [["prompt_bytes_sum"]])
+        prompt_bytes = _pick_first_int(snapshot_comp, [["prompt_bytes_sum"]])
 
     comp_size = None  # type: Optional[int]
     if keyframes_bytes is not None and prompt_bytes is not None:
         comp_size = int(keyframes_bytes + prompt_bytes)
     else:
-        comp_size = _pick_first_int(legacy_comp, [["total_bytes_sum"]])
+        comp_size = _pick_first_int(snapshot_comp, [["total_bytes_sum"]])
 
     ratio_bytes = _pick_first_float(
         compression_obj,
         [["ratio_bytes"]],
     )
     if ratio_bytes is None:
-        ratio_bytes = _pick_first_float(legacy_ratios, [["bytes"]])
+        ratio_bytes = _pick_first_float(snapshot_ratios, [["bytes"]])
 
     keyframes_frames = _pick_first_int(
         compression_obj,
         [["keyframes_frames"]],
     )
     if keyframes_frames is None:
-        keyframes_frames = _pick_first_int(legacy_comp, [["keyframe_count"], ["keyframes_frame_count"]])
+        keyframes_frames = _pick_first_int(snapshot_comp, [["keyframe_count"], ["keyframes_frame_count"]])
 
     reduction_ratio = None  # type: Optional[float]
     if ratio_bytes is not None:
