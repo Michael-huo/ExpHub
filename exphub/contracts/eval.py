@@ -3,12 +3,13 @@ from __future__ import annotations
 from .common import StageContract
 
 
-INPUT_SLAM_REPORT = "slam_report"
+SLAM_REPORT = "slam_report"
 REPORT = "report"
-METRICS_DIR = "metrics_dir"
-PLOTS_DIR = "plots_dir"
+SUMMARY = "summary"
 DETAILS = "details"
 TRAJ_METRICS = "traj_metrics"
+TRAJ_PLOT = "traj_plot"
+METRICS_OVERVIEW_PLOT = "metrics_overview_plot"
 
 
 def build_contract(paths):
@@ -16,11 +17,12 @@ def build_contract(paths):
         stage="eval",
         root=paths.eval_dir,
         artifacts={
-            INPUT_SLAM_REPORT: paths.slam_report_path,
+            SLAM_REPORT: paths.slam_report_path,
             REPORT: paths.eval_report_path,
-            METRICS_DIR: paths.eval_metrics_dir,
-            PLOTS_DIR: paths.eval_plots_dir,
+            SUMMARY: paths.eval_summary_path,
             DETAILS: paths.eval_details_path,
-            TRAJ_METRICS: paths.eval_metrics_dir / "traj_eval.json",
+            TRAJ_METRICS: paths.eval_traj_metrics_path,
+            TRAJ_PLOT: paths.eval_traj_plot_path,
+            METRICS_OVERVIEW_PLOT: paths.eval_metrics_overview_path,
         },
     )

@@ -164,6 +164,10 @@ class ExperimentPaths:
         return self.eval_dir / "report.json"
 
     @property
+    def eval_summary_path(self):
+        return self.eval_dir / "summary.txt"
+
+    @property
     def eval_metrics_dir(self):
         return self.eval_dir / "metrics"
 
@@ -174,6 +178,18 @@ class ExperimentPaths:
     @property
     def eval_details_path(self):
         return self.eval_dir / "details.csv"
+
+    @property
+    def eval_traj_metrics_path(self):
+        return self.eval_metrics_dir / "traj_eval.json"
+
+    @property
+    def eval_traj_plot_path(self):
+        return self.eval_plots_dir / "traj_xy.png"
+
+    @property
+    def eval_metrics_overview_path(self):
+        return self.eval_plots_dir / "metrics_overview.png"
 
     @property
     def stats_report_path(self):
@@ -351,6 +367,30 @@ class ExperimentContext:
     @property
     def merge_timestamps_path(self):
         return self.paths.merge_timestamps_path
+
+    @property
+    def eval_report_path(self):
+        return self.paths.eval_report_path
+
+    @property
+    def eval_summary_path(self):
+        return self.paths.eval_summary_path
+
+    @property
+    def eval_details_path(self):
+        return self.paths.eval_details_path
+
+    @property
+    def eval_traj_metrics_path(self):
+        return self.paths.eval_traj_metrics_path
+
+    @property
+    def eval_traj_plot_path(self):
+        return self.paths.eval_traj_plot_path
+
+    @property
+    def eval_metrics_overview_path(self):
+        return self.paths.eval_metrics_overview_path
 
     @property
     def stats_report_path(self):

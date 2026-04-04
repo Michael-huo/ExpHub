@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -17,7 +16,6 @@ from .common.config import ConfigError, get_platform_config
 from .common.logging import set_cli_log_level
 from .common.types import sanitize_token
 from .contracts.segment import FORMAL_SEGMENT_POLICY, require_formal_segment_policy
-from .context import ExperimentContext
 from .pipeline.orchestrator import build_runtime, run_runtime
 from .runner import RunError
 
@@ -81,109 +79,6 @@ def _ensure(p: Path, kind: str = "file") -> None:
     else:
         if not p.is_dir():
             _die(f"dir not found: {p}")
-
-
-def _sum_files(p: Path, glob_pat: str, follow_symlinks: bool = True) -> (int, int):
-    n = 0
-    b = 0
-    if not p.exists():
-        return 0, 0
-    for fp in sorted(p.glob(glob_pat)):
-        if fp.is_file():
-            n += 1
-            try:
-                st = fp.resolve().stat() if follow_symlinks else fp.lstat()
-                b += int(st.st_size)
-            except Exception:
-                pass
-    return n, b
-
-
-def write_compression_stats(ctx: ExperimentContext) -> None:
-    frames_dir = ctx.segment_frames_dir
-    keyframes_dir = ctx.segment_keyframes_dir
-
-    prompt_files = [
-        ctx.prompt_report_path,
-        ctx.prompt_base_path,
-        ctx.prompt_dir / "state_prompt_manifest.json",
-        ctx.prompt_runtime_plan_path,
-    ]
-
-    ori_n, ori_b = _sum_files(frames_dir, "*.png", follow_symlinks=True)
-    kf_n, kf_b = _sum_files(keyframes_dir, "*.png", follow_symlinks=True)
-
-    prompt_n = 0
-    prompt_b = 0
-    for f in prompt_files:
-        if not f.exists() or not f.is_file():
-            continue
-        prompt_n += 1
-        try:
-            prompt_b += int(f.stat().st_size)
-        except Exception:
-            pass
-
-    compressed_b = int(kf_b + prompt_b)
-    ratio_bytes = (compressed_b / ori_b) if ori_b > 0 else None
-    ratio_frames = (kf_n / ori_n) if ori_n > 0 else None
-
-    out = {
-        "ori": {
-            "frames_dir": str(frames_dir),
-            "frame_count": int(ori_n),
-            "bytes_sum": int(ori_b),
-        },
-        "compressed": {
-            "keyframes_dir": str(keyframes_dir),
-            "keyframe_count": int(kf_n),
-            "keyframe_bytes_sum": int(kf_b),
-            "prompt_files": [str(p) for p in prompt_files],
-            "prompt_file_count": int(prompt_n),
-            "prompt_bytes_sum": int(prompt_b),
-            "total_bytes_sum": int(compressed_b),
-        },
-        "ratios": {
-            "bytes": ratio_bytes,
-            "frames": ratio_frames,
-        },
-    }
-
-    stats_dir = ctx.stats_dir
-    stats_dir.mkdir(parents=True, exist_ok=True)
-    ctx.stats_compression_path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _rm_tree(p: Path) -> None:
-    if p.exists():
-        shutil.rmtree(p, ignore_errors=True)
-
-
-def _rm_any(p: Path) -> None:
-    try:
-        if p.is_symlink() or p.is_file():
-            p.unlink()
-        elif p.is_dir():
-            shutil.rmtree(p, ignore_errors=True)
-    except FileNotFoundError:
-        return
-
-
-
-def _fmt_intlike(x: float) -> str:
-    """Format numeric that is often used as int. If x is integer-like, return int string.
-
-    This avoids passing values like '24.0' to downstream scripts whose argparse expects int.
-    Compatible with Python 3.7.
-    """
-    try:
-        xf = float(x)
-        # treat near-integers as int
-        if abs(xf - round(xf)) < 1e-9:
-            return str(int(round(xf)))
-    except Exception:
-        pass
-    return str(x)
 
 
 def _print_experiment_summary(
@@ -631,10 +526,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=True,
         help="disable automatic conda activation and use current shell env for child commands",
     )
-    ap.add_argument("--conda_env_vlm", default=os.environ.get("CONDA_ENV_VLM", "vlm_prompt"))
-    ap.add_argument("--conda_env_videox", default=os.environ.get("CONDA_ENV_VIDEOX", "videox"))
-    ap.add_argument("--conda_env_droid", default=os.environ.get("CONDA_ENV_DROID", "droid"))
-
     ap.add_argument("--videox_root", default=_def_videox)
     ap.add_argument("--droid_repo", default=_def_droid_repo)
     ap.add_argument("--droid_weights", default=_def_droid_w)

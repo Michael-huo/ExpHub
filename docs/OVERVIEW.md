@@ -30,8 +30,8 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 - `infer` 直接消费 `prompt/runtime_prompt_plan.json`，产出 `infer/runs/`、`infer/runs_plan.json` 与 `infer/report.json`；阶段内部元数据只沿用 `runtime_prompt_plan_*`、`resolved_prompt`、`negative_prompt` 这些当前结构名
 - `merge` 只按 `infer/runs_plan.json` 的真实边界拼接，并写出 `merge/merge_manifest.json` 作为正式拼接事实源
 - `slam` 在 `ori` 与 `gen` 两条轨道上估计位姿，对外正式聚合出口是 `slam/report.json` 与 `slam/traj_est.txt`；`slam/<track>/` 下的轨道文件保留为阶段内部支撑产物
-- `eval` 只保留 trajectory-only 评估，围绕 `slam/report.json` 声明的 reference / estimate 轨迹写出 `eval/report.json`、`eval/metrics/traj_eval.json`、`eval/details.csv` 与轨迹图
-- `stats` 汇总阶段报告、压缩统计与实验摘要，当前输出为 `stats/final_report.json` 与 `stats/compression.json`；其中 `compression.json` 保留为 CLI 读取的压缩摘要快照
+- `eval` 只保留 trajectory-only 评估，围绕 `slam/report.json` 声明的 reference / estimate 轨迹写出 `eval/report.json`、`eval/summary.txt`、`eval/details.csv`、`eval/metrics/traj_eval.json`、`eval/plots/traj_xy.png` 与 `eval/plots/metrics_overview.png`
+- `stats` 汇总阶段报告、压缩统计与实验摘要，当前输出为 `stats/final_report.json` 与 `stats/compression.json`；其中 `compression.json` 的职责是 CLI 读取的 compression snapshot
 
 如果只记最关键的事实源，请先记住：
 

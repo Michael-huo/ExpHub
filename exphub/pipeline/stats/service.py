@@ -119,7 +119,7 @@ def _read_stage_report(path_obj, warnings):
     return payload
 
 
-def _build_compression(exp_dir, segment_report, prompt_report, warnings):
+def _build_compression_summary(exp_dir, segment_report, prompt_report, warnings):
     segment_frames_dir = Path(exp_dir).resolve() / "segment" / "frames"
     ori_frames, ori_bytes = _dir_png_stats(segment_frames_dir)
 
@@ -209,7 +209,7 @@ def _build_stage_table(exp_dir, reports):
     return table
 
 
-def _build_compression_snapshot(exp_dir, compression):
+def _build_cli_compression_snapshot(exp_dir, compression_summary):
     exp_root = Path(exp_dir).resolve()
     keyframe_dir = exp_root / "segment" / "keyframes"
     prompt_files = [
@@ -221,25 +221,25 @@ def _build_compression_snapshot(exp_dir, compression):
     return {
         "ori": {
             "frames_dir": str((exp_root / "segment" / "frames").resolve()),
-            "frame_count": compression.get("ori_frames"),
-            "bytes_sum": compression.get("ori_bytes"),
+            "frame_count": compression_summary.get("ori_frames"),
+            "bytes_sum": compression_summary.get("ori_bytes"),
         },
         "compressed": {
             "keyframes_dir": str(keyframe_dir.resolve()),
-            "keyframe_count": compression.get("keyframes_frames"),
-            "keyframe_bytes_sum": compression.get("keyframes_bytes"),
+            "keyframe_count": compression_summary.get("keyframes_frames"),
+            "keyframe_bytes_sum": compression_summary.get("keyframes_bytes"),
             "prompt_files": [str(path.resolve()) for path in prompt_files if path.is_file()],
             "prompt_file_count": int(len([path for path in prompt_files if path.is_file()])),
-            "prompt_bytes_sum": compression.get("prompt_bytes"),
+            "prompt_bytes_sum": compression_summary.get("prompt_bytes"),
             "total_bytes_sum": (
-                int(compression.get("keyframes_bytes")) + int(compression.get("prompt_bytes"))
-                if compression.get("keyframes_bytes") is not None and compression.get("prompt_bytes") is not None
+                int(compression_summary.get("keyframes_bytes")) + int(compression_summary.get("prompt_bytes"))
+                if compression_summary.get("keyframes_bytes") is not None and compression_summary.get("prompt_bytes") is not None
                 else None
             ),
         },
         "ratios": {
-            "bytes": compression.get("ratio_bytes"),
-            "frames": compression.get("ratio_frames"),
+            "bytes": compression_summary.get("ratio_bytes"),
+            "frames": compression_summary.get("ratio_frames"),
         },
     }
 
@@ -271,7 +271,7 @@ def _run_formal_mainline(args):
         "eval": _read_stage_report(contract.artifacts[stats_contract.EVAL_REPORT], warnings),
     }
 
-    compression = _build_compression(exp_dir, stage_reports["segment"], stage_reports["prompt"], warnings)
+    compression_summary = _build_compression_summary(exp_dir, stage_reports["segment"], stage_reports["prompt"], warnings)
     quality = _build_quality(stage_reports["eval"], stage_reports["slam"])
 
     final_report = {
@@ -288,7 +288,7 @@ def _run_formal_mainline(args):
             "eval_report": _relative_path(exp_dir, contract.artifacts[stats_contract.EVAL_REPORT]),
         },
         "stages": _build_stage_table(exp_dir, stage_reports),
-        "compression": compression,
+        "compression": compression_summary,
         "quality": quality,
         "warnings": warnings,
         "artifact_contract": {
@@ -299,13 +299,13 @@ def _run_formal_mainline(args):
         },
     }
 
-    compression_snapshot = _build_compression_snapshot(exp_dir, compression)
+    compression_snapshot = _build_cli_compression_snapshot(exp_dir, compression_summary)
     write_json_atomic(contract.artifacts[stats_contract.FINAL_REPORT], final_report, indent=2)
     write_json_atomic(contract.artifacts[stats_contract.COMPRESSION], compression_snapshot, indent=2)
 
     log_prog("stats summary: final report generated")
     log_info("stats final report: {}".format(contract.artifacts[stats_contract.FINAL_REPORT]))
-    log_info("stats compression: {}".format(contract.artifacts[stats_contract.COMPRESSION]))
+    log_info("stats compression snapshot: {}".format(contract.artifacts[stats_contract.COMPRESSION]))
     return Path(contract.artifacts[stats_contract.FINAL_REPORT]).resolve()
 
 
