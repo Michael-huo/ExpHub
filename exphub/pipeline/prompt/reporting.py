@@ -41,40 +41,46 @@ def _relative_path(base_dir, target_path):
         return str(target)
 
 
-def _state_prompt_statistics(state_prompt_manifest, runtime_prompt_plan):
+def _state_control_statistics(state_prompt_manifest, runtime_prompt_plan):
     # type: (dict, dict) -> dict
     state_segments = list((state_prompt_manifest or {}).get("state_segments") or [])
     runtime_segments = list((runtime_prompt_plan or {}).get("segments") or [])
+    state_controls = [dict(item.get("state_control") or {}) for item in state_segments if isinstance(item, dict)]
     return {
         "state_segment_count": int(len(state_segments)),
         "deploy_segment_count": int(len(runtime_segments)),
         "state_label_counts": dict(_count_by_key(state_segments, "state_label")),
-        "motion_trend_counts": dict(_count_by_key(state_segments, "motion_trend")),
+        "motion_trend_counts": dict(_count_by_key(state_controls, "motion_trend")),
         "deploy_match_source_counts": dict(_count_by_key(runtime_segments, "match_source")),
         "runtime_state_label_counts": dict(_count_by_key(runtime_segments, "state_label")),
     }
 
 
+def _scene_prompt_statistics(runtime_prompt_plan):
+    # type: (dict) -> dict
+    runtime_segments = list((runtime_prompt_plan or {}).get("segments") or [])
+    nonempty = 0
+    for item in runtime_segments:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("scene_prompt", "") or "").strip():
+            nonempty += 1
+    return {
+        "deploy_segment_count": int(len(runtime_segments)),
+        "scene_prompt_segment_count": int(nonempty),
+        "empty_scene_prompt_segment_count": int(max(0, len(runtime_segments) - nonempty)),
+        "scene_prompt_source_counts": dict(_count_by_key(runtime_segments, "scene_prompt_source")),
+    }
+
+
 def build_prompt_report(
     prompt_dir,
-    aggregated_profile,
     base_prompt_payload,
     state_prompt_manifest,
     runtime_prompt_plan,
-    backend_meta,
-    backend_name,
-    backend_python_phase,
-    model_record,
-    dtype,
-    sample_mode,
-    num_images_requested,
-    selected_paths,
     frame_files_count,
-    fps,
-    frame_records,
-    errors,
     total_sec,
-    avg_prompt_sec,
+    assembly_notes,
 ):
     # type: (...) -> dict
     prompt_dir = Path(prompt_dir).resolve()
@@ -87,34 +93,16 @@ def build_prompt_report(
     runtime_prompt_plan_bytes = runtime_prompt_plan_path.read_bytes()
 
     return {
-        "report_schema_version": "prompt_report.v1",
+        "report_schema_version": "prompt_report.v2",
         "step": "prompt",
         "prompt_status": "success",
-        "backend": str(backend_name),
-        "model_dir": str((backend_meta or {}).get("model_dir", "") or ""),
-        "model_id": str((backend_meta or {}).get("model_id", "") or ""),
-        "dtype": str((backend_meta or {}).get("dtype", "") or dtype or ""),
-        "processor_load_sec": float((backend_meta or {}).get("processor_load_sec", 0.0) or 0.0),
-        "model_load_sec": float((backend_meta or {}).get("model_load_sec", 0.0) or 0.0),
-        "prompt_gen_total_sec": float(total_sec),
-        "avg_prompt_sec_per_frame": float(avg_prompt_sec),
-        "backend_python_phase": str(backend_python_phase or ""),
-        "sample_mode": str(sample_mode),
-        "num_images_requested": int(num_images_requested),
-        "num_images_used": int(len(list(selected_paths or []))),
+        "prompt_strategy": "rebaseline_step_a",
+        "prompt_assembly_mode": "invariant_base_plus_scene_slot_plus_state_control",
+        "clip_profile_mode": "removed_from_mainline",
+        "scene_prompt_mode": str((runtime_prompt_plan or {}).get("scene_prompt_mode", "") or "per_segment_slot_reserved"),
+        "prompt_total_sec": float(total_sec),
         "frames_count": int(frame_files_count),
-        "fps": int(fps) if fps is not None else None,
-        "profile_version": int((aggregated_profile or {}).get("version", 0) or 0),
-        "base_prompt_source": str((base_prompt_payload or {}).get("source", "") or ""),
-        "representative_frames": [Path(path_text).name for path_text in list(selected_paths or [])],
-        "representative_indices": [
-            int(item.get("frame_idx"))
-            for item in list(frame_records or [])
-            if isinstance(item, dict) and item.get("frame_idx") is not None
-        ],
-        "frame_candidates": list(frame_records or []),
-        "errors": list(errors or []),
-        "error_count": int(len(list(errors or []))),
+        "assembly_notes": dict(assembly_notes or {}),
         "base_prompt_path": str(base_prompt_path),
         "base_prompt_size": int(len(base_prompt_bytes)),
         "base_prompt_sha1": _sha1_bytes(base_prompt_bytes),
@@ -135,44 +123,18 @@ def build_prompt_report(
             "state_prompt_manifest_file_count": 1,
             "runtime_prompt_plan_file_count": 1,
         },
-        "profile": dict(aggregated_profile or {}),
         "rules_hit": list((base_prompt_payload or {}).get("rules_hit", []) or []),
         "base_prompt_preview": str((base_prompt_payload or {}).get("base_prompt", "") or ""),
         "negative_prompt_preview": str((base_prompt_payload or {}).get("negative_prompt", "") or ""),
-        "state_prompt_summary": dict((state_prompt_manifest or {}).get("summary", {}) or {}),
-        "state_prompt_statistics": _state_prompt_statistics(state_prompt_manifest, runtime_prompt_plan),
-        "model": str(model_record or ""),
-        "frames_dir": "",
-        "backend_summary": {
-            "backend": str(backend_name),
-            "model": str(model_record or ""),
-            "model_dir": str((backend_meta or {}).get("model_dir", "") or ""),
-            "model_id": str((backend_meta or {}).get("model_id", "") or ""),
-            "dtype": str((backend_meta or {}).get("dtype", "") or dtype or ""),
-            "backend_python_phase": str(backend_python_phase or ""),
-            "processor_load_sec": float((backend_meta or {}).get("processor_load_sec", 0.0) or 0.0),
-            "model_load_sec": float((backend_meta or {}).get("model_load_sec", 0.0) or 0.0),
-        },
-        "sampling_summary": {
-            "sample_mode": str(sample_mode),
-            "num_images_requested": int(num_images_requested),
-            "num_images_used": int(len(list(selected_paths or []))),
-            "frames_count": int(frame_files_count),
-            "fps": int(fps) if fps is not None else None,
-            "representative_frames": [Path(path_text).name for path_text in list(selected_paths or [])],
-            "representative_indices": [
-                int(item.get("frame_idx"))
-                for item in list(frame_records or [])
-                if isinstance(item, dict) and item.get("frame_idx") is not None
-            ],
-        },
+        "state_control_summary": dict((state_prompt_manifest or {}).get("summary", {}) or {}),
+        "state_control_statistics": _state_control_statistics(state_prompt_manifest, runtime_prompt_plan),
+        "scene_prompt_statistics": _scene_prompt_statistics(runtime_prompt_plan),
         "prompt_generation_summary": {
-            "profile_version": int((aggregated_profile or {}).get("version", 0) or 0),
+            "prompt_strategy": "rebaseline_step_a",
+            "clip_profile_mode": "removed_from_mainline",
+            "scene_prompt_mode": str((runtime_prompt_plan or {}).get("scene_prompt_mode", "") or "per_segment_slot_reserved"),
+            "prompt_total_sec": float(total_sec),
             "base_prompt_source": str((base_prompt_payload or {}).get("source", "") or ""),
-            "rules_hit": list((base_prompt_payload or {}).get("rules_hit", []) or []),
-            "prompt_gen_total_sec": float(total_sec),
-            "avg_prompt_sec_per_frame": float(avg_prompt_sec),
-            "error_count": int(len(list(errors or []))),
             "base_prompt_preview": str((base_prompt_payload or {}).get("base_prompt", "") or ""),
             "negative_prompt_preview": str((base_prompt_payload or {}).get("negative_prompt", "") or ""),
         },

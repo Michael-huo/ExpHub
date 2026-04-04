@@ -14,7 +14,7 @@
 - `segment/visuals/state_overview.png` 是唯一正式 state 总览图
 - `prompt` 对下游唯一正式 prompt 契约是 `prompt/runtime_prompt_plan.json`
 - `prompt` 会同时写出 `base_prompt.json` 与 `state_prompt_manifest.json` 作为阶段内部支撑与追溯产物
-- `prompt` 正式 backend 固定为 `smolvlm2`
+- `prompt` 当前正式主链按 invariant base prompt + per-segment scene prompt 槽位 + minimal state control 组装 runtime plan
 - `infer` 正式消费 `prompt/runtime_prompt_plan.json`
 - `infer` 正式输出 `runs_plan.json` 与 `report.json`
 - `merge` 必须按 `infer/runs_plan.json` 的真实边界拼接
@@ -50,11 +50,12 @@
 ### `prompt`
 
 - 输入来自 `segment/frames/`
-- backend 固定为 `smolvlm2`
 - 对下游唯一正式 prompt 契约文件是 `runtime_prompt_plan.json`
 - `report.json` 是阶段报告，不参与下游 prompt 契约
 - `base_prompt.json` 与 `state_prompt_manifest.json` 只作为 prompt 阶段内部支撑与追溯产物保留
-- `runtime_prompt_plan.json` 负责按 `segment_manifest.json` 内嵌 deploy schedule 展开可直接执行的 prompt plan
+- `base_prompt.json` 只定义固定 invariant positive / negative
+- `state_prompt_manifest.json` 只整理 state segments 与 minimal state control
+- `runtime_prompt_plan.json` 负责按 `segment_manifest.json` 内嵌 deploy schedule 展开 base prompt + scene prompt + state control 的可执行 prompt plan
 
 ### `infer`
 

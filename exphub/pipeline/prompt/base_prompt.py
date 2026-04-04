@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import Dict, List
 
 
-BASE_PROMPT_SENTENCES = [
+INVARIANT_BASE_POSITIVE_LINES = [
     "Maintain first-person viewpoint continuity across the full sequence.",
-    "Preserve consistent scene geometry, perspective, and camera alignment.",
+    "Preserve stable scene geometry, perspective, and camera alignment.",
     "Keep exposure and white balance stable over time.",
-    "Avoid flicker, warping, ghosting, geometry drift, and temporal instability.",
+    "Preserve temporal coherence without flicker or drifting structure.",
 ]  # type: List[str]
 
-BASE_NEGATIVE_ITEMS = [
+INVARIANT_BASE_NEGATIVE_ITEMS = [
     "flickering",
     "warping",
     "ghosting",
@@ -27,29 +27,33 @@ BASE_NEGATIVE_ITEMS = [
 ]  # type: List[str]
 
 
-def build_base_prompt(profile):
-    # type: (Dict[str, object]) -> str
-    return " ".join([str(item).strip() for item in BASE_PROMPT_SENTENCES if str(item).strip()]).strip()
+def _collapse_ws(text):
+    # type: (object) -> str
+    return " ".join(str(text or "").strip().split()).strip()
 
 
-def build_negative_prompt(profile):
-    # type: (Dict[str, object]) -> str
-    return ", ".join([str(item).strip() for item in BASE_NEGATIVE_ITEMS if str(item).strip()]).strip()
+def get_invariant_base_prompt():
+    # type: () -> str
+    return _collapse_ws(" ".join([str(item).strip() for item in INVARIANT_BASE_POSITIVE_LINES if str(item).strip()]))
 
 
-def build_base_prompt_payload(profile):
-    # type: (Dict[str, object]) -> Dict[str, object]
-    normalized_profile = dict(profile or {})
+def get_invariant_negative_prompt():
+    # type: () -> str
+    return ", ".join([str(item).strip() for item in INVARIANT_BASE_NEGATIVE_ITEMS if str(item).strip()]).strip()
+
+
+def build_base_prompt_payload():
+    # type: () -> Dict[str, object]
     return {
-        "version": 1,
-        "schema": "base_prompt.v1",
-        "base_prompt": build_base_prompt(normalized_profile),
-        "negative_prompt": build_negative_prompt(normalized_profile),
-        "profile": normalized_profile,
-        "source": "prompt_runtime_base_v1",
+        "version": 2,
+        "schema": "base_prompt.v2",
+        "base_prompt": get_invariant_base_prompt(),
+        "negative_prompt": get_invariant_negative_prompt(),
+        "source": "prompt_invariant_base_v2",
         "rules_hit": [
-            "global_invariants_only",
-            "scene_specific_positive_terms_removed",
-            "interval_prompts_drive_runtime_specialization",
+            "invariant_base_only",
+            "clip_profile_removed_from_base_prompt",
+            "scene_prompt_reserved_for_per_segment_encoding",
+            "state_control_separated_from_scene_prompt",
         ],
     }
