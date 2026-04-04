@@ -630,15 +630,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--prompt_model_dir",
         default="",
-        help="override SmolVLM2 model dir or model id",
+        help="override prompt scene-encoding model dir or model id",
     )
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
-    ap.add_argument(
-        "--skip_analyze",
-        action="store_true",
-        help="reserved no-op flag; ignored in the current workflow",
-    )
 
     # SLAM sequence selection.
     # Default is "both" so that `--mode slam` runs both ori/gen unless explicitly overridden.

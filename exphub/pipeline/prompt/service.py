@@ -26,6 +26,7 @@ from exphub.pipeline.prompt.state_manifest import build_state_prompt_manifest, l
 
 _IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 _NATURAL_RE = re.compile(r"(\d+)")
+_PROMPT_PHASE = "prompt_smol"
 
 
 def run(runtime):
@@ -37,7 +38,6 @@ def run(runtime):
     runtime.paths.exp_dir.mkdir(parents=True, exist_ok=True)
     runtime.remove_in_exp(runtime.paths.prompt_dir)
 
-    prompt_phase = runtime.prompt_phase_name()
     helper_path = (runtime.exphub_root / "exphub" / "pipeline" / "prompt" / "service.py").resolve()
 
     cmd = [
@@ -50,12 +50,12 @@ def run(runtime):
         "--fps",
         runtime.fps_arg,
         "--backend_python_phase",
-        str(prompt_phase),
+        _PROMPT_PHASE,
     ]
-    prompt_model_ref = str(runtime.prompt_model_ref() or "").strip()
-    if prompt_model_ref:
-        cmd.extend(["--prompt_model_ref", prompt_model_ref])
-    runtime.step_runner.run_env_python(cmd, phase_name=prompt_phase, log_name="prompt.log", cwd=runtime.exphub_root)
+    prompt_model_dir = str(runtime.args.prompt_model_dir or "").strip()
+    if prompt_model_dir:
+        cmd.extend(["--prompt_model_dir", prompt_model_dir])
+    runtime.step_runner.run_env_python(cmd, phase_name=_PROMPT_PHASE, log_name="prompt.log", cwd=runtime.exphub_root)
 
     ensure_file(contract.artifacts[prompt_contract.REPORT], "prompt report")
     ensure_file(contract.artifacts[prompt_contract.BASE_PROMPT], "prompt base prompt")
@@ -110,7 +110,7 @@ def _run_formal_mainline(args):
     state_scene_encoding = build_state_scene_encoding(
         segment_inputs=segment_inputs,
         frames_dir=frames_dir,
-        prompt_model_ref=str(args.prompt_model_ref or ""),
+        prompt_model_dir=str(args.prompt_model_dir or ""),
     )
     backend_meta = dict(state_scene_encoding.get("backend_meta") or {})
     if backend_meta:
@@ -179,7 +179,7 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir")
     parser.add_argument("--segment_manifest", required=True, help="formal segment_manifest.json path")
     parser.add_argument("--fps", type=float, required=True)
-    parser.add_argument("--prompt_model_ref", default="")
+    parser.add_argument("--prompt_model_dir", default="")
     parser.add_argument("--backend_python_phase", default="prompt_smol")
     return parser
 

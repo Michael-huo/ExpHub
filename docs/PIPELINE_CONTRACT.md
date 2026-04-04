@@ -53,6 +53,7 @@
 - 输入来自 `segment/frames/`
 - 对下游唯一正式 prompt 契约文件是 `runtime_prompt_plan.json`
 - `report.json` 是阶段报告，不参与下游 prompt 契约
+- 顶层 CLI 对 prompt 当前只保留 `--prompt_model_dir` 这一项可选 scene-encoding 模型覆盖入口
 - `base_prompt.json` 与 `state_prompt_manifest.json` 只作为 prompt 阶段内部支撑与追溯产物保留
 - `base_prompt.json` 只定义固定 invariant positive / negative
 - `state_prompt_manifest.json` 只整理 state segments、scene 绑定键与 minimal state control
