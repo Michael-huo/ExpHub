@@ -18,7 +18,6 @@ from exphub.pipeline.prompt.base_prompt import build_base_prompt_payload
 from exphub.pipeline.prompt.scene_encoding import build_state_scene_encoding
 from exphub.pipeline.prompt.reporting import (
     build_prompt_report,
-    cleanup_legacy_prompt_outputs,
     write_prompt_report,
 )
 from exphub.pipeline.prompt.runtime_plan import build_runtime_prompt_plan
@@ -107,11 +106,7 @@ def _run_formal_mainline(args):
         raise RuntimeError("no image files found in {}".format(frames_dir))
 
     base_prompt_payload = build_base_prompt_payload()
-    state_prompt_manifest = build_state_prompt_manifest(
-        segment_inputs=segment_inputs,
-        prompt_dir=prompt_dir,
-        base_prompt_path=prompt_dir / "base_prompt.json",
-    )
+    state_prompt_manifest = build_state_prompt_manifest(segment_inputs=segment_inputs)
     state_scene_encoding = build_state_scene_encoding(
         segment_inputs=segment_inputs,
         frames_dir=frames_dir,
@@ -153,7 +148,6 @@ def _run_formal_mainline(args):
     prompt_report["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     prompt_report["frames_dir"] = str(frames_dir)
     report_path = write_prompt_report(prompt_dir, prompt_report)
-    cleanup_legacy_prompt_outputs(prompt_dir)
 
     log_prog("prompt runtime plan assembled from invariant base + per-state scene encoding + minimal state control")
     log_info(

@@ -225,7 +225,7 @@ def _should_emit_info_terminal_line(phase_name, stripped):
         if phase_name == "segment":
             return payload_lower.startswith("segment summary:")
         if phase_name == "prompt":
-            return payload_lower.startswith("prompt profile generated from")
+            return payload_lower.startswith("prompt runtime plan assembled from")
         if phase_name == "infer":
             return payload_lower.startswith("infer config:")
         if phase_name == "merge":

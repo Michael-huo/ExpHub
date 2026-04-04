@@ -40,7 +40,7 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 - `segment/visuals/state_overview.png` 是唯一正式 state 总览图
 - `prompt/runtime_prompt_plan.json` 是 `infer` 唯一正式 prompt 输入
 - `prompt/base_prompt.json` 与 `prompt/state_prompt_manifest.json` 不是下游正式契约
-- `prompt` 当前正式主链不再依赖 clip-level aggregated profile 生成 prompt 文本
+- `prompt` 当前正式主链只保留 invariant base prompt、per-state scene prompt、minimal state control
 - `infer/runs_plan.json` 是 `merge` 的真实执行边界来源
 
 ## 代码与配置边界

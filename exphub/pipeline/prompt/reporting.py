@@ -7,12 +7,6 @@ from exphub.common.io import write_json_atomic
 
 
 REPORT_FILENAME = "report.json"
-OBSOLETE_PROMPT_OUTPUT_NAMES = [
-    "profile.json",
-    "step_meta.json",
-    "final" "_prompt.json",
-    "deploy_to_state" "_prompt_map.json",
-]
 
 
 def _sha1_bytes(payload_bytes):
@@ -176,8 +170,8 @@ def build_prompt_report(
         "report_schema_version": "prompt_report.v3",
         "step": "prompt",
         "prompt_status": "success",
-        "prompt_strategy": "rebaseline_step_c",
-        "prompt_assembly_mode": "invariant_base_plus_state_scene_plus_state_control",
+        "prompt_strategy": "formal_prompt_final",
+        "prompt_assembly_mode": "base_scene_control",
         "scene_prompt_mode": str((runtime_prompt_plan or {}).get("scene_prompt_mode", "") or "state_v2t_primary_frame"),
         "scene_prompt_style": str((runtime_prompt_plan or {}).get("scene_prompt_style", "") or "compact_canonical_phrase_v1"),
         "prompt_total_sec": float(total_sec),
@@ -194,16 +188,12 @@ def build_prompt_report(
         "runtime_prompt_plan_sha1": _sha1_bytes(runtime_prompt_plan_bytes),
         "outputs": {
             "bytes_sum": 0,
-            "report_bytes_sum": 0,
-            "base_prompt_bytes_sum": int(len(base_prompt_bytes)),
-            "state_prompt_manifest_bytes_sum": int(len(state_prompt_manifest_bytes)),
-            "runtime_prompt_plan_bytes_sum": int(len(runtime_prompt_plan_bytes)),
-            "report_file_count": 1,
-            "base_prompt_file_count": 1,
-            "state_prompt_manifest_file_count": 1,
-            "runtime_prompt_plan_file_count": 1,
+            "prompt_bytes": 0,
+            "report_bytes": 0,
+            "base_prompt_bytes": int(len(base_prompt_bytes)),
+            "state_prompt_manifest_bytes": int(len(state_prompt_manifest_bytes)),
+            "runtime_prompt_plan_bytes": int(len(runtime_prompt_plan_bytes)),
         },
-        "rules_hit": list((base_prompt_payload or {}).get("rules_hit", []) or []),
         "base_prompt_preview": str((base_prompt_payload or {}).get("base_prompt", "") or ""),
         "negative_prompt_preview": str((base_prompt_payload or {}).get("negative_prompt", "") or ""),
         "state_control_summary": dict((state_prompt_manifest or {}).get("summary", {}) or {}),
@@ -217,8 +207,6 @@ def build_prompt_report(
         "artifact_contract": {
             "formal_files": ["runtime_prompt_plan.json", REPORT_FILENAME],
             "internal_support_files": ["base_prompt.json", "state_prompt_manifest.json"],
-            "obsolete_outputs_pruned": True,
-            "obsolete_output_count": int(len(OBSOLETE_PROMPT_OUTPUT_NAMES)),
         },
     }
 
@@ -235,13 +223,14 @@ def write_prompt_report(prompt_dir, report):
         report_bytes = report_path.read_bytes()
         report_size = int(len(report_bytes))
         outputs = dict(report_obj.get("outputs", {}) or {})
-        outputs["report_bytes_sum"] = report_size
-        outputs["bytes_sum"] = int(
-            int(outputs.get("report_bytes_sum", 0) or 0)
-            + int(outputs.get("base_prompt_bytes_sum", 0) or 0)
-            + int(outputs.get("state_prompt_manifest_bytes_sum", 0) or 0)
-            + int(outputs.get("runtime_prompt_plan_bytes_sum", 0) or 0)
+        outputs["report_bytes"] = report_size
+        outputs["prompt_bytes"] = int(
+            int(outputs.get("report_bytes", 0) or 0)
+            + int(outputs.get("base_prompt_bytes", 0) or 0)
+            + int(outputs.get("state_prompt_manifest_bytes", 0) or 0)
+            + int(outputs.get("runtime_prompt_plan_bytes", 0) or 0)
         )
+        outputs["bytes_sum"] = int(outputs.get("prompt_bytes", 0) or 0)
         report_obj["outputs"] = outputs
         report_obj["report_size"] = report_size
         if report_size == last_size:
@@ -249,15 +238,3 @@ def write_prompt_report(prompt_dir, report):
         last_size = report_size
     write_json_atomic(report_path, report_obj, indent=2)
     return report_path
-
-
-def cleanup_legacy_prompt_outputs(prompt_dir):
-    # type: (Path) -> None
-    prompt_dir = Path(prompt_dir).resolve()
-    for rel_name in OBSOLETE_PROMPT_OUTPUT_NAMES:
-        target = (prompt_dir / rel_name).resolve()
-        try:
-            if target.is_file() or target.is_symlink():
-                target.unlink()
-        except Exception:
-            continue
