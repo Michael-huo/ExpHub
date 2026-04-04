@@ -30,7 +30,7 @@
 | `infer` | `exphub/pipeline/infer/service.py` | `segment/frames/`, `prompt/runtime_prompt_plan.json` | `infer/runs/`, `infer/runs_plan.json`, `infer/report.json` | `merge`, `stats` |
 | `merge` | `exphub/pipeline/merge/service.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
 | `slam` | `exphub/pipeline/slam/service.py` | `segment/` 或 `merge/` 轨道数据 | `slam/report.json`, `slam/traj_est.txt`, 以及 `slam/<track>/traj_est.tum`, `slam/<track>/traj_est.npz`, `slam/<track>/run_meta.json` | `eval` |
-| `eval` | `exphub/pipeline/eval/service.py` | `slam/report.json` 中声明的正式轨迹路径、`merge/frames/`、`segment/frames/` | `eval/report.json`, `eval/details.csv`, `eval/plots/traj_xy.png`, `eval/plots/metrics_overview.png` | 人工分析 |
+| `eval` | `exphub/pipeline/eval/service.py` | `slam/report.json` 中声明的正式 reference / estimate 轨迹路径 | `eval/report.json`, `eval/summary.txt`, `eval/details.csv`, `eval/metrics/traj_eval.json`, `eval/plots/traj_xy.png`, `eval/plots/metrics_overview.png` | `stats`, 人工分析 |
 | `stats` | `exphub/pipeline/stats/service.py` | `segment/report.json`, `prompt/report.json`, `infer/report.json`, `merge/step_meta.json` 与日志 | `stats/final_report.json`, `stats/compression.json` | 汇总出口 |
 
 ## 3. 各阶段最小契约
@@ -76,12 +76,13 @@
 - `ori` 轨读取 `segment/`
 - `gen` 轨读取 `merge/`
 - 正式聚合输出保留 `slam/report.json` 与 `slam/traj_est.txt`
-- `eval` 仍依赖每个轨道的 `traj_est.tum`、`traj_est.npz` 与 `run_meta.json`
+- `eval` 正式只依赖 `slam/report.json` 中声明的 reference / estimate trajectory path；轨道内部附属文件不再作为 eval 契约项暴露
 
 ### `eval`
 
-- 输出至少包含聚合后的 `eval/report.json` 与 `eval/details.csv`
-- 图像输出收敛到 `eval/plots/`
+- 只保留 trajectory-only 正式评估链
+- 输出至少包含 `eval/report.json`、`eval/summary.txt`、`eval/details.csv` 与 `eval/metrics/traj_eval.json`
+- 图像输出收敛到 trajectory plots：`eval/plots/traj_xy.png` 与 `eval/plots/metrics_overview.png`
 - 缺少轨迹文件或依赖时不能让主链崩溃，应写出可理解的失败摘要
 
 ### `stats`

@@ -37,9 +37,7 @@ def _resolve_traj_inputs(exp_dir):
 
 
 def _run_formal_mainline(args):
-    from exphub.pipeline.eval.image_eval import run_image_eval
     from exphub.pipeline.eval.reporting import build_summary_text, log_eval_terminal_summary, write_eval_artifacts
-    from exphub.pipeline.eval.slam_eval import run_slam_eval
     from exphub.pipeline.eval.traj_eval import run_traj_eval
 
     exp_dir = Path(args.exp_dir).resolve()
@@ -60,31 +58,16 @@ def _run_formal_mainline(args):
             "t_max_diff": float(args.t_max_diff),
             "t_offset": float(args.t_offset),
             "skip_plots": bool(args.skip_plots),
-        },
-        emit_terminal_summary=False,
+        }
     )
-    image_result = run_image_eval(exp_dir=exp_dir, out_dir=out_dir)
-    slam_result = run_slam_eval(exp_dir=exp_dir, out_dir=out_dir)
-
-    summary_text = build_summary_text(
-        dict((traj_result or {}).get("metrics") or {}),
-        dict((image_result or {}).get("metrics") or {}),
-        dict((slam_result or {}).get("metrics") or {}),
-    )
-    artifacts = write_eval_artifacts(out_dir, traj_result, image_result, slam_result, summary_text)
-    log_eval_terminal_summary(
-        dict((traj_result or {}).get("metrics") or {}),
-        dict((image_result or {}).get("metrics") or {}),
-        dict((slam_result or {}).get("metrics") or {}),
-        out_dir,
-    )
+    summary_text = build_summary_text(dict((traj_result or {}).get("metrics") or {}))
+    artifacts = write_eval_artifacts(out_dir, traj_result, summary_text)
+    log_eval_terminal_summary(dict((traj_result or {}).get("metrics") or {}), out_dir)
     return artifacts
 
 
 def run(runtime):
     contract = eval_contract.build_contract(runtime.paths)
-    ensure_file(contract.artifacts[eval_contract.INPUT_RUNS_PLAN], "infer runs plan")
-    ensure_file(contract.artifacts[eval_contract.INPUT_MERGE_MANIFEST], "merge manifest")
     ensure_file(contract.artifacts[eval_contract.INPUT_SLAM_REPORT], "slam report")
 
     runtime.remove_in_exp(runtime.paths.eval_dir)
@@ -129,14 +112,6 @@ def run(runtime):
         debug_info("STEP eval: traj metrics={}".format(contract.artifacts[eval_contract.TRAJ_METRICS]))
     else:
         log_warn("eval traj metrics missing: {}".format(contract.artifacts[eval_contract.TRAJ_METRICS]))
-    if Path(contract.artifacts[eval_contract.IMAGE_METRICS]).is_file():
-        debug_info("STEP eval: image metrics={}".format(contract.artifacts[eval_contract.IMAGE_METRICS]))
-    else:
-        log_warn("eval image metrics missing: {}".format(contract.artifacts[eval_contract.IMAGE_METRICS]))
-    if Path(contract.artifacts[eval_contract.SLAM_METRICS]).is_file():
-        debug_info("STEP eval: slam metrics={}".format(contract.artifacts[eval_contract.SLAM_METRICS]))
-    else:
-        log_warn("eval slam metrics missing: {}".format(contract.artifacts[eval_contract.SLAM_METRICS]))
     return contract.root
 
 
