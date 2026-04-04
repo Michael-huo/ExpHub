@@ -15,7 +15,6 @@ class SegmentArtifactPaths:
     root: Path
     frames_dir: Path
     keyframes_dir: Path
-    keyframes_meta_path: Path
     manifest_path: Path
     report_path: Path
     visuals_dir: Path
@@ -32,7 +31,6 @@ def build_paths(exp_dir):
         root=root,
         frames_dir=(root / "frames").resolve(),
         keyframes_dir=(root / "keyframes").resolve(),
-        keyframes_meta_path=(root / "keyframes" / "keyframes_meta.json").resolve(),
         manifest_path=(root / segment_contract.SEGMENT_MANIFEST_NAME).resolve(),
         report_path=(root / segment_contract.SEGMENT_REPORT_NAME).resolve(),
         visuals_dir=(root / segment_contract.SEGMENT_VISUALS_DIRNAME).resolve(),
@@ -70,6 +68,8 @@ def remove_stale_formal_segment_outputs(paths):
         paths.root / "deploy_schedule.json",
         paths.root / "step_meta.json",
         paths.root / "preprocess_meta.json",
+        paths.root / "clip_prompts.json",
+        paths.keyframes_dir / "keyframes_meta.json",
     ]
     for stale_path in stale_paths:
         try:
@@ -129,11 +129,6 @@ def materialize_keyframes(frames_dir, keyframes_dir, keyframe_indices, mode_requ
     return actual_mode, int(bytes_sum)
 
 
-def write_keyframes_meta(paths, keyframes_meta):
-    write_json_atomic(paths.keyframes_meta_path, keyframes_meta, indent=2)
-    return paths.keyframes_meta_path
-
-
 def write_segment_manifest(paths, manifest):
     write_json_atomic(paths.manifest_path, manifest, indent=2)
     return paths.manifest_path
@@ -165,7 +160,6 @@ def build_manifest(
             "report": relative_to_exp(paths.exp_dir, paths.report_path),
             "visuals_dir": relative_to_exp(paths.exp_dir, paths.visuals_dir),
             "state_overview": relative_to_exp(paths.exp_dir, paths.state_overview_path),
-            "keyframes_meta": relative_to_exp(paths.exp_dir, paths.keyframes_meta_path),
         },
         "frames": {
             "dir": relative_to_exp(paths.exp_dir, paths.frames_dir),

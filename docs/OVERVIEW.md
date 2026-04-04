@@ -35,8 +35,8 @@ ExpHub 是一个面向视频流与 VSLAM 实验的正式流水线壳。当前正
 
 如果只记最关键的事实源，请先记住：
 
-- `segment/keyframes/keyframes_meta.json` 是 raw keyframe 事实源
 - `segment/segment_manifest.json` 是 `segment` 正式事实源，并内嵌 `deploy_schedule` / `state_segments` / `state_report`
+- `segment/keyframes/` 与 `segment_manifest.json.keyframes` 共同定义正式 keyframe 集合
 - `segment/visuals/state_overview.png` 是唯一正式 state 总览图
 - `prompt/runtime_prompt_plan.json` 是 `infer` 唯一正式 prompt 输入
 - `prompt/base_prompt.json` 与 `prompt/state_prompt_manifest.json` 不是下游正式契约

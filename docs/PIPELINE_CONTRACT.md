@@ -9,8 +9,8 @@
 当前主链路的强契约是：
 
 - 主链顺序固定为 `segment -> prompt -> infer -> merge -> slam -> eval -> stats`
-- `segment/keyframes/keyframes_meta.json` 是 raw keyframe 事实源
 - `segment/segment_manifest.json` 是 `segment` 正式事实源，并内嵌 `deploy_schedule`、`state_segments` 与 `state_report`
+- `segment/keyframes/` 与 `segment_manifest.json.keyframes` 共同定义正式 keyframe 集合
 - `segment/visuals/state_overview.png` 是唯一正式 state 总览图
 - `prompt` 对下游唯一正式 prompt 契约是 `prompt/runtime_prompt_plan.json`
 - `prompt` 会同时写出 `base_prompt.json` 与 `state_prompt_manifest.json` 作为阶段内部支撑与追溯产物
@@ -24,7 +24,7 @@
 
 | 阶段 | 正式实现 | 关键输入 | 关键输出 | 下游依赖 |
 |---|---|---|---|---|
-| `segment` | `exphub/pipeline/segment/service.py` | 数据集、标定、phase Python | `segment/frames/`, `segment/keyframes/`, `segment/keyframes/keyframes_meta.json`, `segment/segment_manifest.json`, `segment/report.json`, `segment/visuals/state_overview.png`, `timestamps.txt`, `calib.txt` | `prompt`, `infer`, `slam` |
+| `segment` | `exphub/pipeline/segment/service.py` | 数据集、标定、phase Python | `segment/frames/`, `segment/keyframes/`, `segment/segment_manifest.json`, `segment/report.json`, `segment/visuals/state_overview.png`, `timestamps.txt`, `calib.txt` | `prompt`, `infer`, `slam` |
 | `prompt` | `exphub/pipeline/prompt/service.py` | `segment/frames/`, `segment/segment_manifest.json` | `prompt/runtime_prompt_plan.json`, `prompt/report.json`, 以及内部支撑产物 `prompt/base_prompt.json`、`prompt/state_prompt_manifest.json` | `infer`, `stats` |
 | `infer` | `exphub/pipeline/infer/service.py` | `segment/frames/`, `prompt/runtime_prompt_plan.json` | `infer/runs/`, `infer/runs_plan.json`, `infer/report.json` | `merge`, `stats` |
 | `merge` | `exphub/pipeline/merge/service.py` | `infer/runs_plan.json`, `infer/runs/*`, `segment/calib.txt`, `segment/timestamps.txt` | `merge/frames/`, `merge/timestamps.txt`, `merge/calib.txt`, `merge/merge_meta.json`, `merge/step_meta.json` | `slam`, `stats` |
@@ -37,7 +37,7 @@
 ### `segment`
 
 - 必须写出 `segment/frames/`
-- 必须写出 `segment/keyframes/keyframes_meta.json`
+- 必须写出 `segment/keyframes/`
 - 必须写出 `segment/segment_manifest.json`
 - 必须写出 `segment/report.json`
 - 必须写出 `segment/visuals/state_overview.png`
