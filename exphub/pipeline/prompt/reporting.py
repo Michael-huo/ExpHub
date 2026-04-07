@@ -74,7 +74,10 @@ def _state_control_statistics(state_prompt_manifest, runtime_prompt_plan):
         "state_segment_count": int(len(state_segments)),
         "deploy_segment_count": int(len(runtime_segments)),
         "state_label_counts": dict(_count_by_key(state_segments, "state_label")),
-        "motion_trend_counts": dict(_count_by_key(state_controls, "motion_trend")),
+        "continuity_emphasis_counts": dict(_count_by_key(state_controls, "continuity_emphasis")),
+        "negative_prompt_delta_segment_count": int(
+            len([item for item in state_controls if _collapse_ws(item.get("negative_prompt_delta", ""))])
+        ),
         "deploy_match_source_counts": dict(_count_by_key(runtime_segments, "match_source")),
         "runtime_state_label_counts": dict(_count_by_key(runtime_segments, "state_label")),
     }

@@ -8,23 +8,17 @@ from exphub.common.io import ensure_file, read_json_dict
 
 
 DEFAULT_STATE_CONTROL = {
-    "prompt_strength": 0.50,
     "negative_prompt_delta": "",
-    "motion_trend": "uncertain_interval",
     "continuity_emphasis": "balanced",
 }  # type: Dict[str, object]
 
 STATE_CONTROL_BY_LABEL = {
     "low_state": {
-        "prompt_strength": 0.35,
         "negative_prompt_delta": "",
-        "motion_trend": "stable_interval",
         "continuity_emphasis": "steady",
     },
     "high_state": {
-        "prompt_strength": 0.75,
         "negative_prompt_delta": "abrupt perspective jumps, transition discontinuity, motion tearing",
-        "motion_trend": "risk_interval",
         "continuity_emphasis": "reinforced",
     },
 }  # type: Dict[str, Dict[str, object]]
@@ -117,9 +111,7 @@ def build_state_prompt_manifest(segment_inputs):
                 "end_frame": int(end_frame),
                 "state_label": state_label,
                 "state_control": {
-                    "prompt_strength": float(control.get("prompt_strength", 0.5) or 0.5),
                     "negative_prompt_delta": str(control.get("negative_prompt_delta", "") or ""),
-                    "motion_trend": str(control.get("motion_trend", "uncertain_interval") or "uncertain_interval"),
                     "continuity_emphasis": str(control.get("continuity_emphasis", "balanced") or "balanced"),
                 },
                 "source_segment_id": int(state_segment_id),
@@ -127,8 +119,8 @@ def build_state_prompt_manifest(segment_inputs):
         )
 
     return {
-        "version": 2,
-        "schema": "state_prompt_manifest.v2",
+        "version": 3,
+        "schema": "state_prompt_manifest.v3",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "manifest_type": "state_control_manifest",
         "state_segment_count": int(len(segments)),

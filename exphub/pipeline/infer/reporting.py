@@ -34,7 +34,6 @@ def _segment_summary(plan_segments):
     # type: (list) -> dict
     deploy_gaps = []
     prompt_sources = {}
-    motion_trends = {}
     start_idx = None
     end_idx = None
     for item in list(plan_segments or []):
@@ -49,9 +48,6 @@ def _segment_summary(plan_segments):
         name = str(item.get("prompt_source", "") or "").strip()
         if name:
             prompt_sources[name] = int(prompt_sources.get(name, 0)) + 1
-        trend = str(item.get("motion_trend", "") or "").strip()
-        if trend:
-            motion_trends[trend] = int(motion_trends.get(trend, 0)) + 1
         try:
             item_start = int(item.get("start_idx"))
             item_end = int(item.get("end_idx"))
@@ -67,7 +63,6 @@ def _segment_summary(plan_segments):
         "deploy_gap_max": max(deploy_gaps) if deploy_gaps else None,
         "deploy_gap_mean": (float(sum(deploy_gaps)) / float(len(deploy_gaps)) if deploy_gaps else None),
         "prompt_source_counts": prompt_sources,
-        "motion_trend_counts": motion_trends,
         "segment_preview": [
             {
                 "seg": item.get("seg"),
@@ -77,7 +72,6 @@ def _segment_summary(plan_segments):
                 "prompt_source": item.get("prompt_source"),
                 "state_segment_id": item.get("state_segment_id"),
                 "state_label": item.get("state_label"),
-                "motion_trend": item.get("motion_trend"),
             }
             for item in list(plan_segments or [])[:5]
             if isinstance(item, dict)
@@ -121,7 +115,6 @@ def build_infer_report(infer_dir, runs_plan_obj, prompt_resolution, backend_meta
         "runtime_prompt_plan_version": int((runtime_summary or {}).get("runtime_prompt_plan_version", 0) or 0),
         "runtime_prompt_plan_source": str((runtime_summary or {}).get("runtime_prompt_plan_source", "") or ""),
         "prompt_source_counts": dict((runtime_summary or {}).get("prompt_source_counts", {}) or {}),
-        "state_motion_trend_counts": dict((runtime_summary or {}).get("state_motion_trend_counts", {}) or {}),
         "state_label_counts": dict((runtime_summary or {}).get("state_label_counts", {}) or {}),
         "outputs": {
             "bytes_sum": 0,
@@ -156,7 +149,6 @@ def build_infer_report(infer_dir, runs_plan_obj, prompt_resolution, backend_meta
             "state_prompt_segment_count": int((runtime_summary or {}).get("state_prompt_segment_count", 0) or 0),
             "matched_execution_segment_count": int((runtime_summary or {}).get("matched_execution_segment_count", 0) or 0),
             "prompt_source_counts": dict((runtime_summary or {}).get("prompt_source_counts", {}) or {}),
-            "state_motion_trend_counts": dict((runtime_summary or {}).get("state_motion_trend_counts", {}) or {}),
             "state_label_counts": dict((runtime_summary or {}).get("state_label_counts", {}) or {}),
             "warnings": list((prompt_resolution or {}).get("warnings", []) or []),
         },

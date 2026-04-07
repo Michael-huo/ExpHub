@@ -105,13 +105,11 @@ def _normalize_runtime_segment(item, idx, default_prompt, default_negative_promp
         "gap_error": int(_safe_int(item.get("gap_error"), 0)),
         "state_segment_id": _safe_int(item.get("state_segment_id"), None),
         "state_label": _collapse_ws(item.get("state_label", "")) or None,
-        "motion_trend": _collapse_ws(item.get("motion_trend", "")) or None,
         "match_source": _collapse_ws(item.get("match_source", "")) or None,
         "prompt_source": str(prompt_source),
         "base_prompt": _collapse_ws(item.get("base_prompt", "")) or str(default_prompt),
         "resolved_prompt": str(resolved_prompt),
         "negative_prompt": str(negative_prompt),
-        "prompt_strength": float(item.get("prompt_strength", 0.5) or 0.5),
         "num_inference_steps": item.get("num_inference_steps"),
         "guidance_scale": item.get("guidance_scale"),
     }
@@ -214,10 +212,8 @@ def resolve_runtime_prompt_segments(
                 "guidance_scale": float(guidance_scale),
                 "state_segment_id": override_item.get("state_segment_id"),
                 "state_label": override_item.get("state_label"),
-                "motion_trend": override_item.get("motion_trend"),
                 "deploy_segment_id": override_item.get("deploy_segment_id"),
                 "match_source": override_item.get("match_source"),
-                "prompt_strength": override_item.get("prompt_strength"),
                 "base_prompt": override_item.get("base_prompt"),
             }
         )
@@ -295,30 +291,26 @@ def build_prompt_resolution(runtime_prompt_plan, execution_segments, exp_dir):
                 "end_frame": int(plan_item.get("end_idx", 0) or 0),
                 "state_segment_id": _safe_int(plan_item.get("state_segment_id"), None),
                 "state_label": plan_item.get("state_label"),
-                "motion_trend": plan_item.get("motion_trend"),
                 "match_source": plan_item.get("match_source"),
                 "prompt_source": str(plan_item.get("prompt_source", "") or PROMPT_SOURCE_RUNTIME_PLAN),
                 "base_prompt": str(plan_item.get("base_prompt", runtime_prompt_plan.get("base_prompt", "")) or ""),
                 "resolved_prompt": str(plan_item.get("resolved_prompt", "") or runtime_prompt_plan.get("base_prompt", "")),
                 "negative_prompt": str(plan_item.get("negative_prompt", "") or runtime_prompt_plan.get("negative_prompt", "")),
-                "prompt_strength": float(plan_item.get("prompt_strength", 0.5) or 0.5),
                 "prompt_preview": _prompt_preview(plan_item.get("resolved_prompt", "") or runtime_prompt_plan.get("base_prompt", "")),
             }
         )
 
     prompt_source_counts = _count_by_key(resolution_items, "prompt_source")
-    state_motion_trend_counts = _count_by_key([item for item in resolution_items if item.get("motion_trend")], "motion_trend")
     state_label_counts = _count_by_key([item for item in resolution_items if item.get("state_label")], "state_label")
     raw_path = runtime_prompt_plan.get("_path")
 
     debug_payload = {
         "version": int(runtime_prompt_plan.get("version", 1) or 1),
-        "schema": str(runtime_prompt_plan.get("schema", "") or "runtime_prompt_plan.v1"),
+        "schema": str(runtime_prompt_plan.get("schema", "") or "runtime_prompt_plan.v3"),
         "state_prompt_enabled": bool(len(resolution_items) > 0),
         "state_prompt_segment_count": int(len(list(runtime_prompt_plan.get("segments") or []))),
         "matched_execution_segment_count": int(len(resolution_items)),
         "prompt_source_counts": dict(prompt_source_counts),
-        "state_motion_trend_counts": dict(state_motion_trend_counts),
         "state_label_counts": dict(state_label_counts),
         "runtime_prompt_plan_used": str(raw_path) if raw_path is not None else "",
         "source_files": {
@@ -333,10 +325,8 @@ def build_prompt_resolution(runtime_prompt_plan, execution_segments, exp_dir):
                 "deploy_segment_id": int(item["deploy_segment_id"]),
                 "state_segment_id": item.get("state_segment_id"),
                 "state_label": item.get("state_label"),
-                "motion_trend": item.get("motion_trend"),
                 "prompt_source": str(item["prompt_source"]),
                 "prompt_preview": str(item["prompt_preview"]),
-                "prompt_strength": float(item.get("prompt_strength", 0.5) or 0.5),
             }
             for item in resolution_items
         ],
@@ -351,7 +341,6 @@ def build_prompt_resolution(runtime_prompt_plan, execution_segments, exp_dir):
         "runtime_prompt_plan_version": int(runtime_prompt_plan.get("version", 1) or 1),
         "runtime_prompt_plan_source": str(runtime_prompt_plan.get("source", "") or PROMPT_SOURCE_RUNTIME_PLAN),
         "prompt_source_counts": dict(prompt_source_counts),
-        "state_motion_trend_counts": dict(state_motion_trend_counts),
         "state_label_counts": dict(state_label_counts),
         "prompt_resolution": dict(debug_payload),
         "segment_resolutions": list(resolution_items),
@@ -384,11 +373,9 @@ def merge_prompt_resolution_into_runs_plan(plan_obj, segment_resolutions):
         seg_item["deploy_segment_id"] = int(resolved.get("deploy_segment_id", seg_item.get("segment_id", idx)) or 0)
         seg_item["state_segment_id"] = resolved.get("state_segment_id")
         seg_item["state_label"] = resolved.get("state_label")
-        seg_item["motion_trend"] = resolved.get("motion_trend")
         seg_item["base_prompt"] = resolved.get("base_prompt")
         seg_item["resolved_prompt"] = resolved.get("resolved_prompt")
         seg_item["negative_prompt"] = resolved.get("negative_prompt")
-        seg_item["prompt_strength"] = resolved.get("prompt_strength")
         seg_item["prompt_preview"] = resolved.get("prompt_preview")
     plan["segments"] = plan_segments
     return plan
