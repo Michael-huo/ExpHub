@@ -73,9 +73,7 @@ def _as_state_control(state_row):
     # type: (Dict[str, object]) -> Dict[str, object]
     control = _as_dict(state_row.get("state_control"))
     return {
-        "prompt_strength": float(control.get("prompt_strength", 0.5) or 0.5),
         "negative_prompt_delta": _collapse_ws(control.get("negative_prompt_delta", "")),
-        "motion_trend": str(control.get("motion_trend", "uncertain_interval") or "uncertain_interval"),
         "continuity_emphasis": str(control.get("continuity_emphasis", "balanced") or "balanced"),
     }
 
@@ -89,11 +87,8 @@ def _state_control_clause(state_control):
     # type: (Dict[str, object]) -> str
     parts = []
     continuity_emphasis = _humanize_token(state_control.get("continuity_emphasis", ""))
-    motion_trend = _humanize_token(state_control.get("motion_trend", ""))
     if continuity_emphasis:
         parts.append("continuity emphasis {}".format(continuity_emphasis))
-    if motion_trend:
-        parts.append("motion trend {}".format(motion_trend))
     return ", ".join([part for part in parts if part]).strip()
 
 
@@ -241,7 +236,6 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, state_scene
                 "gap_error": int(item.get("gap_error", 0) or 0),
                 "state_segment_id": int(state_segment_id),
                 "state_label": str(state_row.get("state_label", "state_unlabeled") or "state_unlabeled"),
-                "state_control": dict(state_control),
                 "scene_prompt": scene_prompt,
                 "scene_prompt_source": str(scene_info.get("scene_prompt_source", "state_v2t_primary_frame") or "state_v2t_primary_frame"),
                 "scene_encoding_backend": str(scene_info.get("scene_encoding_backend", "") or ""),
@@ -255,9 +249,6 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, state_scene
                 ),
                 "resolved_prompt": str(resolved_prompt),
                 "negative_prompt": _join_negative_prompt(base_negative_prompt, negative_prompt_delta),
-                "negative_prompt_delta": negative_prompt_delta,
-                "prompt_strength": float(state_control.get("prompt_strength", 0.5) or 0.5),
-                "motion_trend": str(state_control.get("motion_trend", "uncertain_interval") or "uncertain_interval"),
                 "match_source": str(match_source),
                 "overlap_frames": int(overlap_frames),
                 "prompt_source": "runtime_prompt_plan",
@@ -265,8 +256,8 @@ def build_runtime_prompt_plan(segment_inputs, state_prompt_manifest, state_scene
         )
 
     return {
-        "version": 2,
-        "schema": "runtime_prompt_plan.v2",
+        "version": 3,
+        "schema": "runtime_prompt_plan.v3",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "source": "runtime_prompt_plan_formal",
         "schedule_source": "segment_manifest.deploy_schedule",

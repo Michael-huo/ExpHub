@@ -14,7 +14,7 @@
 - `segment/visuals/state_overview.png` 是唯一正式 state 总览图
 - `prompt` 对下游唯一正式 prompt 契约是 `prompt/runtime_prompt_plan.json`
 - `prompt` 会同时写出 `base_prompt.json` 与 `state_prompt_manifest.json` 作为阶段内部支撑与追溯产物
-- `prompt` 当前正式主链按 invariant base prompt + per-state V2T scene prompt + minimal state control 组装 runtime plan
+- `prompt` 当前正式主链按 invariant base prompt + per-state V2T scene prompt + minimal state control 组装 runtime plan；其中 state control 已收口为 `continuity_emphasis` 与 `negative_prompt_delta`
 - `prompt` 不再保留额外 prompt 侧轨、state template 轨或其他并行 prompt 语义入口
 - `infer` 正式消费 `prompt/runtime_prompt_plan.json`
 - `infer` 正式输出 `runs_plan.json` 与 `report.json`
@@ -57,8 +57,8 @@
 - 顶层 CLI 对 prompt 当前只保留 `--prompt_model_dir` 这一项可选 scene-encoding 模型覆盖入口
 - `base_prompt.json` 与 `state_prompt_manifest.json` 只作为 prompt 阶段内部支撑与追溯产物保留
 - `base_prompt.json` 只定义固定 invariant positive / negative
-- `state_prompt_manifest.json` 只整理 state segments、scene 绑定键与 minimal state control
-- `runtime_prompt_plan.json` 负责按 `segment_manifest.json` 内嵌 deploy schedule 展开 base prompt + scene prompt + state control 的可执行 prompt plan
+- `state_prompt_manifest.json` 只整理 state segments、scene 绑定键，以及最小 state control：`continuity_emphasis` 与 `negative_prompt_delta`
+- `runtime_prompt_plan.json` 负责按 `segment_manifest.json` 内嵌 deploy schedule 展开 base prompt + scene prompt + state control 的可执行 prompt plan，但只保留 infer 正式消费需要的 resolved prompt / negative prompt 与执行边界，不再保留 `prompt_strength`、`motion_trend` 等冗余壳字段
 
 ### `infer`
 
@@ -66,7 +66,7 @@
 - execution segments 来自 `prompt/runtime_prompt_plan.json`
 - 不再在前端重拼 prompt 文本
 - `runs_plan.json` 必须保存真实 `start_idx / end_idx / num_frames`
-- infer 内部追溯元数据统一使用 `runtime_prompt_plan_*`、`resolved_prompt`、`negative_prompt` 等当前结构命名，不再保留旧式 prompt 别名字段
+- infer 内部追溯元数据统一使用 `runtime_prompt_plan_*`、`resolved_prompt`、`negative_prompt`、`state_label` 等当前结构命名，不再保留 `prompt_strength`、`motion_trend` 这类不参与正式生成的壳字段
 
 ### `merge`
 
@@ -90,7 +90,7 @@
 ### `stats`
 
 - 正式输出为 `stats/final_report.json`
-- 保留 `stats/compression.json`，因为 `exphub/cli.py` 的实验摘要仍会读取它；它的职责是 CLI 用的 compression snapshot，不额外承担 infer/prompt 兼容语义
+- 保留 `stats/compression.json`，因为 `exphub/cli.py` 的实验摘要仍会读取它；它的职责是 CLI 用的最小 compression snapshot，只保留 `ratio`、`reduction`、`orig_size`、`comp_size`、`keyframes`
 - `segment` 压缩统计来自 `segment/report.json`
 - 对缺失上游报告给出 `WARN`，而不是直接崩溃
 

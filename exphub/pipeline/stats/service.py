@@ -210,37 +210,17 @@ def _build_stage_table(exp_dir, reports):
 
 
 def _build_cli_compression_snapshot(exp_dir, compression_summary):
-    exp_root = Path(exp_dir).resolve()
-    keyframe_dir = exp_root / "segment" / "keyframes"
-    prompt_files = [
-        exp_root / "prompt" / "report.json",
-        exp_root / "prompt" / "base_prompt.json",
-        exp_root / "prompt" / "state_prompt_manifest.json",
-        exp_root / "prompt" / "runtime_prompt_plan.json",
-    ]
+    ratio = compression_summary.get("ratio_bytes")
+    reduction = None if ratio is None else 1.0 - float(ratio)
+    comp_size = None
+    if compression_summary.get("keyframes_bytes") is not None and compression_summary.get("prompt_bytes") is not None:
+        comp_size = int(compression_summary.get("keyframes_bytes")) + int(compression_summary.get("prompt_bytes"))
     return {
-        "ori": {
-            "frames_dir": str((exp_root / "segment" / "frames").resolve()),
-            "frame_count": compression_summary.get("ori_frames"),
-            "bytes_sum": compression_summary.get("ori_bytes"),
-        },
-        "compressed": {
-            "keyframes_dir": str(keyframe_dir.resolve()),
-            "keyframe_count": compression_summary.get("keyframes_frames"),
-            "keyframe_bytes_sum": compression_summary.get("keyframes_bytes"),
-            "prompt_files": [str(path.resolve()) for path in prompt_files if path.is_file()],
-            "prompt_file_count": int(len([path for path in prompt_files if path.is_file()])),
-            "prompt_bytes_sum": compression_summary.get("prompt_bytes"),
-            "total_bytes_sum": (
-                int(compression_summary.get("keyframes_bytes")) + int(compression_summary.get("prompt_bytes"))
-                if compression_summary.get("keyframes_bytes") is not None and compression_summary.get("prompt_bytes") is not None
-                else None
-            ),
-        },
-        "ratios": {
-            "bytes": compression_summary.get("ratio_bytes"),
-            "frames": compression_summary.get("ratio_frames"),
-        },
+        "ratio": ratio,
+        "reduction": reduction,
+        "orig_size": compression_summary.get("ori_bytes"),
+        "comp_size": comp_size,
+        "keyframes": compression_summary.get("keyframes_frames"),
     }
 
 

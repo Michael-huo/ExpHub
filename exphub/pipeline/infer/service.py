@@ -218,7 +218,6 @@ def _run_formal_mainline(args):
     plan_obj["runtime_prompt_plan_version"] = int(prompt_resolution.get("runtime_prompt_plan_version", 1) or 1)
     plan_obj["runtime_prompt_plan_source"] = str(prompt_resolution.get("runtime_prompt_plan_source", "") or "")
     plan_obj["prompt_source_counts"] = dict(prompt_resolution.get("prompt_source_counts", {}) or {})
-    plan_obj["state_motion_trend_counts"] = dict(prompt_resolution.get("state_motion_trend_counts", {}) or {})
     plan_obj["state_label_counts"] = dict(prompt_resolution.get("state_label_counts", {}) or {})
     write_json_atomic(runs_plan_path, plan_obj, indent=2)
 
@@ -241,7 +240,6 @@ def _run_formal_mainline(args):
         "runtime_prompt_plan_version": int(plan_obj.get("runtime_prompt_plan_version", 1) or 1),
         "runtime_prompt_plan_source": str(plan_obj.get("runtime_prompt_plan_source", "") or ""),
         "prompt_source_counts": dict(prompt_resolution.get("prompt_source_counts", {}) or {}),
-        "state_motion_trend_counts": dict(prompt_resolution.get("state_motion_trend_counts", {}) or {}),
         "state_label_counts": dict(prompt_resolution.get("state_label_counts", {}) or {}),
     }
     infer_report = build_infer_report(

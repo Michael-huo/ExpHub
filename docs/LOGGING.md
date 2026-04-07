@@ -91,6 +91,6 @@
 - `negative_prompt`
 - `prompt_source`
 - `scene_prompt`
-- `state_control`
+- `state_label`
 
-`base_prompt` 与 `state_prompt_manifest` 仍可出现在 prompt 阶段内部追溯日志中，但不再作为下游正式 prompt 契约概念使用。当前正式 prompt 结构固定为 base + scene + control。
+`base_prompt`、`state_prompt_manifest` 与 `state_control` 仍可出现在 prompt 阶段内部追溯日志中，但不再作为 infer 侧正式 prompt 契约字段使用。当前正式 prompt 结构固定为 base + scene + control。
