@@ -13,7 +13,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, write_json_atomic
+from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic
 from exphub.common.logging import log_info, log_prog, log_warn
 
 try:
@@ -441,6 +441,13 @@ def run_slam_substage(args):
     if seq not in ("ori", "gen", "both"):
         raise RuntimeError("unsupported slam seq: {}".format(seq))
 
+    eval_source = str(args.eval_source or "aligned").strip().lower() or "aligned"
+    decode_source = str(args.decode_source or eval_source).strip().lower() or "aligned"
+    infer_report = dict(read_json_dict(Path(args.infer_report)) or {})
+    merge_report = dict(read_json_dict(Path(args.merge_report)) or {})
+    merge_manifest = dict(read_json_dict(Path(args.merge_manifest)) or {})
+    merge_summary = dict(merge_manifest.get("summary") or {})
+
     track_specs = []
     if seq in ("ori", "both"):
         track_specs.append(("ori", Path(args.segment_dir).resolve()))
@@ -466,12 +473,24 @@ def run_slam_substage(args):
         "substage": "slam",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "slam_status": "success",
+        "eval_source": str(eval_source),
+        "decode_source": str(
+            merge_report.get("decode_source")
+            or infer_report.get("decode_source")
+            or merge_summary.get("decode_source")
+            or decode_source
+        ),
+        "source_unit_count": int(merge_summary.get("source_unit_count", 0) or 0),
+        "source_span_count": int(merge_summary.get("source_span_count", 0) or 0),
+        "shared_anchor_count": int(merge_summary.get("shared_anchor_count", 0) or 0),
         "requested_seq": str(seq),
         "primary_track": str(primary_track),
         "primary_trajectory_path": _relative_path(exp_dir, primary_path) if primary_path else "",
         "reference_track": "ori" if "ori" in track_reports else "",
         "reference_trajectory_path": _relative_path(exp_dir, reference_path) if reference_path else "",
         "inputs": {
+            "infer_report": _relative_path(exp_dir, Path(args.infer_report).resolve()),
+            "merge_report": _relative_path(exp_dir, Path(args.merge_report).resolve()),
             "merge_manifest": _relative_path(exp_dir, Path(args.merge_manifest).resolve()),
             "segment_dir": _relative_path(exp_dir, Path(args.segment_dir).resolve()),
             "merge_dir": _relative_path(exp_dir, Path(args.merge_dir).resolve()),
@@ -506,8 +525,13 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--segment_dir", required=True)
+    parser.add_argument("--infer_dir", required=True)
+    parser.add_argument("--infer_report", required=True)
     parser.add_argument("--merge_dir", required=True)
+    parser.add_argument("--merge_report", required=True)
     parser.add_argument("--merge_manifest", required=True)
+    parser.add_argument("--eval_source", default="aligned")
+    parser.add_argument("--decode_source", default="aligned")
     parser.add_argument("--seq", default="both")
     parser.add_argument("--droid_repo", required=True)
     parser.add_argument("--weights", required=True)

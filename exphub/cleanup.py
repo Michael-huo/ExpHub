@@ -125,6 +125,20 @@ def _cleanup_min(exp_dir: Path) -> None:
         {
             "compression.json",
             "details.csv",
+            "generation_units",
+            "metrics",
+            "plots",
+            "report.json",
+            "slam",
+            "summary.txt",
+        },
+    )
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "eval" / "generation_units",
+        {
+            "compression.json",
+            "details.csv",
             "metrics",
             "plots",
             "report.json",

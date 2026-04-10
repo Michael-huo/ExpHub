@@ -279,20 +279,31 @@ def _parse_infer_log_details(log_path: Path) -> Dict[str, object]:
     return out
 
 
-def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict[str, object]:
+def _load_experiment_report(
+    exp_dir: Path,
+    step_times: Dict[str, float],
+    eval_source: str = "aligned",
+    decode_source: str = "aligned",
+) -> Dict[str, object]:
     phase_names = ["encode", "decode", "eval"]
     total_time = sum(float(x) for x in step_times.values())
 
-    eval_report = _read_json_dict(exp_dir / "eval" / "report.json")
+    eval_source_name = str(eval_source or "aligned").strip().lower() or "aligned"
+    decode_source_name = str(decode_source or "aligned").strip().lower() or "aligned"
+    eval_dir = exp_dir / "eval"
+    if eval_source_name != "aligned":
+        eval_dir = eval_dir / eval_source_name
+    eval_report = _read_json_dict(eval_dir / "report.json")
     traj_metrics = dict(eval_report.get("traj_eval") or {}) if isinstance(eval_report.get("traj_eval"), dict) else {}
     if not traj_metrics:
-        traj_metrics = _read_json_dict(exp_dir / "eval" / "metrics" / "traj_eval.json")
-    infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
+        traj_metrics = _read_json_dict(eval_dir / "metrics" / "traj_eval.json")
+    infer_log_name = "infer_aligned.log" if decode_source_name == "aligned" else "infer_{}.log".format(decode_source_name)
+    infer_details = _parse_infer_log_details(exp_dir / "logs" / infer_log_name)
 
     compression_obj = {}
     if isinstance(eval_report.get("compression"), dict):
         compression_obj = dict(eval_report.get("compression") or {})
-    compression_snapshot = _read_json_dict(exp_dir / "eval" / "compression.json")
+    compression_snapshot = _read_json_dict(eval_dir / "compression.json")
 
     ori_bytes = _pick_first_int(
         compression_obj,
@@ -373,8 +384,13 @@ def _print_rows(rows: List[tuple]) -> None:
         _info("{:<{w}} : {}".format(str(key), value, w=width))
 
 
-def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> None:
-    report = _load_experiment_report(exp_dir, step_times)
+def _print_experiment_report(
+    exp_dir: Path,
+    step_times: Dict[str, float],
+    eval_source: str = "aligned",
+    decode_source: str = "aligned",
+) -> None:
+    report = _load_experiment_report(exp_dir, step_times, eval_source=eval_source, decode_source=decode_source)
     total_time = float(report.get("total_time") or 0.0)
     phase_times = dict(report.get("phase_times") or {})
     infer_details = dict(report.get("infer_details") or {})
@@ -549,6 +565,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="infer backend for the current workflow",
     )
     ap.add_argument("--decode_source", default="aligned", choices=["aligned", "generation_units"])
+    ap.add_argument("--eval_source", default="aligned", choices=["aligned", "generation_units"])
     ap.add_argument(
         "--infer_model_dir",
         default="",
@@ -644,7 +661,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         if mode_norm == "export":
             _print_export_report(result.result_root, result.step_times)
         elif mode_norm != "doctor":
-            _print_experiment_report(result.exp_dir, result.step_times)
+            _print_experiment_report(
+                result.exp_dir,
+                result.step_times,
+                eval_source=str(getattr(args, "eval_source", "aligned") or "aligned"),
+                decode_source=str(getattr(args, "decode_source", "aligned") or "aligned"),
+            )
     except (ConfigError, RunError, RuntimeError) as e:
         _die(str(e))
 
