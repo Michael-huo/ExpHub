@@ -18,6 +18,7 @@ def _relative_to_root(root_dir, target_path):
 
 def build_dataset_report(
     export_root,
+    export_source,
     scope,
     focus_name,
     training_spec,
@@ -30,6 +31,10 @@ def build_dataset_report(
     counts_by_split = defaultdict(int)
     counts_by_dataset = defaultdict(int)
     split_files = defaultdict(list)
+    prompt_span_ids = set()
+    total_units_consumed = 0
+    shared_prompt_unit_count = 0
+    skipped_short_span_count = 0
 
     for item in list(exported_clips or []):
         split = str(item.get("split", "train") or "train")
@@ -37,12 +42,26 @@ def build_dataset_report(
         counts_by_split[split] += 1
         counts_by_dataset[dataset] += 1
         split_files[split].append(str(item.get("file_path", "") or ""))
+        span_id = str(item.get("source_span_id", "") or "")
+        if span_id:
+            prompt_span_ids.add(span_id)
+        unit_ids = list(item.get("source_unit_ids") or [])
+        total_units_consumed += int(len(unit_ids))
+        shared_prompt_unit_count += int(max(0, len(unit_ids) - 1))
+
+    for item in list(skipped_clips or []):
+        if str(item.get("reason", "") or "").strip() == "span_length_insufficient":
+            skipped_short_span_count += 1
+
+    prompt_span_count = int(len(prompt_span_ids))
+    clip_count = int(len(list(exported_clips or [])))
 
     return {
         "report_schema_version": "export_dataset_report.v1",
         "step": "export",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "workflow": "input -> encode -> export",
+        "export_source": str(export_source),
         "export_scope": str(scope),
         "export_focus": str(focus_name),
         "training_spec": dict(training_spec or {}),
@@ -52,8 +71,15 @@ def build_dataset_report(
         },
         "summary": {
             "bag_count": int(len(list(targets or []))),
+            "clip_count": int(clip_count),
             "exported_clip_count": int(len(list(exported_clips or []))),
             "skipped_clip_count": int(len(list(skipped_clips or []))),
+            "total_units_consumed": int(total_units_consumed),
+            "prompt_span_count": int(prompt_span_count),
+            "shared_prompt_unit_count": int(shared_prompt_unit_count),
+            "prompt_reuse_ratio": float(float(shared_prompt_unit_count) / float(total_units_consumed)) if total_units_consumed > 0 else 0.0,
+            "mean_clips_per_span": float(float(clip_count) / float(prompt_span_count)) if prompt_span_count > 0 else 0.0,
+            "skipped_short_span_count": int(skipped_short_span_count),
             "split_counts": dict(counts_by_split),
             "dataset_counts": dict(counts_by_dataset),
         },

@@ -22,6 +22,24 @@ MOTION_PROMPT_BY_STATE = {
     },
 }
 
+MOTION_PROMPT_BY_PLANNER_LABEL = {
+    "steady": {
+        "motion_prompt": "steady egomotion, smooth viewpoint progression.",
+        "negative_prompt_delta": "",
+        "continuity_emphasis": "steady",
+    },
+    "mixed": {
+        "motion_prompt": "moderate motion change, keep transitions coherent and camera movement readable.",
+        "negative_prompt_delta": "jerky motion, inconsistent transition timing",
+        "continuity_emphasis": "balanced",
+    },
+    "dynamic": {
+        "motion_prompt": "dynamic motion change, preserve transition continuity and camera stability.",
+        "negative_prompt_delta": "abrupt perspective jumps, transition discontinuity, motion tearing",
+        "continuity_emphasis": "reinforced",
+    },
+}
+
 
 def _as_dict(value):
     if isinstance(value, dict):
@@ -66,3 +84,9 @@ def build_motion_prompt_payload(segment_inputs):
             "state_segment_count": int(len(segments)),
         },
     }
+
+
+def resolve_motion_prompt_from_planner_label(motion_label):
+    payload = dict(DEFAULT_MOTION_PROMPT)
+    payload.update(_as_dict(MOTION_PROMPT_BY_PLANNER_LABEL.get(str(motion_label or "").strip().lower())))
+    return payload

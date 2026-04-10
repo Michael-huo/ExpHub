@@ -10,7 +10,7 @@ from pathlib import Path
 from exphub.common.config import load_datasets_cfg, resolve_dataset
 from exphub.common.io import read_json_dict, remove_path
 from exphub.common.logging import log_info, log_prog, log_warn
-from exphub.common.types import sanitize_token
+from exphub.common.types import canon_num_str, sanitize_token
 from exphub.pipeline.encode import service as encode_service
 from exphub.pipeline.export import clip_builder, dataset_writer, report
 
@@ -38,13 +38,35 @@ def _focus_name(args):
     return "{}_{}".format(str(args.dataset), str(args.sequence))
 
 
+def _export_source(args):
+    return str(args.export_source or "aligned").strip().lower() or "aligned"
+
+
 def _export_root(runtime):
     base = Path(str(runtime.args.export_root or "").strip()).resolve() if str(runtime.args.export_root or "").strip() else (
         runtime.exphub_root / "exports"
     ).resolve()
     scope = str(runtime.args.export_scope or "single")
     focus_name = _focus_name(runtime.args)
-    return (base / scope / sanitize_token(focus_name, max_len=64) / sanitize_token(runtime.args.tag, max_len=64)).resolve()
+    source_name = _export_source(runtime.args)
+    return (
+        base
+        / scope
+        / sanitize_token(focus_name, max_len=64)
+        / sanitize_token(runtime.args.tag, max_len=64)
+        / sanitize_token(source_name, max_len=32)
+    ).resolve()
+
+
+def _export_profile(args):
+    return clip_builder.build_export_profile(
+        target_fps=int(args.export_target_fps),
+        target_num_frames=int(args.export_target_num_frames),
+        target_width=int(args.export_target_width),
+        target_height=int(args.export_target_height),
+        harvest_sec=float(args.export_harvest_sec) if float(args.export_harvest_sec or 0.0) > 0.0 else None,
+        stride_sec=float(args.export_stride_sec) if float(args.export_stride_sec or 0.0) > 0.0 else None,
+    )
 
 
 def _iter_dataset_sequences(cfg, dataset_name):
@@ -131,10 +153,7 @@ print(json.dumps(payload, ensure_ascii=False))
 """.strip()
     cmd = [shlex.quote(str(python_bin)), "-c", shlex.quote(script), shlex.quote(str(Path(bag_path).resolve())), shlex.quote(str(topic))]
     if ros_setup is not None and ros_setup.exists():
-        shell_script = "source {} && {}".format(
-            shlex.quote(str(ros_setup)),
-            " ".join(cmd),
-        )
+        shell_script = "source {} && {}".format(shlex.quote(str(ros_setup)), " ".join(cmd))
     else:
         shell_script = " ".join(cmd)
     output = subprocess.check_output(["bash", "-lc", shell_script], text=True)
@@ -144,31 +163,31 @@ print(json.dumps(payload, ensure_ascii=False))
     return payload
 
 
-def _build_clip_plan(bag_info, stride_sec, max_clips_per_bag):
-    clip_duration = float(clip_builder.EXPORT_DURATION_SEC)
-    max_start = float(bag_info.get("duration_sec", 0.0) or 0.0) - clip_duration
+def _build_harvest_plan(bag_info, harvest_sec, max_clips_per_bag):
+    harvest_duration = float(harvest_sec)
+    max_start = float(bag_info.get("duration_sec", 0.0) or 0.0) - harvest_duration
     if max_start < -1e-9:
         return []
 
-    clip_starts = []
-    clip_idx = 0
+    harvests = []
+    harvest_idx = 0
     start_sec = 0.0
     while start_sec <= max_start + 1e-9:
-        clip_starts.append(
+        harvests.append(
             {
-                "clip_index": int(clip_idx),
+                "clip_index": int(harvest_idx),
                 "start_sec": float(round(start_sec, 6)),
-                "duration_sec": float(clip_duration),
+                "duration_sec": float(harvest_duration),
             }
         )
-        clip_idx += 1
-        if int(max_clips_per_bag or 0) > 0 and len(clip_starts) >= int(max_clips_per_bag):
+        harvest_idx += 1
+        if int(max_clips_per_bag or 0) > 0 and len(harvests) >= int(max_clips_per_bag):
             break
-        start_sec += float(stride_sec)
-    return clip_starts
+        start_sec += float(harvest_duration)
+    return harvests
 
 
-def _make_encode_args(runtime, target, export_root, clip_plan):
+def _make_encode_args(runtime, target, export_root, clip_plan, profile):
     from types import SimpleNamespace
 
     cache_root = (Path(export_root).resolve() / "cache" / target["dataset"] / target["sequence"]).resolve()
@@ -179,10 +198,10 @@ def _make_encode_args(runtime, target, export_root, clip_plan):
         dataset=str(target["dataset"]),
         sequence=str(target["sequence"]),
         tag=str(runtime.args.tag),
-        w=int(clip_builder.EXPORT_WIDTH),
-        h=int(clip_builder.EXPORT_HEIGHT),
-        fps=float(clip_builder.EXPORT_FPS),
-        dur=str(int(round(float(clip_builder.EXPORT_DURATION_SEC)))),
+        w=int(profile["target_width"]),
+        h=int(profile["target_height"]),
+        fps=float(profile["target_fps"]),
+        dur=str(canon_num_str(profile["harvest_sec"])),
         start_sec=str(clip_plan["start_sec"]),
         start_idx=-1,
         kf_gap=0,
@@ -209,7 +228,13 @@ def _make_encode_args(runtime, target, export_root, clip_plan):
         export_root=str(runtime.args.export_root or ""),
         export_scope=str(runtime.args.export_scope),
         export_focus=str(runtime.args.export_focus),
-        export_stride_sec=float(runtime.args.export_stride_sec),
+        export_source=str(_export_source(runtime.args)),
+        export_target_fps=int(profile["target_fps"]),
+        export_target_num_frames=int(profile["target_num_frames"]),
+        export_target_width=int(profile["target_width"]),
+        export_target_height=int(profile["target_height"]),
+        export_harvest_sec=float(profile["harvest_sec"]),
+        export_stride_sec=float(profile["stride_sec"]),
         export_max_bags=int(runtime.args.export_max_bags),
         export_max_bags_per_dataset=int(runtime.args.export_max_bags_per_dataset),
         export_max_clips_per_bag=int(runtime.args.export_max_clips_per_bag),
@@ -217,10 +242,10 @@ def _make_encode_args(runtime, target, export_root, clip_plan):
     )
 
 
-def _run_encode_for_clip(runtime, target, export_root, clip_plan):
+def _run_encode_for_clip(runtime, target, export_root, clip_plan, profile):
     from exphub.pipeline.orchestrator import build_runtime
 
-    encode_args = _make_encode_args(runtime, target, export_root, clip_plan)
+    encode_args = _make_encode_args(runtime, target, export_root, clip_plan, profile)
     encode_runtime = build_runtime(encode_args)
     encode_service.run(encode_runtime)
     return encode_runtime.paths.exp_dir.resolve()
@@ -235,10 +260,31 @@ def _metadata_entry(export_root, split, clip_path, caption):
     }
 
 
+def _candidate_rejections_to_skips(target, clip_plan, exp_dir, export_source, rejections):
+    skips = []
+    for rejection in list(rejections or []):
+        item = dict(rejection or {})
+        item.update(
+            {
+                "dataset": str(target["dataset"]),
+                "sequence": str(target["sequence"]),
+                "clip_index": int(clip_plan["clip_index"]),
+                "start_sec": float(clip_plan["start_sec"]),
+                "export_source": str(export_source),
+            }
+        )
+        if exp_dir is not None:
+            item["exp_dir"] = str(exp_dir)
+        skips.append(item)
+    return skips
+
+
 def run(runtime):
     args = runtime.args
+    export_source = _export_source(args)
     cfg = _load_cfg(runtime)
     export_root = _export_root(runtime)
+    profile = _export_profile(args)
     if export_root.exists():
         remove_path(export_root)
     export_root.mkdir(parents=True, exist_ok=True)
@@ -249,14 +295,17 @@ def run(runtime):
         raise RuntimeError("export resolved no dataset targets")
 
     log_info(
-        "export start: scope={} focus={} targets={} spec={}fps/{}f/{}x{}".format(
+        "export start: source={} scope={} focus={} targets={} profile={}fps/{}f/{}x{} harvest={:.2f}s stride={:.2f}s".format(
+            str(export_source),
             str(args.export_scope),
             str(args.export_focus),
             int(len(targets)),
-            int(clip_builder.EXPORT_FPS),
-            int(clip_builder.EXPORT_NUM_FRAMES),
-            int(clip_builder.EXPORT_WIDTH),
-            int(clip_builder.EXPORT_HEIGHT),
+            int(profile["target_fps"]),
+            int(profile["target_num_frames"]),
+            int(profile["target_width"]),
+            int(profile["target_height"]),
+            float(profile["harvest_sec"]),
+            float(profile["stride_sec"]),
         )
     )
 
@@ -267,101 +316,122 @@ def run(runtime):
 
     for target in targets:
         bag_info = _inspect_bag_topic(runtime, target["bag"], target["topic"])
-        clip_plan_items = _build_clip_plan(
+        harvest_plan_items = _build_harvest_plan(
             bag_info=bag_info,
-            stride_sec=float(args.export_stride_sec or clip_builder.EXPORT_DURATION_SEC),
+            harvest_sec=float(profile["harvest_sec"]),
             max_clips_per_bag=int(args.export_max_clips_per_bag or 0),
         )
-        if not clip_plan_items:
+        if not harvest_plan_items:
             skipped_clips.append(
                 {
                     "dataset": str(target["dataset"]),
                     "sequence": str(target["sequence"]),
-                    "reason": "bag_too_short_for_fixed_spec",
+                    "export_source": str(export_source),
+                    "reason": "bag_too_short_for_harvest_window",
                     "bag_duration_sec": float(bag_info.get("duration_sec", 0.0) or 0.0),
+                    "harvest_sec": float(profile["harvest_sec"]),
                 }
             )
             continue
 
         log_info(
-            "export bag: dataset={} sequence={} clips={} duration={:.2f}s".format(
+            "export bag: source={} dataset={} sequence={} harvest_windows={} duration={:.2f}s".format(
+                str(export_source),
                 str(target["dataset"]),
                 str(target["sequence"]),
-                int(len(clip_plan_items)),
+                int(len(harvest_plan_items)),
                 float(bag_info.get("duration_sec", 0.0) or 0.0),
             )
         )
-        for clip_plan in clip_plan_items:
-            clip_key = "{}:{}:{:.6f}".format(target["dataset"], target["sequence"], float(clip_plan["start_sec"]))
+        for clip_plan in harvest_plan_items:
+            exp_dir = None
             try:
-                exp_dir = _run_encode_for_clip(runtime, target, export_root, clip_plan)
+                exp_dir = _run_encode_for_clip(runtime, target, export_root, clip_plan, profile)
                 segment_manifest_path = (exp_dir / "segment" / "segment_manifest.json").resolve()
                 prompt_manifest_path = (exp_dir / "prompt" / "prompt_manifest.json").resolve()
                 segment_manifest = read_json_dict(segment_manifest_path)
                 prompt_manifest = read_json_dict(prompt_manifest_path)
-                candidate = clip_builder.select_training_candidate(segment_manifest, prompt_manifest, exp_dir=exp_dir)
-                if not bool(candidate.get("accepted")):
-                    skipped_clips.append(
-                        {
-                            "dataset": str(target["dataset"]),
-                            "sequence": str(target["sequence"]),
-                            "clip_index": int(clip_plan["clip_index"]),
-                            "start_sec": float(clip_plan["start_sec"]),
-                            "reason": str(candidate.get("reason", "candidate_rejected")),
-                            "exp_dir": str(exp_dir),
-                        }
+                candidate_result = clip_builder.select_training_candidates(
+                    export_source=export_source,
+                    segment_manifest=segment_manifest,
+                    prompt_manifest=prompt_manifest,
+                    exp_dir=exp_dir,
+                    profile=profile,
+                )
+                skipped_clips.extend(
+                    _candidate_rejections_to_skips(
+                        target=target,
+                        clip_plan=clip_plan,
+                        exp_dir=exp_dir,
+                        export_source=export_source,
+                        rejections=candidate_result.get("rejections") or [],
                     )
+                )
+
+                candidates = list(candidate_result.get("candidates") or [])
+                if not candidates:
                     continue
 
-                split = dataset_writer.assign_split(clip_key, seed=int(args.export_split_seed))
-                clip_filename = clip_builder.build_clip_filename(
-                    target["dataset"],
-                    target["sequence"],
-                    clip_plan["clip_index"],
-                    clip_plan["start_sec"],
-                )
-                clip_output_path = (layout["split_dirs"][split] / clip_filename).resolve()
-                clip_builder.write_training_clip(
-                    exp_dir / "segment" / "frames",
-                    clip_output_path,
-                    start_idx=int(candidate["clip_start_idx"]),
-                    num_frames=int(candidate["clip_num_frames"]),
-                    fps=clip_builder.EXPORT_FPS,
-                )
-                clip_manifest_path = dataset_writer.write_clip_manifest(
-                    export_root,
-                    Path(clip_filename).stem,
-                    candidate.get("clip_manifest") or {},
-                )
-                aligned_segment_plan_path = str(
-                    ((candidate.get("clip_manifest") or {}).get("source_files") or {}).get("aligned_segment_plan", "")
-                    or ""
-                )
+                for candidate in candidates:
+                    clip_key = "{}:{}:{:.6f}:{}".format(
+                        target["dataset"],
+                        target["sequence"],
+                        float(clip_plan["start_sec"]),
+                        str(candidate.get("clip_id", "") or "clip"),
+                    )
+                    split = dataset_writer.assign_split(clip_key, seed=int(args.export_split_seed))
+                    clip_filename = clip_builder.build_clip_filename(
+                        target["dataset"],
+                        target["sequence"],
+                        clip_plan["clip_index"],
+                        clip_plan["start_sec"],
+                        sample_index=candidate.get("sample_index"),
+                    )
+                    clip_output_path = (layout["split_dirs"][split] / clip_filename).resolve()
+                    clip_builder.write_training_clip(
+                        exp_dir / "segment" / "frames",
+                        clip_output_path,
+                        start_idx=int(candidate["clip_start_idx"]),
+                        num_frames=int(candidate["clip_num_frames"]),
+                        fps=int(profile["target_fps"]),
+                    )
+                    clip_manifest_path = dataset_writer.write_clip_manifest(
+                        export_root,
+                        Path(clip_filename).stem,
+                        candidate.get("clip_manifest") or {},
+                    )
+                    metadata_entry = _metadata_entry(export_root, split, clip_output_path, candidate["caption"])
+                    entries_by_split[split].append(metadata_entry)
 
-                metadata_entry = _metadata_entry(export_root, split, clip_output_path, candidate["caption"])
-                entries_by_split[split].append(metadata_entry)
-                exported_clips.append(
-                    {
+                    clip_record = {
                         "dataset": str(target["dataset"]),
                         "sequence": str(target["sequence"]),
                         "clip_index": int(clip_plan["clip_index"]),
+                        "clip_id": str(candidate.get("clip_id", "") or ""),
                         "start_sec": float(clip_plan["start_sec"]),
+                        "harvest_sec": float(profile["harvest_sec"]),
                         "split": str(split),
+                        "export_source": str(export_source),
                         "file_path": metadata_entry["file_path"],
                         "text": metadata_entry["text"],
                         "type": "video",
                         "exp_dir": str(exp_dir),
                         "segment_manifest": str(segment_manifest_path),
                         "prompt_manifest": str(prompt_manifest_path),
-                        "aligned_segment_plan": str(aligned_segment_plan_path),
                         "train_clip_manifest": dataset_writer.relative_to_root(export_root, clip_manifest_path),
-                        "clip_start_idx": int(candidate["clip_start_idx"]),
-                        "clip_end_idx": int(candidate["clip_end_idx"]),
-                        "clip_num_frames": int(candidate["clip_num_frames"]),
+                        "train_start_idx": int(candidate["clip_start_idx"]),
+                        "train_end_idx": int(candidate["clip_end_idx"]),
+                        "target_num_frames": int(candidate["clip_num_frames"]),
+                        "target_fps": int(profile["target_fps"]),
                         "selection_reason": str(candidate.get("selection_reason", "") or ""),
                         "candidate_summary": dict(candidate.get("summary") or {}),
                     }
-                )
+                    if export_source == "generation_units":
+                        clip_record["source_unit_ids"] = list(candidate.get("source_unit_ids") or [])
+                        clip_record["source_span_id"] = str(candidate.get("source_span_id", "") or "")
+                        clip_record["source_prompt_ref"] = dict(candidate.get("source_prompt_ref") or {})
+                        clip_record["resolved_prompt_source"] = str(candidate.get("resolved_prompt_source", "prompt_spans") or "prompt_spans")
+                    exported_clips.append(clip_record)
             except Exception as exc:
                 skipped_clips.append(
                     {
@@ -369,11 +439,13 @@ def run(runtime):
                         "sequence": str(target["sequence"]),
                         "clip_index": int(clip_plan["clip_index"]),
                         "start_sec": float(clip_plan["start_sec"]),
+                        "export_source": str(export_source),
                         "reason": "export_failed:{}".format(_collapse_ws(exc)),
                     }
                 )
                 log_warn(
-                    "export clip skipped: dataset={} sequence={} start_sec={} reason={}".format(
+                    "export clip skipped: source={} dataset={} sequence={} start_sec={} reason={}".format(
+                        str(export_source),
                         str(target["dataset"]),
                         str(target["sequence"]),
                         str(clip_plan["start_sec"]),
@@ -384,9 +456,10 @@ def run(runtime):
     metadata_paths = dataset_writer.write_metadata_files(export_root, entries_by_split)
     dataset_report = report.build_dataset_report(
         export_root=export_root,
+        export_source=str(export_source),
         scope=str(args.export_scope),
         focus_name=str(_focus_name(args)),
-        training_spec=clip_builder.training_spec(),
+        training_spec=clip_builder.training_spec(profile),
         targets=targets,
         exported_clips=exported_clips,
         skipped_clips=skipped_clips,
@@ -395,7 +468,8 @@ def run(runtime):
     report_path = report.write_dataset_report(export_root, dataset_report)
 
     log_prog(
-        "export summary: clips={} skipped={} elapsed={:.2f}s".format(
+        "export summary: source={} clips={} skipped={} elapsed={:.2f}s".format(
+            str(export_source),
             int(len(exported_clips)),
             int(len(skipped_clips)),
             float(time.time() - total_t0),
@@ -418,7 +492,13 @@ def _build_arg_parser():
     parser.add_argument("--export_root", default="")
     parser.add_argument("--export_scope", default="single", choices=["single", "dataset", "focus"])
     parser.add_argument("--export_focus", default="ncd_scand", choices=sorted(FOCUS_DATASETS.keys()))
-    parser.add_argument("--export_stride_sec", type=float, default=clip_builder.EXPORT_DURATION_SEC)
+    parser.add_argument("--export_source", default="aligned", choices=["aligned", "generation_units"])
+    parser.add_argument("--export_target_fps", type=int, default=clip_builder.DEFAULT_EXPORT_FPS)
+    parser.add_argument("--export_target_num_frames", type=int, default=clip_builder.DEFAULT_EXPORT_NUM_FRAMES)
+    parser.add_argument("--export_target_width", type=int, default=clip_builder.DEFAULT_EXPORT_WIDTH)
+    parser.add_argument("--export_target_height", type=int, default=clip_builder.DEFAULT_EXPORT_HEIGHT)
+    parser.add_argument("--export_harvest_sec", type=float, default=0.0)
+    parser.add_argument("--export_stride_sec", type=float, default=0.0)
     parser.add_argument("--export_max_bags", type=int, default=0)
     parser.add_argument("--export_max_bags_per_dataset", type=int, default=0)
     parser.add_argument("--export_max_clips_per_bag", type=int, default=0)

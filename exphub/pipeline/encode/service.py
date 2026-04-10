@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from exphub.common.io import ensure_dir, ensure_file
+from exphub.common.io import ensure_dir, ensure_file, read_json_dict, write_json_atomic
 from exphub.contracts import prompt as prompt_contract
 from exphub.contracts import segment as segment_contract
+from exphub.pipeline.encode.candidate_boundaries import build_candidate_boundaries_payload
+from exphub.pipeline.encode.state_analysis import (
+    build_generation_risk_payload,
+    build_motion_score_payload,
+    build_semantic_shift_payload,
+)
+from exphub.pipeline.encode.text_gen.prompt_spans import build_prompt_spans_payload
+from exphub.pipeline.encode.unit_planner import build_generation_units_payload
 
 
 _PROMPT_PHASE = "prompt_smol"
@@ -124,6 +132,54 @@ def run_text_gen(runtime):
     return contract.artifacts[prompt_contract.REPORT]
 
 
+def run_generation_unit_planner(runtime):
+    ensure_file(runtime.paths.segment_manifest_path, "segment manifest")
+    ensure_file(runtime.paths.prompt_manifest_path, "prompt manifest")
+
+    segment_manifest = read_json_dict(runtime.paths.segment_manifest_path)
+    prompt_manifest = read_json_dict(runtime.paths.prompt_manifest_path)
+    if not segment_manifest:
+        raise RuntimeError("invalid segment manifest: {}".format(runtime.paths.segment_manifest_path))
+    if not prompt_manifest:
+        raise RuntimeError("invalid prompt manifest: {}".format(runtime.paths.prompt_manifest_path))
+
+    motion_score = build_motion_score_payload(segment_manifest)
+    semantic_shift = build_semantic_shift_payload(segment_manifest, prompt_manifest)
+    generation_risk = build_generation_risk_payload(motion_score, semantic_shift)
+    candidate_boundaries = build_candidate_boundaries_payload(motion_score, semantic_shift, generation_risk)
+
+    frame_meta = dict(segment_manifest.get("frames") or {})
+    frame_count_used = int(frame_meta.get("frame_count_used", 0) or 0)
+    if frame_count_used <= 0:
+        raise RuntimeError("segment manifest has invalid frame_count_used for generation units")
+
+    generation_units = build_generation_units_payload(
+        motion_score_payload=motion_score,
+        semantic_shift_payload=semantic_shift,
+        generation_risk_payload=generation_risk,
+        candidate_boundaries_payload=candidate_boundaries,
+        sequence_start_idx=0,
+        sequence_end_idx=int(frame_count_used - 1),
+    )
+    prompt_spans = build_prompt_spans_payload(prompt_manifest, generation_units)
+
+    write_json_atomic(runtime.paths.segment_motion_score_path, motion_score, indent=2)
+    write_json_atomic(runtime.paths.segment_semantic_shift_path, semantic_shift, indent=2)
+    write_json_atomic(runtime.paths.segment_generation_risk_path, generation_risk, indent=2)
+    write_json_atomic(runtime.paths.segment_candidate_boundaries_path, candidate_boundaries, indent=2)
+    write_json_atomic(runtime.paths.segment_generation_units_path, generation_units, indent=2)
+    write_json_atomic(runtime.paths.prompt_spans_path, prompt_spans, indent=2)
+
+    ensure_file(runtime.paths.segment_motion_score_path, "motion score")
+    ensure_file(runtime.paths.segment_semantic_shift_path, "semantic shift")
+    ensure_file(runtime.paths.segment_generation_risk_path, "generation risk")
+    ensure_file(runtime.paths.segment_candidate_boundaries_path, "candidate boundaries")
+    ensure_file(runtime.paths.segment_generation_units_path, "generation units")
+    ensure_file(runtime.paths.prompt_spans_path, "prompt spans")
+    return runtime.paths.segment_generation_units_path
+
+
 def run(runtime):
     run_scene_split(runtime)
-    return run_text_gen(runtime)
+    run_text_gen(runtime)
+    return run_generation_unit_planner(runtime)

@@ -78,6 +78,11 @@ def _cleanup_min(exp_dir: Path) -> None:
             "timestamps.txt",
             "keyframes",
             "aligned_segment_plan.json",
+            "motion_score.json",
+            "semantic_shift.json",
+            "generation_risk.json",
+            "candidate_boundaries.json",
+            "generation_units.json",
             "segment_manifest.json",
             "report.json",
             "visuals",
@@ -88,6 +93,7 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir / "prompt",
         {
             "prompt_manifest.json",
+            "prompt_spans.json",
             "report.json",
         },
     )
