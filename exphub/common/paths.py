@@ -44,6 +44,10 @@ class ExperimentPaths:
         return self.segment_dir / "segment_manifest.json"
 
     @property
+    def segment_aligned_plan_path(self):
+        return self.segment_dir / "aligned_segment_plan.json"
+
+    @property
     def segment_report_path(self):
         return self.segment_dir / "report.json"
 
@@ -68,16 +72,8 @@ class ExperimentPaths:
         return self.exp_dir / "merge"
 
     @property
-    def slam_dir(self):
-        return self.exp_dir / "slam"
-
-    @property
     def eval_dir(self):
         return self.exp_dir / "eval"
-
-    @property
-    def stats_dir(self):
-        return self.exp_dir / "stats"
 
     @property
     def logs_dir(self):
@@ -108,16 +104,8 @@ class ExperimentPaths:
         return self.prompt_dir / "report.json"
 
     @property
-    def prompt_base_path(self):
-        return self.prompt_dir / "base_prompt.json"
-
-    @property
-    def prompt_state_manifest_path(self):
-        return self.prompt_dir / "state_prompt_manifest.json"
-
-    @property
-    def prompt_runtime_plan_path(self):
-        return self.prompt_dir / "runtime_prompt_plan.json"
+    def prompt_manifest_path(self):
+        return self.prompt_dir / "prompt_manifest.json"
 
     @property
     def infer_runs_dir(self):
@@ -152,16 +140,24 @@ class ExperimentPaths:
         return self.merge_dir / "timestamps.txt"
 
     @property
-    def slam_report_path(self):
-        return self.slam_dir / "report.json"
+    def eval_slam_dir(self):
+        return self.eval_dir / "slam"
 
     @property
-    def slam_primary_traj_path(self):
-        return self.slam_dir / "traj_est.txt"
+    def eval_slam_report_path(self):
+        return self.eval_slam_dir / "report.json"
+
+    @property
+    def eval_slam_primary_traj_path(self):
+        return self.eval_slam_dir / "traj_est.txt"
 
     @property
     def eval_report_path(self):
         return self.eval_dir / "report.json"
+
+    @property
+    def eval_compression_path(self):
+        return self.eval_dir / "compression.json"
 
     @property
     def eval_summary_path(self):
@@ -190,20 +186,6 @@ class ExperimentPaths:
     @property
     def eval_metrics_overview_path(self):
         return self.eval_plots_dir / "metrics_overview.png"
-
-    @property
-    def stats_report_path(self):
-        return self.stats_dir / "final_report.json"
-
-    @property
-    def stats_compression_path(self):
-        return self.stats_dir / "compression.json"
-
-    def slam_traj_path(self, track):
-        return self.slam_dir / str(track) / "traj_est.tum"
-
-    def slam_run_meta_path(self, track):
-        return self.slam_dir / str(track) / "run_meta.json"
 
 
 @dataclass(frozen=True)
@@ -293,16 +275,8 @@ class ExperimentContext:
         return self.paths.merge_dir
 
     @property
-    def slam_dir(self):
-        return self.paths.slam_dir
-
-    @property
     def eval_dir(self):
         return self.paths.eval_dir
-
-    @property
-    def stats_dir(self):
-        return self.paths.stats_dir
 
     @property
     def logs_dir(self):
@@ -329,20 +303,16 @@ class ExperimentContext:
         return self.paths.segment_timestamps_path
 
     @property
+    def segment_aligned_plan_path(self):
+        return self.paths.segment_aligned_plan_path
+
+    @property
     def prompt_report_path(self):
         return self.paths.prompt_report_path
 
     @property
-    def prompt_base_path(self):
-        return self.paths.prompt_base_path
-
-    @property
-    def prompt_state_manifest_path(self):
-        return self.paths.prompt_state_manifest_path
-
-    @property
-    def prompt_runtime_plan_path(self):
-        return self.paths.prompt_runtime_plan_path
+    def prompt_manifest_path(self):
+        return self.paths.prompt_manifest_path
 
     @property
     def infer_runs_dir(self):
@@ -373,6 +343,10 @@ class ExperimentContext:
         return self.paths.eval_report_path
 
     @property
+    def eval_compression_path(self):
+        return self.paths.eval_compression_path
+
+    @property
     def eval_summary_path(self):
         return self.paths.eval_summary_path
 
@@ -391,20 +365,6 @@ class ExperimentContext:
     @property
     def eval_metrics_overview_path(self):
         return self.paths.eval_metrics_overview_path
-
-    @property
-    def stats_report_path(self):
-        return self.paths.stats_report_path
-
-    @property
-    def stats_compression_path(self):
-        return self.paths.stats_compression_path
-
-    def slam_traj_path(self, track):
-        return self.paths.slam_traj_path(track)
-
-    def slam_run_meta_path(self, track):
-        return self.paths.slam_run_meta_path(track)
 
     def frames_available(self):
         frames_dir = self.segment_frames_dir

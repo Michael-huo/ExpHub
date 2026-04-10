@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Unified eval stage for slam + metrics + diagnostics."""
+
 import argparse
 import sys
 from pathlib import Path
@@ -8,67 +10,99 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_file, read_json_dict
+from exphub.common.io import ensure_dir, ensure_file
 from exphub.common.logging import debug_info, log_warn
 from exphub.contracts import eval as eval_contract
+from exphub.pipeline.eval.diagnostics import run_diagnostics_substage
+from exphub.pipeline.eval.metrics import run_metrics_substage
+from exphub.pipeline.eval.slam import run_slam_substage
 
 
-def _resolve_traj_inputs(exp_dir):
-    slam_report = read_json_dict(Path(exp_dir).resolve() / "slam" / "report.json")
-    tracks = dict(slam_report.get("tracks") or {})
+def _build_slam_args(args):
+    return argparse.Namespace(
+        exp_dir=args.exp_dir,
+        out_dir=str((Path(args.out_dir).resolve() / "slam").resolve()),
+        segment_dir=args.segment_dir,
+        merge_dir=args.merge_dir,
+        merge_manifest=args.merge_manifest,
+        seq=args.seq,
+        droid_repo=args.droid_repo,
+        weights=args.weights,
+        t0=0,
+        stride=1,
+        fps=float(args.fps),
+        undistort_mode="auto",
+        resize_interp="linear",
+        intr_scale_mode="demo",
+        buffer=512,
+        image_size=[240, 320],
+        disable_vis=bool(args.disable_vis),
+        beta=0.3,
+        filter_thresh=1.5,
+        warmup=12,
+        keyframe_thresh=2.0,
+        frontend_thresh=12.0,
+        frontend_window=25,
+        frontend_radius=2,
+        frontend_nms=1,
+        backend_thresh=20.0,
+        backend_radius=2,
+        backend_nms=3,
+        upsample=False,
+        max_frames=0,
+        no_tqdm=False,
+        stereo=False,
+    )
 
-    reference_rel = str(slam_report.get("reference_trajectory_path", "") or "")
-    estimate_rel = str(slam_report.get("primary_trajectory_path", "") or "")
-    if not reference_rel and isinstance(tracks.get("ori"), dict):
-        reference_rel = str(tracks["ori"].get("traj_path", "") or "")
-    if not estimate_rel and isinstance(tracks.get("gen"), dict):
-        estimate_rel = str(tracks["gen"].get("traj_path", "") or "")
 
-    reference_path = (Path(exp_dir).resolve() / reference_rel).resolve() if reference_rel else None
-    estimate_path = (Path(exp_dir).resolve() / estimate_rel).resolve() if estimate_rel else None
-    reference_name = str(slam_report.get("reference_track", "") or "ori")
-    estimate_name = str(slam_report.get("primary_track", "") or "gen")
-    return {
-        "reference": reference_path,
-        "estimate": estimate_path,
-        "reference_name": reference_name,
-        "estimate_name": estimate_name,
-    }
+def _build_metrics_args(args, slam_report_path):
+    return argparse.Namespace(
+        exp_dir=args.exp_dir,
+        out_dir=args.out_dir,
+        slam_report=str(slam_report_path),
+        alignment_mode="se3",
+        delta=1.0,
+        delta_unit="frames",
+        t_max_diff=0.01,
+        t_offset=0.0,
+        skip_plots=bool(args.skip_plots),
+    )
+
+
+def _build_diagnostics_args(args, slam_report_path, metrics_result):
+    artifacts = dict((metrics_result or {}).get("artifacts") or {})
+    return argparse.Namespace(
+        exp_dir=args.exp_dir,
+        out_dir=args.out_dir,
+        slam_report=str(slam_report_path),
+        traj_metrics=str(artifacts.get("traj_metrics_path")),
+        summary=str(artifacts.get("summary_path")),
+        details=str(artifacts.get("details_path")),
+    )
 
 
 def _run_formal_mainline(args):
-    from exphub.pipeline.eval.reporting import build_summary_text, log_eval_terminal_summary, write_eval_artifacts
-    from exphub.pipeline.eval.traj_eval import run_traj_eval
-
-    exp_dir = Path(args.exp_dir).resolve()
-    out_dir = Path(args.out_dir).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    traj_inputs = _resolve_traj_inputs(exp_dir)
-    traj_result = run_traj_eval(
-        {
-            "reference": str(traj_inputs["reference"]) if traj_inputs["reference"] is not None else "",
-            "estimate": str(traj_inputs["estimate"]) if traj_inputs["estimate"] is not None else "",
-            "out_dir": str(out_dir),
-            "reference_name": str(traj_inputs["reference_name"]),
-            "estimate_name": str(traj_inputs["estimate_name"]),
-            "alignment_mode": str(args.alignment_mode),
-            "delta": float(args.delta),
-            "delta_unit": str(args.delta_unit),
-            "t_max_diff": float(args.t_max_diff),
-            "t_offset": float(args.t_offset),
-            "skip_plots": bool(args.skip_plots),
-        }
-    )
-    summary_text = build_summary_text(dict((traj_result or {}).get("metrics") or {}))
-    artifacts = write_eval_artifacts(out_dir, traj_result, summary_text)
-    log_eval_terminal_summary(dict((traj_result or {}).get("metrics") or {}), out_dir)
-    return artifacts
+    slam_result = run_slam_substage(_build_slam_args(args))
+    slam_report_path = Path(slam_result["report_path"]).resolve()
+    metrics_result = run_metrics_substage(_build_metrics_args(args, slam_report_path))
+    diagnostics_result = run_diagnostics_substage(_build_diagnostics_args(args, slam_report_path, metrics_result))
+    return {
+        "slam": slam_result,
+        "metrics": metrics_result,
+        "diagnostics": diagnostics_result,
+    }
 
 
 def run(runtime):
     contract = eval_contract.build_contract(runtime.paths)
-    ensure_file(contract.artifacts[eval_contract.SLAM_REPORT], "slam report")
+    ensure_dir(runtime.paths.segment_dir, "segment dir")
+    ensure_dir(runtime.paths.merge_dir, "merge dir")
+    ensure_file(runtime.paths.segment_manifest_path, "segment manifest")
+    ensure_file(runtime.paths.prompt_manifest_path, "prompt manifest")
+    ensure_file(runtime.paths.infer_runs_plan_path, "image gen runs plan")
+    ensure_file(runtime.paths.infer_report_path, "image gen report")
+    ensure_file(runtime.paths.merge_manifest_path, "sequence merge manifest")
+    ensure_file(runtime.paths.merge_report_path, "sequence merge report")
 
     runtime.remove_in_exp(runtime.paths.eval_dir)
     runtime.paths.eval_dir.mkdir(parents=True, exist_ok=True)
@@ -82,17 +116,23 @@ def run(runtime):
         str(runtime.paths.exp_dir),
         "--out_dir",
         str(runtime.paths.eval_dir),
-        "--alignment_mode",
-        "se3",
-        "--delta",
-        "1.0",
-        "--delta_unit",
-        "frames",
-        "--t_max_diff",
-        "0.01",
-        "--t_offset",
-        "0.0",
+        "--segment_dir",
+        str(runtime.paths.segment_dir),
+        "--merge_dir",
+        str(runtime.paths.merge_dir),
+        "--merge_manifest",
+        str(runtime.paths.merge_manifest_path),
+        "--seq",
+        str(runtime.args.droid_seq),
+        "--droid_repo",
+        str(runtime.args.droid_repo),
+        "--weights",
+        str(runtime.args.droid_weights),
+        "--fps",
+        runtime.fps_arg,
     ]
+    if not runtime.viz_enable:
+        cmd.append("--disable_vis")
     if runtime.args.no_viz:
         cmd.append("--skip_plots")
 
@@ -101,11 +141,13 @@ def run(runtime):
         phase_name="slam",
         log_name="eval.log",
         cwd=runtime.exphub_root,
-        check=False,
     )
 
     required_artifacts = [
+        (eval_contract.SLAM_REPORT, "eval slam report"),
+        (eval_contract.SLAM_PRIMARY_TRAJECTORY, "eval slam primary trajectory"),
         (eval_contract.REPORT, "eval report"),
+        (eval_contract.COMPRESSION, "eval compression snapshot"),
         (eval_contract.SUMMARY, "eval summary"),
         (eval_contract.DETAILS, "eval details"),
         (eval_contract.TRAJ_METRICS, "eval traj metrics"),
@@ -113,10 +155,8 @@ def run(runtime):
     ]
     for artifact_key, label in required_artifacts:
         artifact_path = Path(contract.artifacts[artifact_key])
-        if artifact_path.is_file():
-            debug_info("STEP eval: {}={}".format(label, artifact_path))
-        else:
-            log_warn("{} missing: {}".format(label, artifact_path))
+        ensure_file(artifact_path, label)
+        debug_info("STEP eval: {}={}".format(label, artifact_path))
 
     traj_plot_path = Path(contract.artifacts[eval_contract.TRAJ_PLOT])
     if traj_plot_path.is_file():
@@ -131,11 +171,14 @@ def _build_arg_parser():
     parser.add_argument("--run-formal-mainline", action="store_true")
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
-    parser.add_argument("--alignment_mode", default="se3", choices=["none", "se3", "sim3", "origin"])
-    parser.add_argument("--delta", type=float, default=1.0)
-    parser.add_argument("--delta_unit", default="frames", choices=["frames", "meters", "seconds"])
-    parser.add_argument("--t_max_diff", type=float, default=0.01)
-    parser.add_argument("--t_offset", type=float, default=0.0)
+    parser.add_argument("--segment_dir", required=True)
+    parser.add_argument("--merge_dir", required=True)
+    parser.add_argument("--merge_manifest", required=True)
+    parser.add_argument("--seq", default="both")
+    parser.add_argument("--droid_repo", required=True)
+    parser.add_argument("--weights", required=True)
+    parser.add_argument("--fps", type=float, default=0.0)
+    parser.add_argument("--disable_vis", action="store_true")
     parser.add_argument("--skip_plots", action="store_true")
     return parser
 

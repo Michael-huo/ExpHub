@@ -4,7 +4,9 @@ from .common import StageContract
 
 
 SLAM_REPORT = "slam_report"
+SLAM_PRIMARY_TRAJECTORY = "slam_primary_trajectory"
 REPORT = "report"
+COMPRESSION = "compression"
 SUMMARY = "summary"
 DETAILS = "details"
 TRAJ_METRICS = "traj_metrics"
@@ -17,8 +19,10 @@ def build_contract(paths):
         stage="eval",
         root=paths.eval_dir,
         artifacts={
-            SLAM_REPORT: paths.slam_report_path,
+            SLAM_REPORT: paths.eval_slam_report_path,
+            SLAM_PRIMARY_TRAJECTORY: paths.eval_slam_primary_traj_path,
             REPORT: paths.eval_report_path,
+            COMPRESSION: paths.eval_compression_path,
             SUMMARY: paths.eval_summary_path,
             DETAILS: paths.eval_details_path,
             TRAJ_METRICS: paths.eval_traj_metrics_path,

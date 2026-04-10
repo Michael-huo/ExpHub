@@ -11,13 +11,9 @@ StageName = str
 KeepLevel = str
 
 STAGE_ORDER = (
-    "segment",
-    "prompt",
-    "infer",
-    "merge",
-    "slam",
+    "encode",
+    "decode",
     "eval",
-    "stats",
 )  # type: Tuple[StageName, ...]
 
 

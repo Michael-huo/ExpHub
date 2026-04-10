@@ -13,7 +13,7 @@ from typing import Dict, Optional, Tuple
 
 from exphub.common.config import get_platform_config
 from exphub.common.logging import log_info
-from exphub.pipeline.infer.runtime_plan import load_runtime_prompt_plan, resolve_runtime_prompt_segments
+from exphub.pipeline.decode.image_gen.runtime import load_image_gen_runtime, resolve_image_gen_runtime_segments
 
 from .base import DirectInferBackend, _run_filtered
 
@@ -762,7 +762,7 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
         prompt_dir = runs_parent_path / "prompt"
     prompt_dir.mkdir(parents=True, exist_ok=True)
 
-    prompt_file_dst = prompt_dir / "runtime_prompt_plan.json"
+    prompt_file_dst = prompt_dir / "image_gen_runtime.json"
     prompt_file_path = str(prompt_file_dst.resolve())
     if str(args.prompt_file or "").strip():
         src = Path(args.prompt_file).resolve()
@@ -778,20 +778,20 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
             str(prompt_file_dst),
             {
                 "version": 1,
-                "schema": "runtime_prompt_plan.v1",
+                "schema": "image_gen_runtime.v1",
                 "base_prompt": prompt.strip(),
                 "negative_prompt": negative_prompt.strip(),
-                "source": "runtime_default",
+                "source": "image_gen_runtime.default",
                 "segments": [],
             },
         )
         prompt_file_path = str(prompt_file_dst.resolve())
-    runtime_prompt_plan = load_runtime_prompt_plan(
+    image_gen_runtime = load_image_gen_runtime(
         prompt_file_path,
         default_prompt=prompt,
         default_negative_prompt=negative_prompt,
     )
-    prompt_digest8 = _sha1_hex(_canonical_json(runtime_prompt_plan["_raw"]))[:8]
+    prompt_digest8 = _sha1_hex(_canonical_json(image_gen_runtime["_raw"]))[:8]
 
     batch_execution_segments = []
     execution_schedule_source = ""
@@ -816,8 +816,8 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
                 execution_backend = "custom"
 
     resolved_prompt_count = int(len(batch_execution_segments)) if args.batch else 1
-    resolved_segments = resolve_runtime_prompt_segments(
-        runtime_prompt_plan,
+    resolved_segments = resolve_image_gen_runtime_segments(
+        image_gen_runtime,
         resolved_prompt_count,
         default_prompt=prompt,
         default_negative_prompt=negative_prompt,
@@ -1176,10 +1176,10 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
         "num_segments": int(len(batch_execution_segments)) if args.batch else None,
         "schedule_source": str(execution_schedule_source) if args.batch else None,
         "execution_backend": str(execution_backend) if args.batch else None,
-        "runtime_prompt_plan_path": os.path.abspath(prompt_file_path),
-        "runtime_prompt_plan_digest8": prompt_digest8,
-        "runtime_prompt_plan_version": int(runtime_prompt_plan.get("version", 1)),
-        "runtime_prompt_plan_source": str(runtime_prompt_plan.get("source", "") or ""),
+        "image_gen_runtime_path": os.path.abspath(prompt_file_path),
+        "image_gen_runtime_digest8": prompt_digest8,
+        "image_gen_runtime_version": int(image_gen_runtime.get("version", 1)),
+        "image_gen_runtime_source": str(image_gen_runtime.get("source", "") or ""),
         "save_frames": bool(save_frames),
         "frame_ext": frame_ext,
         "is_batch": bool(args.batch),
@@ -1333,6 +1333,7 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
         frames_dir = os.path.join(run_dir, "frames")
         if save_context["save_frames"]:
             _save_frames(result.result_sample, frames_dir, ext=save_context["frame_ext"])
+        saved_frame_count = int(result.result_sample.shape[2]) if result.result_sample is not None else int(result.run_frames)
         params = {
             "task": save_context["task_name"],
             "created_at": datetime.now().isoformat(),
@@ -1344,6 +1345,7 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
             "height": int(height),
             "video_length_desired": int(result.desired_frames),
             "video_length_run": int(result.run_frames),
+            "saved_frame_count": int(saved_frame_count),
             "vae_temporal_compression_ratio": int(save_context["vae_temporal_compression_ratio"]),
             "start_idx": s_idx,
             "end_idx": e_idx,
@@ -1369,9 +1371,9 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
             "negative_prompt": result.negative_prompt,
             "prompt_source": result.prompt_source,
             "prompt_hash8": result.prompt_hash8,
-            "runtime_prompt_plan": save_context["runtime_prompt_plan_path"],
-            "runtime_prompt_plan_digest8": save_context["runtime_prompt_plan_digest8"],
-            "runtime_prompt_plan_version": int(save_context["runtime_prompt_plan_version"]),
+            "image_gen_runtime": save_context["image_gen_runtime_path"],
+            "image_gen_runtime_digest8": save_context["image_gen_runtime_digest8"],
+            "image_gen_runtime_version": int(save_context["image_gen_runtime_version"]),
             "output_dir": run_dir,
             "output_video": "preview.mp4",
             "frames_dir": "frames" if save_context["save_frames"] else None,
@@ -1425,11 +1427,22 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
                         "end_idx": int(end_idx),
                         "raw_start_idx": int(seg_spec.get("raw_start_idx", start_idx)),
                         "raw_end_idx": int(seg_spec.get("raw_end_idx", end_idx)),
+                        "desired_start_idx": int(seg_spec.get("desired_start_idx", start_idx)),
+                        "desired_end_idx": int(seg_spec.get("desired_end_idx", end_idx)),
+                        "desired_num_frames": int(seg_spec.get("desired_num_frames", desired_frames)),
+                        "aligned_start_idx": int(seg_spec.get("aligned_start_idx", start_idx)),
+                        "aligned_end_idx": int(seg_spec.get("aligned_end_idx", end_idx)),
+                        "aligned_num_frames": int(seg_spec.get("aligned_num_frames", desired_frames)),
                         "deploy_start_idx": int(seg_spec.get("deploy_start_idx", start_idx)),
                         "deploy_end_idx": int(seg_spec.get("deploy_end_idx", end_idx)),
                         "raw_gap": int(seg_spec.get("raw_gap", end_idx - start_idx)),
                         "deploy_gap": int(seg_spec.get("deploy_gap", end_idx - start_idx)),
                         "num_frames": int(desired_frames),
+                        "left_shift": int(seg_spec.get("left_shift", 0)),
+                        "right_shift": int(seg_spec.get("right_shift", 0)),
+                        "align_reason": str(seg_spec.get("align_reason", "") or ""),
+                        "is_valid_for_decode": bool(seg_spec.get("is_valid_for_decode", False)),
+                        "is_valid_for_export": bool(seg_spec.get("is_valid_for_export", False)),
                         "seed": int(seg_seed),
                         "run_name": run_name,
                         "prompt": str(resolved_info.get("resolved_prompt", "") or ""),
@@ -1461,10 +1474,10 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
                 "base_idx": int(base_idx_exec),
                 "num_segments": int(total),
                 "seed_base": int(args.seed_base),
-                "runtime_prompt_plan": os.path.abspath(prompt_file_path),
-                "runtime_prompt_plan_digest8": prompt_digest8,
-                "runtime_prompt_plan_version": int(runtime_prompt_plan.get("version", 1)),
-                "runtime_prompt_plan_source": str(runtime_prompt_plan.get("source", "") or ""),
+                "image_gen_runtime": os.path.abspath(prompt_file_path),
+                "image_gen_runtime_digest8": prompt_digest8,
+                "image_gen_runtime_version": int(image_gen_runtime.get("version", 1)),
+                "image_gen_runtime_source": str(image_gen_runtime.get("source", "") or ""),
                 "default_num_inference_steps": int(num_inference_steps),
                 "default_guidance_scale": float(guidance_scale),
                 "segments": segs,
@@ -1483,7 +1496,7 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
             seg_seed = int(args.seed_base) + int(seg)
             segment_prompt = prompt
             segment_negative_prompt = negative_prompt
-            segment_prompt_source = str(runtime_prompt_plan.get("source", "") or "runtime_default")
+            segment_prompt_source = str(image_gen_runtime.get("source", "") or "image_gen_runtime.default")
             segment_num_inference_steps = int(num_inference_steps)
             segment_guidance_scale = float(guidance_scale)
             seg_i = int(seg) + 1
@@ -1579,7 +1592,7 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
     else:
         segment_prompt = prompt
         segment_negative_prompt = negative_prompt
-        segment_prompt_source = str(runtime_prompt_plan.get("source", "") or "runtime_default")
+        segment_prompt_source = str(image_gen_runtime.get("source", "") or "image_gen_runtime.default")
         segment_num_inference_steps = int(num_inference_steps)
         segment_guidance_scale = float(guidance_scale)
         prompt_info = resolved_segments[0] if len(resolved_segments) > 0 else None

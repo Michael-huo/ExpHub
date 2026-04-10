@@ -280,24 +280,19 @@ def _parse_infer_log_details(log_path: Path) -> Dict[str, object]:
 
 
 def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict[str, object]:
-    phase_names = ["segment", "prompt", "infer", "merge", "slam", "eval", "stats"]
+    phase_names = ["encode", "decode", "eval"]
     total_time = sum(float(x) for x in step_times.values())
 
     eval_report = _read_json_dict(exp_dir / "eval" / "report.json")
     traj_metrics = dict(eval_report.get("traj_eval") or {}) if isinstance(eval_report.get("traj_eval"), dict) else {}
     if not traj_metrics:
         traj_metrics = _read_json_dict(exp_dir / "eval" / "metrics" / "traj_eval.json")
-    stats_report = _read_json_dict(exp_dir / "stats" / "final_report.json")
-    if not stats_report:
-        stats_report = _read_json_dict(exp_dir / "stats" / "report.json")
-    stats_compression_snapshot = _read_json_dict(exp_dir / "stats" / "compression.json")
     infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
 
     compression_obj = {}
-    if isinstance(stats_report.get("compression"), dict):
-        compression_obj = dict(stats_report.get("compression") or {})
-
-    compression_snapshot = dict(stats_compression_snapshot or {})
+    if isinstance(eval_report.get("compression"), dict):
+        compression_obj = dict(eval_report.get("compression") or {})
+    compression_snapshot = _read_json_dict(exp_dir / "eval" / "compression.json")
 
     ori_bytes = _pick_first_int(
         compression_obj,
@@ -390,14 +385,14 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     div = "-" * 70
 
     time_rows = []
-    for phase_name in ["segment", "prompt", "infer", "merge", "slam", "eval", "stats"]:
+    for phase_name in ["encode", "decode", "eval"]:
         time_rows.append((phase_name, _fmt_phase_seconds(_as_float_or_none(phase_times.get(phase_name)), total_time)))
 
     detail_rows = [
-        ("infer.load", _fmt_seconds(_as_float_or_none(infer_details.get("infer.load")))),
-        ("infer.quant", _fmt_seconds(_as_float_or_none(infer_details.get("infer.quant")))),
-        ("infer.run", _fmt_seconds(_as_float_or_none(infer_details.get("infer.run")))),
-        ("infer.avg_fr", _fmt_seconds(_as_float_or_none(infer_details.get("infer.avg_fr")), digits=3, suffix="s/frame")),
+        ("image_gen.load", _fmt_seconds(_as_float_or_none(infer_details.get("infer.load")))),
+        ("image_gen.quant", _fmt_seconds(_as_float_or_none(infer_details.get("infer.quant")))),
+        ("image_gen.run", _fmt_seconds(_as_float_or_none(infer_details.get("infer.run")))),
+        ("image_gen.avg_fr", _fmt_seconds(_as_float_or_none(infer_details.get("infer.avg_fr")), digits=3, suffix="s/frame")),
         ("total", _fmt_seconds(total_time)),
     ]
 
@@ -436,6 +431,59 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     _info(sep)
 
 
+def _load_export_report(export_root: Path, step_times: Dict[str, float]) -> Dict[str, object]:
+    dataset_report = _read_json_dict(export_root / "dataset_report.json")
+    summary = dict(dataset_report.get("summary") or {})
+    outputs = dict(dataset_report.get("outputs") or {})
+    return {
+        "export_root": str(export_root),
+        "total_time": float(sum(float(x) for x in step_times.values())),
+        "phase_times": {"export": _as_float_or_none(step_times.get("export"))},
+        "summary": summary,
+        "outputs": outputs,
+    }
+
+
+def _print_export_report(export_root: Path, step_times: Dict[str, float]) -> None:
+    payload = _load_export_report(export_root, step_times)
+    total_time = float(payload.get("total_time") or 0.0)
+    phase_times = dict(payload.get("phase_times") or {})
+    summary = dict(payload.get("summary") or {})
+    outputs = dict(payload.get("outputs") or {})
+
+    sep = "=" * 70
+    div = "-" * 70
+    _info(sep)
+    _info("EXPORT REPORT")
+    _info(sep)
+    _print_rows(
+        [
+            ("export", _fmt_phase_seconds(_as_float_or_none(phase_times.get("export")), total_time)),
+            ("total", _fmt_seconds(total_time)),
+        ]
+    )
+    _info(div)
+    _print_rows(
+        [
+            ("bags", _fmt_count(_as_int_or_none(summary.get("bag_count")))),
+            ("clips", _fmt_count(_as_int_or_none(summary.get("exported_clip_count")))),
+            ("skipped", _fmt_count(_as_int_or_none(summary.get("skipped_clip_count")))),
+            ("train", _fmt_count(_as_int_or_none(_get_nested(summary, ["split_counts", "train"])))),
+            ("val", _fmt_count(_as_int_or_none(_get_nested(summary, ["split_counts", "val"])))),
+            ("test", _fmt_count(_as_int_or_none(_get_nested(summary, ["split_counts", "test"])))),
+        ]
+    )
+    _info(div)
+    _print_rows(
+        [
+            ("clips_dir", str(outputs.get("clips_dir") or "unavailable")),
+            ("metadata_dir", str(outputs.get("metadata_dir") or "unavailable")),
+            ("export_root", str(payload.get("export_root") or export_root)),
+        ]
+    )
+    _info(sep)
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m exphub", add_help=True)
 
@@ -452,7 +500,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--mode",
         default="all",
-        choices=["all", "workflow", "segment", "prompt", "stats", "infer", "merge", "slam", "eval", "doctor"],
+        choices=["all", "workflow", "encode", "decode", "eval", "export", "doctor"],
         help="pipeline stage",
     )
     ap.add_argument("--exphub", default=os.environ.get("EXPHUB", ""), help="ExpHub root (default: $EXPHUB or cwd)")
@@ -483,7 +531,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--infer_backend",
         default="wan_fun_5b_inp",
-        choices=["wan_fun_a14b_inp", "wan_fun_5b_inp"],
+        choices=["wan_fun_5b_inp"],
         help="infer backend for the current workflow",
     )
     ap.add_argument(
@@ -494,6 +542,14 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     ap.add_argument("--datasets_cfg", default="", help="datasets.json path (default: <exphub>/config/datasets.json)")
     ap.add_argument("--exp_root", default="", help="override experiments root (default: <exphub>/experiments/<dataset>/<sequence>)")
+    ap.add_argument("--export_root", default="", help="override export root (default: <exphub>/exports/<scope>/<focus>/<tag>)")
+    ap.add_argument("--export_scope", default="single", choices=["single", "dataset", "focus"])
+    ap.add_argument("--export_focus", default="ncd_scand", choices=["ncd_scand", "ncd", "scand"])
+    ap.add_argument("--export_stride_sec", type=float, default=3.0)
+    ap.add_argument("--export_max_bags", type=int, default=0)
+    ap.add_argument("--export_max_bags_per_dataset", type=int, default=0)
+    ap.add_argument("--export_max_clips_per_bag", type=int, default=0)
+    ap.add_argument("--export_split_seed", type=int, default=13)
 
     ap.add_argument(
         "--keep_level",
@@ -522,8 +578,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
 
-    # SLAM sequence selection.
-    # Default is "both" so that `--mode slam` runs both ori/gen unless explicitly overridden.
+    # Eval-stage SLAM sequence selection.
+    # Default is "both" so eval can compare ori/gen unless explicitly overridden.
     ap.add_argument("--droid_seq", default="both", choices=["auto", "ori", "gen", "both"])
     ap.add_argument("--viz", action="store_true")
     ap.add_argument("--no_viz", action="store_true")
@@ -563,7 +619,10 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     try:
         result = run_runtime(runtime)
-        if str(args.mode or "").strip().lower() != "doctor":
+        mode_norm = str(args.mode or "").strip().lower()
+        if mode_norm == "export":
+            _print_export_report(result.result_root, result.step_times)
+        elif mode_norm != "doctor":
             _print_experiment_report(result.exp_dir, result.step_times)
     except (ConfigError, RunError, RuntimeError) as e:
         _die(str(e))
