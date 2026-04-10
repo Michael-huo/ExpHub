@@ -126,6 +126,7 @@ class PipelineRuntime:
                 "gpus": self.args.gpus,
                 "prompt_model_dir": self.args.prompt_model_dir,
                 "decode_source": getattr(self.args, "decode_source", "aligned"),
+                "eval_source": getattr(self.args, "eval_source", "aligned"),
                 "export_source": getattr(self.args, "export_source", "aligned"),
                 "export_target_fps": getattr(self.args, "export_target_fps", None),
                 "export_target_num_frames": getattr(self.args, "export_target_num_frames", None),

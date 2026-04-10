@@ -181,7 +181,24 @@ def _stage_created_at(*reports):
     return ""
 
 
-def _build_stage_table(exp_dir, stage_reports, traj_metrics):
+def _build_source_summary(infer_report, merge_report, merge_manifest, eval_source, decode_source):
+    merge_summary = dict((merge_manifest or {}).get("summary") or {})
+    return {
+        "eval_source": str(eval_source or "aligned"),
+        "decode_source": str(
+            (merge_report or {}).get("decode_source")
+            or (infer_report or {}).get("decode_source")
+            or merge_summary.get("decode_source")
+            or decode_source
+            or "aligned"
+        ),
+        "source_unit_count": int(merge_summary.get("source_unit_count", 0) or 0),
+        "source_span_count": int(merge_summary.get("source_span_count", 0) or 0),
+        "shared_anchor_count": int(merge_summary.get("shared_anchor_count", 0) or 0),
+    }
+
+
+def _build_stage_table(exp_dir, stage_reports, traj_metrics, inputs, eval_dir, eval_source):
     return {
         "encode": {
             "status": _stage_status(
@@ -201,17 +218,20 @@ def _build_stage_table(exp_dir, stage_reports, traj_metrics):
             ),
             "created_at": _stage_created_at(stage_reports["infer"], stage_reports["merge"]),
             "artifacts": {
-                "infer_report": _relative_path(exp_dir, Path(exp_dir) / "infer" / "report.json"),
-                "merge_report": _relative_path(exp_dir, Path(exp_dir) / "merge" / "report.json"),
+                "decode_source": str(inputs.get("decode_source", "aligned") or "aligned"),
+                "infer_report": _relative_path(exp_dir, Path(inputs.get("infer_report")).resolve()),
+                "merge_report": _relative_path(exp_dir, Path(inputs.get("merge_report")).resolve()),
+                "merge_manifest": _relative_path(exp_dir, Path(inputs.get("merge_manifest")).resolve()),
             },
         },
         "eval": {
             "status": _stage_status(stage_reports["slam"].get("slam_status"), traj_metrics.get("eval_status")),
             "created_at": _stage_created_at(stage_reports["slam"], {"created_at": traj_metrics.get("created_at")}),
             "artifacts": {
-                "slam_report": _relative_path(exp_dir, Path(exp_dir) / "eval" / "slam" / "report.json"),
-                "traj_metrics": _relative_path(exp_dir, Path(exp_dir) / "eval" / "metrics" / "traj_eval.json"),
-                "report": _relative_path(exp_dir, Path(exp_dir) / "eval" / "report.json"),
+                "eval_source": str(eval_source or "aligned"),
+                "slam_report": _relative_path(exp_dir, Path(eval_dir).resolve() / "slam" / "report.json"),
+                "traj_metrics": _relative_path(exp_dir, Path(eval_dir).resolve() / "metrics" / "traj_eval.json"),
+                "report": _relative_path(exp_dir, Path(eval_dir).resolve() / "report.json"),
             },
         },
     }
@@ -236,15 +256,22 @@ def run_diagnostics_substage(args):
     exp_dir = Path(args.exp_dir).resolve()
     eval_dir = Path(args.out_dir).resolve()
     eval_dir.mkdir(parents=True, exist_ok=True)
+    eval_source = str(args.eval_source or "aligned").strip().lower() or "aligned"
+    decode_source = str(args.decode_source or eval_source).strip().lower() or "aligned"
 
     warnings = []
     stage_reports = {
         "segment": _read_stage_report(exp_dir / "segment" / "report.json", warnings),
         "prompt": _read_stage_report(exp_dir / "prompt" / "report.json", warnings),
-        "infer": _read_stage_report(exp_dir / "infer" / "report.json", warnings),
-        "merge": _read_stage_report(exp_dir / "merge" / "report.json", warnings),
+        "infer": _read_stage_report(Path(args.infer_report), warnings),
+        "merge": _read_stage_report(Path(args.merge_report), warnings),
         "slam": _read_stage_report(Path(args.slam_report), warnings),
     }
+    merge_manifest = dict(read_json_dict(Path(args.merge_manifest)) or {})
+    if not merge_manifest:
+        msg = "missing or invalid merge manifest: {}".format(Path(args.merge_manifest).resolve())
+        warnings.append(msg)
+        log_warn(msg)
     traj_metrics = dict(read_json_dict(Path(args.traj_metrics)) or {})
     if not traj_metrics:
         msg = "missing eval trajectory metrics: {}".format(Path(args.traj_metrics).resolve())
@@ -254,26 +281,52 @@ def run_diagnostics_substage(args):
     compression_summary = _build_compression_summary(exp_dir, stage_reports["segment"], stage_reports["prompt"], warnings)
     quality = _build_quality(traj_metrics, stage_reports["slam"])
     compression_snapshot = _build_compression_snapshot(compression_summary)
+    source_summary = _build_source_summary(
+        infer_report=stage_reports["infer"],
+        merge_report=stage_reports["merge"],
+        merge_manifest=merge_manifest,
+        eval_source=eval_source,
+        decode_source=decode_source,
+    )
 
     final_report = {
         "report_schema_version": "eval_report.v2",
         "step": "eval",
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "eval_source": str(eval_source),
+        "decode_source": str(source_summary["decode_source"]),
+        "source_unit_count": int(source_summary["source_unit_count"]),
+        "source_span_count": int(source_summary["source_span_count"]),
+        "shared_anchor_count": int(source_summary["shared_anchor_count"]),
         "workflow": "encode -> decode -> eval",
         "inputs": {
             "segment_report": _relative_path(exp_dir, exp_dir / "segment" / "report.json"),
             "prompt_report": _relative_path(exp_dir, exp_dir / "prompt" / "report.json"),
-            "infer_report": _relative_path(exp_dir, exp_dir / "infer" / "report.json"),
-            "merge_report": _relative_path(exp_dir, exp_dir / "merge" / "report.json"),
+            "infer_report": _relative_path(exp_dir, Path(args.infer_report).resolve()),
+            "merge_report": _relative_path(exp_dir, Path(args.merge_report).resolve()),
+            "merge_manifest": _relative_path(exp_dir, Path(args.merge_manifest).resolve()),
             "slam_report": _relative_path(exp_dir, Path(args.slam_report).resolve()),
             "traj_metrics": _relative_path(exp_dir, Path(args.traj_metrics).resolve()),
             "summary": _relative_path(exp_dir, Path(args.summary).resolve()),
             "details": _relative_path(exp_dir, Path(args.details).resolve()),
         },
-        "stages": _build_stage_table(exp_dir, stage_reports, traj_metrics),
+        "stages": _build_stage_table(
+            exp_dir,
+            stage_reports,
+            traj_metrics,
+            inputs={
+                "infer_report": args.infer_report,
+                "merge_report": args.merge_report,
+                "merge_manifest": args.merge_manifest,
+                "decode_source": source_summary["decode_source"],
+            },
+            eval_dir=eval_dir,
+            eval_source=eval_source,
+        ),
         "compression": compression_summary,
         "quality": quality,
         "traj_eval": traj_metrics,
+        "source_summary": source_summary,
         "slam": {
             "slam_status": str(stage_reports["slam"].get("slam_status", "") or ""),
             "primary_track": str(stage_reports["slam"].get("primary_track", "") or ""),
@@ -323,6 +376,11 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--slam_report", required=True)
+    parser.add_argument("--infer_report", required=True)
+    parser.add_argument("--merge_report", required=True)
+    parser.add_argument("--merge_manifest", required=True)
+    parser.add_argument("--eval_source", default="aligned")
+    parser.add_argument("--decode_source", default="aligned")
     parser.add_argument("--traj_metrics", required=True)
     parser.add_argument("--summary", required=True)
     parser.add_argument("--details", required=True)
