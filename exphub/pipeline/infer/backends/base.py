@@ -191,6 +191,13 @@ class ConfiguredInferBackend(InferBackend):
 class DirectInferBackend(ConfiguredInferBackend):
     backend_entry_type = "direct_backend"
 
+    @staticmethod
+    def _runs_parent(request):
+        value = getattr(request, "runs_parent", None)
+        if value is not None:
+            return str(Path(value).resolve())
+        return str((Path(request.exp_dir).resolve() / "infer").resolve())
+
     def _build_cmd(self, request):
         # type: (object) -> List[str]
         cmd = [
@@ -218,7 +225,7 @@ class DirectInferBackend(ConfiguredInferBackend):
             "--execution_plan",
             str(request.execution_plan_path),
             "--runs_parent",
-            str(request.exp_dir / "infer"),
+            self._runs_parent(request),
             "--exp_name",
             "runs",
         ]
@@ -318,7 +325,7 @@ class SubprocessInferBackend(ConfiguredInferBackend):
             "--execution_plan",
             str(request.execution_plan_path),
             "--runs_parent",
-            str(request.exp_dir / "infer"),
+            DirectInferBackend._runs_parent(request),
             "--exp_name",
             "runs",
         ]

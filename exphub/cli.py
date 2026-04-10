@@ -548,6 +548,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         choices=["wan_fun_5b_inp"],
         help="infer backend for the current workflow",
     )
+    ap.add_argument("--decode_source", default="aligned", choices=["aligned", "generation_units"])
     ap.add_argument(
         "--infer_model_dir",
         default="",

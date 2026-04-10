@@ -56,7 +56,9 @@ def _cleanup_min(exp_dir: Path) -> None:
     heavy_dirs = [
         exp_dir / "segment" / "frames",
         exp_dir / "infer" / "runs",
+        exp_dir / "infer" / "generation_units" / "runs",
         exp_dir / "merge" / "frames",
+        exp_dir / "merge" / "generation_units" / "frames",
     ]
     for d in heavy_dirs:
         _rm_if_exists(exp_dir, d)
@@ -100,11 +102,21 @@ def _cleanup_min(exp_dir: Path) -> None:
     _prune_dir_keep_names(
         exp_dir,
         exp_dir / "infer",
-        {"report.json", "runs_plan.json"},
+        {"report.json", "runs_plan.json", "generation_units"},
     )
     _prune_dir_keep_names(
         exp_dir,
         exp_dir / "merge",
+        {"merge_manifest.json", "report.json", "calib.txt", "timestamps.txt", "generation_units"},
+    )
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "infer" / "generation_units",
+        {"report.json", "runs_plan.json"},
+    )
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "merge" / "generation_units",
         {"merge_manifest.json", "report.json", "calib.txt", "timestamps.txt"},
     )
     _prune_dir_keep_names(
