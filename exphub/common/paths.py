@@ -163,6 +163,47 @@ class ExperimentPaths:
     def merge_timestamps_path(self):
         return self.merge_dir / "timestamps.txt"
 
+    @staticmethod
+    def _normalize_decode_source_name(decode_source: Optional[str]) -> str:
+        value = str(decode_source or "aligned").strip().lower()
+        return value or "aligned"
+
+    def infer_source_dir(self, decode_source: Optional[str] = "aligned"):
+        source_name = self._normalize_decode_source_name(decode_source)
+        if source_name == "aligned":
+            return self.infer_dir
+        return self.infer_dir / source_name
+
+    def infer_runs_source_dir(self, decode_source: Optional[str] = "aligned"):
+        return self.infer_source_dir(decode_source) / "runs"
+
+    def infer_runs_plan_source_path(self, decode_source: Optional[str] = "aligned"):
+        return self.infer_source_dir(decode_source) / "runs_plan.json"
+
+    def infer_report_source_path(self, decode_source: Optional[str] = "aligned"):
+        return self.infer_source_dir(decode_source) / "report.json"
+
+    def merge_source_dir(self, decode_source: Optional[str] = "aligned"):
+        source_name = self._normalize_decode_source_name(decode_source)
+        if source_name == "aligned":
+            return self.merge_dir
+        return self.merge_dir / source_name
+
+    def merge_frames_source_dir(self, decode_source: Optional[str] = "aligned"):
+        return self.merge_source_dir(decode_source) / "frames"
+
+    def merge_manifest_source_path(self, decode_source: Optional[str] = "aligned"):
+        return self.merge_source_dir(decode_source) / "merge_manifest.json"
+
+    def merge_report_source_path(self, decode_source: Optional[str] = "aligned"):
+        return self.merge_source_dir(decode_source) / "report.json"
+
+    def merge_calib_source_path(self, decode_source: Optional[str] = "aligned"):
+        return self.merge_source_dir(decode_source) / "calib.txt"
+
+    def merge_timestamps_source_path(self, decode_source: Optional[str] = "aligned"):
+        return self.merge_source_dir(decode_source) / "timestamps.txt"
+
     @property
     def eval_slam_dir(self):
         return self.eval_dir / "slam"

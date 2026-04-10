@@ -147,6 +147,7 @@ class ImageGenRequest(object):
     exp_dir: Path
     prompt_file_path: Path
     execution_plan_path: Path
+    runs_parent: Path
     fps: int
     kf_gap: int
     base_idx: int
@@ -204,6 +205,46 @@ def load_prompt_manifest(path):
     return manifest
 
 
+def _load_generation_units(exp_dir, segment_manifest):
+    exp_root = Path(exp_dir).resolve()
+    segment_payload = _as_dict(segment_manifest)
+    artifact_meta = _as_dict(segment_payload.get("generation_units"))
+    artifact_path = str(
+        artifact_meta.get("path", "")
+        or _as_dict(segment_payload.get("artifacts")).get("generation_units", "")
+        or "segment/generation_units.json"
+    ).strip()
+    payload = _load_manifest((exp_root / artifact_path).resolve(), "generation units")
+    units = list(payload.get("units") or [])
+    if not units:
+        raise ValueError("generation units must contain units")
+    payload["_path"] = str((exp_root / artifact_path).resolve())
+    return payload
+
+
+def _load_prompt_spans(exp_dir):
+    exp_root = Path(exp_dir).resolve()
+    payload = _load_manifest((exp_root / "prompt" / "prompt_spans.json").resolve(), "prompt spans")
+    spans = list(payload.get("spans") or [])
+    if not spans:
+        raise ValueError("prompt spans must contain spans")
+    payload["_path"] = str((exp_root / "prompt" / "prompt_spans.json").resolve())
+    return payload
+
+
+def _load_prompt_span_map(prompt_spans_payload):
+    mapping = {}
+    for raw_item in list(_as_dict(prompt_spans_payload).get("spans") or []):
+        item = _as_dict(raw_item)
+        span_id = _collapse_ws(item.get("span_id", ""))
+        if not span_id:
+            continue
+        mapping[span_id] = item
+    if not mapping:
+        raise ValueError("prompt spans must contain at least one span_id")
+    return mapping
+
+
 def load_image_gen_runtime(path, default_prompt="", default_negative_prompt=""):
     payload = _load_manifest(path, "image gen runtime")
     base_prompt = _collapse_ws(payload.get("base_prompt", "")) or _collapse_ws(default_prompt)
@@ -247,7 +288,7 @@ def load_image_gen_runtime(path, default_prompt="", default_negative_prompt=""):
     }
 
 
-def build_image_gen_runtime(segment_manifest, prompt_manifest, infer_backend="wan_fun_5b_inp"):
+def _build_aligned_image_gen_runtime(segment_manifest, prompt_manifest, infer_backend="wan_fun_5b_inp"):
     segment_payload = _as_dict(segment_manifest)
     prompt_payload = _as_dict(prompt_manifest)
     exp_dir = Path(segment_payload["_path"]).resolve().parent.parent
@@ -388,11 +429,14 @@ def build_image_gen_runtime(segment_manifest, prompt_manifest, infer_backend="wa
         "schema": "image_gen_runtime.v1",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "source": "decode.image_gen.runtime",
+        "decode_source": "aligned",
+        "schedule_source": "segment.aligned_segment_plan",
         "prompt_structure": str(prompt_payload.get("prompt_structure", "base_scene_motion") or "base_scene_motion"),
         "base_prompt": str(prompt_payload.get("base_prompt", "") or ""),
         "negative_prompt": str(prompt_payload.get("negative_prompt", "") or ""),
         "execution_backend": str(infer_backend),
         "segments": segments,
+        "skipped_units": [],
         "source_files": {
             "segment_manifest": _relative_path(exp_dir, segment_payload["_path"]),
             "aligned_segment_plan": _relative_path(exp_dir, aligned_plan["_path"]),
@@ -403,8 +447,188 @@ def build_image_gen_runtime(segment_manifest, prompt_manifest, infer_backend="wa
             "boundary_count": int(len(aligned_boundaries)),
             "prompt_source_counts": dict(_count_by_key(segments, "prompt_source")),
             "state_label_counts": dict(_count_by_key(segments, "state_label")),
+            "skipped_unit_count": 0,
+            "source_unit_count": int(len(segments)),
+            "source_span_count": 0,
+            "shared_anchor_count": int(max(0, len(segments) - 1)),
         },
     }
+
+
+def _build_generation_units_image_gen_runtime(segment_manifest, infer_backend="wan_fun_5b_inp"):
+    segment_payload = _as_dict(segment_manifest)
+    exp_dir = Path(segment_payload["_path"]).resolve().parent.parent
+    generation_units_payload = _load_generation_units(exp_dir, segment_payload)
+    prompt_spans_payload = _load_prompt_spans(exp_dir)
+    prompt_span_map = _load_prompt_span_map(prompt_spans_payload)
+    units = list(generation_units_payload.get("units") or [])
+
+    sequence_range = _as_dict(generation_units_payload.get("sequence_range"))
+    sequence_start_idx = _safe_int(sequence_range.get("start_idx"), 0)
+    sequence_end_idx = _safe_int(sequence_range.get("end_idx"), None)
+    if sequence_end_idx is None or int(sequence_end_idx) < int(sequence_start_idx):
+        raise RuntimeError("generation units sequence range is invalid")
+
+    segments = []
+    skipped_units = []
+    prev_anchor_end = None
+    decode_blocked = False
+    shared_anchor_count = 0
+
+    for idx, raw_item in enumerate(units):
+        unit = _as_dict(raw_item)
+        unit_id = _collapse_ws(unit.get("unit_id", "")) or "unit_{:03d}".format(int(idx))
+        anchor_start_idx = _safe_int(unit.get("anchor_start_idx"), None)
+        anchor_end_idx = _safe_int(unit.get("anchor_end_idx"), None)
+        if anchor_start_idx is None or anchor_end_idx is None or int(anchor_end_idx) < int(anchor_start_idx):
+            raise RuntimeError("generation unit {} has invalid anchors".format(unit_id))
+
+        prompt_ref = dict(_as_dict(unit.get("prompt_ref")))
+        span_id = _collapse_ws(prompt_ref.get("span_id", ""))
+        prompt_span = _as_dict(prompt_span_map.get(span_id))
+        if not prompt_span:
+            raise RuntimeError("generation unit {} references missing prompt span {}".format(unit_id, span_id or "<empty>"))
+
+        skip_reason = ""
+        if not bool(unit.get("is_valid_for_decode", False)):
+            skip_reason = "unit_marked_invalid_for_decode"
+        elif decode_blocked:
+            skip_reason = "blocked_by_skipped_predecessor"
+        elif prev_anchor_end is not None and int(anchor_start_idx) != int(prev_anchor_end):
+            skip_reason = "shared_anchor_discontinuity_after_skip"
+
+        if skip_reason:
+            skipped_units.append(
+                {
+                    "unit_id": str(unit_id),
+                    "source_span_id": str(span_id),
+                    "source_prompt_ref": dict(prompt_ref),
+                    "anchor_start_idx": int(anchor_start_idx),
+                    "anchor_end_idx": int(anchor_end_idx),
+                    "reason": str(skip_reason),
+                }
+            )
+            if prev_anchor_end is not None:
+                decode_blocked = True
+            continue
+
+        prompt_ref["artifact_path"] = _collapse_ws(prompt_ref.get("artifact_path", "")) or "prompt/prompt_spans.json"
+        aligned_num_frames = int(anchor_end_idx) - int(anchor_start_idx) + 1
+        segments.append(
+            {
+                "seg": int(len(segments)),
+                "segment_id": int(len(segments)),
+                "schedule_source": "segment.generation_units",
+                "decode_source": "generation_units",
+                "execution_backend": str(infer_backend),
+                "run_id": "run_{:03d}".format(int(len(segments))),
+                "source_unit_id": str(unit_id),
+                "source_span_id": str(span_id),
+                "source_prompt_ref": dict(prompt_ref),
+                "target_num_frames": int(aligned_num_frames),
+                "start_idx": int(anchor_start_idx),
+                "end_idx": int(anchor_end_idx),
+                "raw_start_idx": int(anchor_start_idx),
+                "raw_end_idx": int(anchor_end_idx),
+                "desired_start_idx": int(anchor_start_idx),
+                "desired_end_idx": int(anchor_end_idx),
+                "desired_num_frames": int(aligned_num_frames),
+                "aligned_start_idx": int(anchor_start_idx),
+                "aligned_end_idx": int(anchor_end_idx),
+                "aligned_num_frames": int(aligned_num_frames),
+                "deploy_start_idx": int(anchor_start_idx),
+                "deploy_end_idx": int(anchor_end_idx),
+                "raw_gap": int(anchor_end_idx - anchor_start_idx),
+                "deploy_gap": int(anchor_end_idx - anchor_start_idx),
+                "num_frames": int(aligned_num_frames),
+                "left_shift": 0,
+                "right_shift": 0,
+                "align_reason": "generation_unit_shared_anchor",
+                "state_segment_id": None,
+                "state_label": str(unit.get("scene_label", prompt_span.get("scene_label", "scene_group_000")) or "scene_group_000"),
+                "risk_level": str(unit.get("risk_level", "") or ""),
+                "motion_label": str(unit.get("motion_label", prompt_span.get("motion_label", "steady")) or "steady"),
+                "is_valid_for_decode": True,
+                "is_valid_for_export": bool(unit.get("is_valid_for_export", False)),
+                "prompt_source": "prompt_spans.resolved_prompt",
+                "base_prompt": str(prompt_span.get("base_prompt", prompt_spans_payload.get("base_prompt", "")) or ""),
+                "resolved_prompt": str(prompt_span.get("resolved_prompt", "") or ""),
+                "negative_prompt": str(prompt_span.get("negative_prompt", prompt_spans_payload.get("negative_prompt", "")) or ""),
+                "scene_prompt": str(prompt_span.get("scene_prompt", "") or ""),
+                "motion_prompt": str(prompt_span.get("motion_prompt", "") or ""),
+                "scene_prompt_source": str(prompt_span.get("scene_prompt_source", "") or ""),
+                "motion_prompt_source": str(prompt_span.get("motion_prompt_source", "") or ""),
+                "scene_encoding_backend": str(prompt_span.get("scene_encoding_backend", "") or ""),
+                "continuity_emphasis": str(prompt_span.get("continuity_emphasis", "balanced") or "balanced"),
+                "representative_frame": {},
+            }
+        )
+        if prev_anchor_end is not None:
+            shared_anchor_count += 1
+        prev_anchor_end = int(anchor_end_idx)
+
+    if not segments:
+        reasons = ",".join(sorted(set([str(item.get("reason", "")) for item in skipped_units if str(item.get("reason", ""))])))
+        raise RuntimeError("generation-units decode resolved to zero executable units{}".format(": {}".format(reasons) if reasons else ""))
+
+    for idx, seg_item in enumerate(segments):
+        if idx == 0:
+            continue
+        prev = segments[idx - 1]
+        if int(seg_item["aligned_start_idx"]) != int(prev["aligned_end_idx"]):
+            raise RuntimeError(
+                "generation-units decode runs must use shared anchors: prev_end={} current_start={} source_unit={}".format(
+                    int(prev["aligned_end_idx"]),
+                    int(seg_item["aligned_start_idx"]),
+                    str(seg_item.get("source_unit_id", "")),
+                )
+            )
+
+    return {
+        "version": 1,
+        "schema": "image_gen_runtime.v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "source": "decode.image_gen.runtime",
+        "decode_source": "generation_units",
+        "schedule_source": "segment.generation_units",
+        "prompt_structure": str(prompt_spans_payload.get("prompt_structure", "base_scene_motion") or "base_scene_motion"),
+        "base_prompt": str(prompt_spans_payload.get("base_prompt", "") or ""),
+        "negative_prompt": str(prompt_spans_payload.get("negative_prompt", "") or ""),
+        "execution_backend": str(infer_backend),
+        "segments": segments,
+        "skipped_units": skipped_units,
+        "source_files": {
+            "segment_manifest": _relative_path(exp_dir, segment_payload["_path"]),
+            "generation_units": _relative_path(exp_dir, generation_units_payload["_path"]),
+            "prompt_spans": _relative_path(exp_dir, prompt_spans_payload["_path"]),
+        },
+        "summary": {
+            "segment_count": int(len(segments)),
+            "boundary_count": int(len(segments) + 1),
+            "prompt_source_counts": dict(_count_by_key(segments, "prompt_source")),
+            "state_label_counts": dict(_count_by_key(segments, "state_label")),
+            "skipped_unit_count": int(len(skipped_units)),
+            "source_unit_count": int(len(units)),
+            "source_span_count": int(len(prompt_span_map)),
+            "shared_anchor_count": int(shared_anchor_count),
+            "sequence_start_idx": int(sequence_start_idx),
+            "sequence_end_idx": int(sequence_end_idx),
+        },
+    }
+
+
+def build_image_gen_runtime(segment_manifest, prompt_manifest, infer_backend="wan_fun_5b_inp", decode_source="aligned"):
+    source_name = _collapse_ws(decode_source).lower() or "aligned"
+    if source_name == "generation_units":
+        return _build_generation_units_image_gen_runtime(
+            segment_manifest=segment_manifest,
+            infer_backend=infer_backend,
+        )
+    return _build_aligned_image_gen_runtime(
+        segment_manifest=segment_manifest,
+        prompt_manifest=prompt_manifest,
+        infer_backend=infer_backend,
+    )
 
 
 def build_execution_plan(image_gen_runtime):
@@ -438,13 +662,21 @@ def build_execution_plan(image_gen_runtime):
                 "align_reason": str(seg_item.get("align_reason", "") or ""),
                 "is_valid_for_decode": bool(seg_item.get("is_valid_for_decode", False)),
                 "is_valid_for_export": bool(seg_item.get("is_valid_for_export", False)),
+                "decode_source": str(seg_item.get("decode_source", runtime_payload.get("decode_source", "aligned")) or "aligned"),
+                "run_id": str(seg_item.get("run_id", "" ) or ""),
+                "source_unit_id": str(seg_item.get("source_unit_id", "") or ""),
+                "source_span_id": str(seg_item.get("source_span_id", "") or ""),
+                "source_prompt_ref": dict(_as_dict(seg_item.get("source_prompt_ref"))),
+                "target_num_frames": int(seg_item.get("target_num_frames", seg_item.get("aligned_num_frames", seg_item.get("num_frames", 0))) or 0),
             }
         )
     return {
         "version": 1,
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "schedule_source": "segment.aligned_segment_plan",
+        "decode_source": str(runtime_payload.get("decode_source", "aligned") or "aligned"),
+        "schedule_source": str(runtime_payload.get("schedule_source", "") or "segment.aligned_segment_plan"),
         "execution_backend": str(runtime_payload.get("execution_backend", "") or ""),
+        "skipped_units": list(runtime_payload.get("skipped_units") or []),
         "segments": segments,
     }
 
@@ -533,6 +765,12 @@ def build_prompt_resolution(image_gen_runtime, execution_segments, exp_dir):
                 "align_reason": str(runtime_item.get("align_reason", "") or ""),
                 "is_valid_for_decode": bool(runtime_item.get("is_valid_for_decode", False)),
                 "is_valid_for_export": bool(runtime_item.get("is_valid_for_export", False)),
+                "decode_source": str(runtime_item.get("decode_source", runtime_payload.get("decode_source", "aligned")) or "aligned"),
+                "run_id": str(runtime_item.get("run_id", "") or ""),
+                "source_unit_id": str(runtime_item.get("source_unit_id", "") or ""),
+                "source_span_id": str(runtime_item.get("source_span_id", "") or ""),
+                "source_prompt_ref": dict(_as_dict(runtime_item.get("source_prompt_ref"))),
+                "target_num_frames": int(runtime_item.get("target_num_frames", runtime_item.get("aligned_num_frames", runtime_item.get("num_frames", 0))) or 0),
                 "state_segment_id": _safe_int(runtime_item.get("state_segment_id"), None),
                 "state_label": runtime_item.get("state_label"),
                 "prompt_source": str(runtime_item.get("prompt_source", "") or "prompt_manifest.base_scene_motion"),
@@ -552,12 +790,14 @@ def build_prompt_resolution(image_gen_runtime, execution_segments, exp_dir):
         "image_gen_runtime_version": int(runtime_payload.get("version", 1) or 1),
         "image_gen_runtime_schema": str(runtime_payload.get("schema", "") or "image_gen_runtime.v1"),
         "image_gen_runtime_source": str(runtime_payload.get("source", "") or "decode.image_gen.runtime"),
+        "decode_source": str(runtime_payload.get("decode_source", "aligned") or "aligned"),
         "prompt_source_counts": dict(prompt_source_counts),
         "state_label_counts": dict(state_label_counts),
         "segment_resolutions": list(resolution_items),
         "prompt_resolution": {
             "version": int(runtime_payload.get("version", 1) or 1),
             "schema": str(runtime_payload.get("schema", "") or "image_gen_runtime.v1"),
+            "decode_source": str(runtime_payload.get("decode_source", "aligned") or "aligned"),
             "prompt_source_counts": dict(prompt_source_counts),
             "state_label_counts": dict(state_label_counts),
             "source_files": {
@@ -565,9 +805,9 @@ def build_prompt_resolution(image_gen_runtime, execution_segments, exp_dir):
                 for key, value in dict(runtime_payload.get("source_files", {}) or {}).items()
                 if str(value).strip()
             },
-            "warnings": [],
+            "warnings": list(runtime_payload.get("skipped_units") or []),
         },
-        "warnings": [],
+        "warnings": list(runtime_payload.get("skipped_units") or []),
     }
 
 
@@ -611,7 +851,15 @@ def merge_prompt_resolution_into_runs_plan(plan_obj, segment_resolutions):
         seg_item["align_reason"] = resolved.get("align_reason")
         seg_item["is_valid_for_decode"] = resolved.get("is_valid_for_decode")
         seg_item["is_valid_for_export"] = resolved.get("is_valid_for_export")
-    plan["schedule_source"] = "segment.aligned_segment_plan"
+        seg_item["decode_source"] = resolved.get("decode_source")
+        seg_item["run_id"] = resolved.get("run_id")
+        seg_item["source_unit_id"] = resolved.get("source_unit_id")
+        seg_item["source_span_id"] = resolved.get("source_span_id")
+        seg_item["source_prompt_ref"] = resolved.get("source_prompt_ref")
+        seg_item["target_num_frames"] = resolved.get("target_num_frames")
+    plan["decode_source"] = str(plan.get("decode_source", "") or "aligned")
+    plan["schedule_source"] = str(plan.get("schedule_source", "") or "segment.aligned_segment_plan")
+    plan["skipped_units"] = list(plan.get("skipped_units") or [])
     plan["segments"] = plan_segments
     return plan
 
