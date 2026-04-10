@@ -437,6 +437,7 @@ def _load_export_report(export_root: Path, step_times: Dict[str, float]) -> Dict
     outputs = dict(dataset_report.get("outputs") or {})
     return {
         "export_root": str(export_root),
+        "export_source": str(dataset_report.get("export_source", "") or ""),
         "total_time": float(sum(float(x) for x in step_times.values())),
         "phase_times": {"export": _as_float_or_none(step_times.get("export"))},
         "summary": summary,
@@ -450,6 +451,7 @@ def _print_export_report(export_root: Path, step_times: Dict[str, float]) -> Non
     phase_times = dict(payload.get("phase_times") or {})
     summary = dict(payload.get("summary") or {})
     outputs = dict(payload.get("outputs") or {})
+    export_source = str(payload.get("export_source", "") or "unknown")
 
     sep = "=" * 70
     div = "-" * 70
@@ -458,6 +460,7 @@ def _print_export_report(export_root: Path, step_times: Dict[str, float]) -> Non
     _info(sep)
     _print_rows(
         [
+            ("source", export_source),
             ("export", _fmt_phase_seconds(_as_float_or_none(phase_times.get("export")), total_time)),
             ("total", _fmt_seconds(total_time)),
         ]
@@ -468,9 +471,20 @@ def _print_export_report(export_root: Path, step_times: Dict[str, float]) -> Non
             ("bags", _fmt_count(_as_int_or_none(summary.get("bag_count")))),
             ("clips", _fmt_count(_as_int_or_none(summary.get("exported_clip_count")))),
             ("skipped", _fmt_count(_as_int_or_none(summary.get("skipped_clip_count")))),
+            ("spans", _fmt_count(_as_int_or_none(summary.get("prompt_span_count")))),
+            ("units", _fmt_count(_as_int_or_none(summary.get("total_units_consumed")))),
+            ("short_spans", _fmt_count(_as_int_or_none(summary.get("skipped_short_span_count")))),
             ("train", _fmt_count(_as_int_or_none(_get_nested(summary, ["split_counts", "train"])))),
             ("val", _fmt_count(_as_int_or_none(_get_nested(summary, ["split_counts", "val"])))),
             ("test", _fmt_count(_as_int_or_none(_get_nested(summary, ["split_counts", "test"])))),
+        ]
+    )
+    _info(div)
+    _print_rows(
+        [
+            ("reuse_ratio", str(summary.get("prompt_reuse_ratio", "unavailable"))),
+            ("clips/span", str(summary.get("mean_clips_per_span", "unavailable"))),
+            ("shared_units", _fmt_count(_as_int_or_none(summary.get("shared_prompt_unit_count")))),
         ]
     )
     _info(div)
@@ -509,11 +523,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--sequence", required=True)
     ap.add_argument("--tag", required=True)
 
-    ap.add_argument("--w", type=int, required=True)
-    ap.add_argument("--h", type=int, required=True)
-    ap.add_argument("--fps", type=float, required=True)
-    ap.add_argument("--dur", type=str, required=True)
-    ap.add_argument("--start_sec", type=str, required=True)
+    ap.add_argument("--w", type=int, default=832)
+    ap.add_argument("--h", type=int, default=480)
+    ap.add_argument("--fps", type=float, default=24.0)
+    ap.add_argument("--dur", type=str, default="3")
+    ap.add_argument("--start_sec", type=str, default="0")
     ap.add_argument("--start_idx", type=int, default=-1)
 
     ap.add_argument("--kf_gap", type=int, default=0, help="0 means auto")
@@ -545,7 +559,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--export_root", default="", help="override export root (default: <exphub>/exports/<scope>/<focus>/<tag>)")
     ap.add_argument("--export_scope", default="single", choices=["single", "dataset", "focus"])
     ap.add_argument("--export_focus", default="ncd_scand", choices=["ncd_scand", "ncd", "scand"])
-    ap.add_argument("--export_stride_sec", type=float, default=3.0)
+    ap.add_argument("--export_source", default="aligned", choices=["aligned", "generation_units"])
+    ap.add_argument("--export_target_fps", type=int, default=24)
+    ap.add_argument("--export_target_num_frames", type=int, default=73)
+    ap.add_argument("--export_target_width", type=int, default=832)
+    ap.add_argument("--export_target_height", type=int, default=480)
+    ap.add_argument("--export_harvest_sec", type=float, default=0.0)
+    ap.add_argument("--export_stride_sec", type=float, default=0.0)
     ap.add_argument("--export_max_bags", type=int, default=0)
     ap.add_argument("--export_max_bags_per_dataset", type=int, default=0)
     ap.add_argument("--export_max_clips_per_bag", type=int, default=0)

@@ -56,6 +56,26 @@ class ExperimentPaths:
         return self.segment_dir / "visuals"
 
     @property
+    def segment_motion_score_path(self):
+        return self.segment_dir / "motion_score.json"
+
+    @property
+    def segment_semantic_shift_path(self):
+        return self.segment_dir / "semantic_shift.json"
+
+    @property
+    def segment_generation_risk_path(self):
+        return self.segment_dir / "generation_risk.json"
+
+    @property
+    def segment_candidate_boundaries_path(self):
+        return self.segment_dir / "candidate_boundaries.json"
+
+    @property
+    def segment_generation_units_path(self):
+        return self.segment_dir / "generation_units.json"
+
+    @property
     def segment_state_overview_path(self):
         return self.segment_visuals_dir / "state_overview.png"
 
@@ -106,6 +126,10 @@ class ExperimentPaths:
     @property
     def prompt_manifest_path(self):
         return self.prompt_dir / "prompt_manifest.json"
+
+    @property
+    def prompt_spans_path(self):
+        return self.prompt_dir / "prompt_spans.json"
 
     @property
     def infer_runs_dir(self):
