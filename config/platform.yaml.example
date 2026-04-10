@@ -32,12 +32,6 @@ models:
   qwen2_vl:
     path: "/data/hx/Qwen2-VL-Prompt/models/Qwen2-VL-7B-Instruct" 
     
-  wan2_2:
-    path: "/data/hx/models/exphub/infer/Wan2.2-Fun-A14B-InP"
-    config: "/data/hx/ExpHub/config/models/infer/Wan2.2-Fun-A14B-InP.yaml"
-  wan2_2_fun_a14b_inp:
-    path: "/data/hx/models/exphub/infer/Wan2.2-Fun-A14B-InP"
-    config: "/data/hx/ExpHub/config/models/infer/Wan2.2-Fun-A14B-InP.yaml"
   wan2_2_fun_5b_inp:
     path: "/data/hx/models/exphub/infer/Wan2.2-Fun-5B-InP"
     config: "/data/hx/ExpHub/config/models/infer/Wan2.2-Fun-5B-InP.yaml"

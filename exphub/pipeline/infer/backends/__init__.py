@@ -8,22 +8,16 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from .wan_fun_5b_inp import WanFun5BInpBackend
-from .wan_fun_a14b_inp import WanFunA14BInpBackend
 
 
 def create_backend(backend_name, videox_root, model_ref="", backend_python_phase="infer"):
     # type: (str, str, str, str) -> object
     name = str(backend_name or "wan_fun_5b_inp").strip().lower()
-    if name == "wan_fun_a14b_inp":
-        return WanFunA14BInpBackend(
-            videox_root=videox_root,
-            model_ref=model_ref,
-            backend_python_phase=backend_python_phase,
-        )
-    if name == "wan_fun_5b_inp":
-        return WanFun5BInpBackend(
-            videox_root=videox_root,
-            model_ref=model_ref,
-            backend_python_phase=backend_python_phase,
-        )
-    raise SystemExit("[ERR] unsupported formal infer backend: {}".format(backend_name))
+    if name != "wan_fun_5b_inp":
+        raise SystemExit("[ERR] Phase 1 infer supports only wan_fun_5b_inp: {}".format(backend_name))
+    # Temporary transition constructor. Remove after infer binds directly to decode.image_gen.
+    return WanFun5BInpBackend(
+        videox_root=videox_root,
+        model_ref=model_ref,
+        backend_python_phase=backend_python_phase,
+    )

@@ -10,12 +10,13 @@ from exphub.contracts import segment as segment_contract
 
 
 @dataclass(frozen=True)
-class SegmentArtifactPaths:
+class SceneSplitArtifactPaths:
     exp_dir: Path
     root: Path
     frames_dir: Path
     keyframes_dir: Path
     manifest_path: Path
+    aligned_plan_path: Path
     report_path: Path
     visuals_dir: Path
     state_overview_path: Path
@@ -26,12 +27,13 @@ class SegmentArtifactPaths:
 def build_paths(exp_dir):
     exp_dir_path = Path(exp_dir).resolve()
     root = (exp_dir_path / "segment").resolve()
-    return SegmentArtifactPaths(
+    return SceneSplitArtifactPaths(
         exp_dir=exp_dir_path,
         root=root,
         frames_dir=(root / "frames").resolve(),
         keyframes_dir=(root / "keyframes").resolve(),
         manifest_path=(root / segment_contract.SEGMENT_MANIFEST_NAME).resolve(),
+        aligned_plan_path=(root / segment_contract.ALIGNED_SEGMENT_PLAN_NAME).resolve(),
         report_path=(root / segment_contract.SEGMENT_REPORT_NAME).resolve(),
         visuals_dir=(root / segment_contract.SEGMENT_VISUALS_DIRNAME).resolve(),
         state_overview_path=(
@@ -58,8 +60,7 @@ def ensure_layout(paths):
     paths.visuals_dir.mkdir(parents=True, exist_ok=True)
 
 
-def remove_stale_formal_segment_outputs(paths):
-    # Only prune transitional leftovers that can still shadow today's segment outputs.
+def remove_stale_scene_split_outputs(paths):
     stale_paths = [
         paths.root / "state_segmentation",
         paths.root / "state_segments.json",
@@ -68,6 +69,7 @@ def remove_stale_formal_segment_outputs(paths):
         paths.root / ".segment_cache",
         paths.root / "deploy_schedule.json",
         paths.keyframes_dir / "keyframes_meta.json",
+        paths.aligned_plan_path,
     ]
     for stale_path in stale_paths:
         try:
@@ -127,34 +129,78 @@ def materialize_keyframes(frames_dir, keyframes_dir, keyframe_indices, mode_requ
     return actual_mode, int(bytes_sum)
 
 
-def write_segment_manifest(paths, manifest):
-    write_json_atomic(paths.manifest_path, manifest, indent=2)
-    return paths.manifest_path
+def materialize_scene_split_visuals(paths, detector_result):
+    from exphub.pipeline.segment.state.visualize import materialize_formal_visuals
+
+    return dict(materialize_formal_visuals(paths, detector_result) or {})
 
 
-def write_segment_report(paths, report):
-    write_json_atomic(paths.report_path, report, indent=2)
-    return paths.report_path
+def _dir_file_stats(dir_path):
+    path = Path(dir_path).resolve()
+    if not path.is_dir():
+        return 0, 0
+    file_count = 0
+    bytes_sum = 0
+    for child in sorted(path.iterdir()):
+        if not child.is_file():
+            continue
+        file_count += 1
+        try:
+            bytes_sum += int(child.stat().st_size)
+        except Exception:
+            pass
+    return int(file_count), int(bytes_sum)
 
 
-def build_manifest(
+def build_quality_diagnostics(paths, state_segments_payload, state_report_payload, extraction_meta):
+    state_summary = dict(state_segments_payload.get("summary") or {})
+    state_report = dict(state_report_payload.get("state", {}) or {})
+    frame_files, frame_bytes = _dir_file_stats(paths.frames_dir)
+    keyframe_files, keyframe_bytes = _dir_file_stats(paths.keyframes_dir)
+    return {
+        "frames": {
+            "file_count": int(frame_files),
+            "bytes_sum": int(frame_bytes),
+            "timestamps_count": int(extraction_meta.get("timestamps_count", 0) or 0),
+        },
+        "keyframes": {
+            "file_count": int(keyframe_files),
+            "bytes_sum": int(keyframe_bytes),
+        },
+        "state_summary": {
+            "segment_count": int(state_summary.get("segment_count", 0) or 0),
+            "high_state_frame_ratio": float(state_summary.get("high_state_frame_ratio", 0.0) or 0.0),
+            "high_risk_interval_count": int(state_summary.get("high_risk_interval_count", 0) or 0),
+        },
+        "quality_notes": {
+            "overview_available": bool(paths.state_overview_path.is_file()),
+            "state_report_embedded": bool(state_report_payload),
+            "diagnostics_mode": str(state_report.get("report_schema_version", "") or "state_report"),
+        },
+    }
+
+
+def build_segment_manifest(
     paths,
     policy_name,
     keyframes_meta,
-    deploy_schedule,
     state_segments_payload,
+    aligned_segment_plan_payload,
     state_report_payload,
+    quality_diagnostics,
 ):
-    projection_stats = dict(deploy_schedule.get("projection_stats") or {})
     state_summary = dict(state_segments_payload.get("summary") or {})
+    aligned_summary = dict((aligned_segment_plan_payload or {}).get("summary") or {})
     return {
-        "version": 1,
-        "schema": "segment_manifest.v1",
-        "stage": "segment",
+        "version": 2,
+        "schema": "segment_manifest.v2",
+        "stage": "encode",
+        "substage": "scene_split",
         "policy": str(policy_name),
-        "contract": "formal_segment_mainline",
+        "contract": "encode_scene_split_mainline",
         "root": relative_to_exp(paths.exp_dir, paths.root),
         "artifacts": {
+            "aligned_segment_plan": relative_to_exp(paths.exp_dir, paths.aligned_plan_path),
             "report": relative_to_exp(paths.exp_dir, paths.report_path),
             "visuals_dir": relative_to_exp(paths.exp_dir, paths.visuals_dir),
             "state_overview": relative_to_exp(paths.exp_dir, paths.state_overview_path),
@@ -171,36 +217,51 @@ def build_manifest(
             "uniform_base_indices": list(keyframes_meta.get("uniform_base_indices") or []),
             "summary": dict(keyframes_meta.get("summary") or {}),
         },
-        "deploy_schedule": dict(deploy_schedule),
         "state_segments": dict(state_segments_payload),
+        "aligned_segment_plan": {
+            "schema": str((aligned_segment_plan_payload or {}).get("schema", "") or "aligned_segment_plan.v1"),
+            "path": relative_to_exp(paths.exp_dir, paths.aligned_plan_path),
+            "summary": dict(aligned_summary),
+        },
         "state_report": dict(state_report_payload),
+        "quality_diagnostics": dict(quality_diagnostics or {}),
         "summary": {
-            "deploy_segment_count": int(projection_stats.get("segment_count", 0) or 0),
+            "scene_segment_count": int(state_summary.get("segment_count", 0) or 0),
             "state_segment_count": int(state_summary.get("segment_count", 0) or 0),
+            "aligned_segment_count": int(aligned_summary.get("segment_count", 0) or 0),
+            "aligned_boundary_count": int(aligned_summary.get("boundary_count", 0) or 0),
+            "decode_valid_segment_count": int(aligned_summary.get("decode_valid_segment_count", 0) or 0),
+            "export_ready_segment_count": int(aligned_summary.get("export_ready_segment_count", 0) or 0),
+            "shared_boundary_count": int(aligned_summary.get("shared_boundary_count", 0) or 0),
+            "max_abs_boundary_shift": int(aligned_summary.get("max_abs_boundary_shift", 0) or 0),
             "high_state_frame_ratio": float(state_summary.get("high_state_frame_ratio", 0.0) or 0.0),
+            "high_risk_interval_count": int(state_summary.get("high_risk_interval_count", 0) or 0),
         },
     }
 
 
-def build_report(
+def build_segment_report(
     paths,
     inputs_meta,
     keyframes_meta,
-    deploy_schedule,
     state_segments_payload,
+    aligned_segment_plan_payload,
     state_report_payload,
+    quality_diagnostics,
     timings,
 ):
-    projection_stats = dict(deploy_schedule.get("projection_stats") or {})
     state_summary = dict(state_segments_payload.get("summary") or {})
+    aligned_summary = dict((aligned_segment_plan_payload or {}).get("summary") or {})
     return {
-        "version": 1,
-        "schema": "segment_report.v1",
-        "stage": "segment",
+        "version": 2,
+        "schema": "segment_report.v2",
+        "stage": "encode",
+        "substage": "scene_split",
         "policy": str(keyframes_meta.get("policy_name", "") or ""),
         "inputs": dict(inputs_meta),
         "artifacts": {
             "segment_manifest": relative_to_exp(paths.exp_dir, paths.manifest_path),
+            "aligned_segment_plan": relative_to_exp(paths.exp_dir, paths.aligned_plan_path),
             "report": relative_to_exp(paths.exp_dir, paths.report_path),
             "state_overview": relative_to_exp(paths.exp_dir, paths.state_overview_path),
         },
@@ -214,15 +275,28 @@ def build_report(
             "bytes_sum": int(keyframes_meta.get("keyframe_bytes_sum", 0) or 0),
             "summary": dict(keyframes_meta.get("summary") or {}),
         },
-        "deploy_schedule": {
-            "backend": str(deploy_schedule.get("backend", "") or ""),
-            "segment_count": int(projection_stats.get("segment_count", 0) or 0),
-            "mean_abs_boundary_shift": float(projection_stats.get("mean_abs_boundary_shift", 0.0) or 0.0),
-            "max_abs_gap_error": int(projection_stats.get("max_abs_gap_error", 0) or 0),
-        },
         "state": {
             "summary": dict(state_summary),
             "report": dict(state_report_payload),
         },
+        "aligned_segment_plan": {
+            "summary": dict(aligned_summary),
+        },
+        "quality_diagnostics": dict(quality_diagnostics or {}),
         "timings_sec": dict(timings or {}),
     }
+
+
+def write_segment_manifest(paths, manifest):
+    write_json_atomic(paths.manifest_path, manifest, indent=2)
+    return paths.manifest_path
+
+
+def write_aligned_segment_plan(paths, aligned_segment_plan):
+    write_json_atomic(paths.aligned_plan_path, aligned_segment_plan, indent=2)
+    return paths.aligned_plan_path
+
+
+def write_segment_report(paths, report):
+    write_json_atomic(paths.report_path, report, indent=2)
+    return paths.report_path

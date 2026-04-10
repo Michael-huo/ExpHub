@@ -14,13 +14,10 @@ from exphub.common.paths import ExperimentPaths
 from exphub.common.subprocess import RunError, RunnerConfig, StepRunner, detect_conda_base, resolve_phase_python
 from exphub.common.types import ExperimentSpec, STAGE_ORDER
 
+from .decode import service as decode_service
+from .encode import service as encode_service
 from .eval import service as eval_service
-from .infer import service as infer_service
-from .merge import service as merge_service
-from .prompt import service as prompt_service
-from .segment import service as segment_service
-from .slam import service as slam_service
-from .stats import service as stats_service
+from .export import service as export_service
 
 
 @dataclass
@@ -28,6 +25,7 @@ class OrchestrationResult:
     mode: str
     exp_dir: Path
     step_times: Dict[str, float]
+    result_root: Path
 
 
 @dataclass
@@ -71,10 +69,11 @@ class PipelineRuntime:
         return self._phase_python_cache[phase_key]
 
     def infer_phase_name(self):
+        # Phase 1 keeps only the wan_fun_5b_inp decode backend.
         backend = str(self.args.infer_backend or "wan_fun_5b_inp").strip().lower()
-        if backend == "wan_fun_5b_inp":
-            return "infer_fun_5b"
-        return "infer"
+        if backend != "wan_fun_5b_inp":
+            raise RuntimeError("Phase 1 infer supports only wan_fun_5b_inp: {}".format(backend or "<empty>"))
+        return "infer_fun_5b"
 
     def ensure_clean_exp_dir(self):
         if self.paths.exp_dir.exists():
@@ -143,13 +142,10 @@ class PipelineRuntime:
 
 
 _SERVICE_BY_STAGE = {
-    "segment": segment_service,
-    "prompt": prompt_service,
-    "infer": infer_service,
-    "merge": merge_service,
-    "slam": slam_service,
+    "encode": encode_service,
+    "decode": decode_service,
     "eval": eval_service,
-    "stats": stats_service,
+    "export": export_service,
 }
 
 
@@ -210,6 +206,7 @@ def _run_step(runtime, step_name, service_module):
         log_step("{} done sec={:.2f} out={}".format(step_name, elapsed, out_hint_short))
     else:
         log_step("{} done sec={:.2f}".format(step_name, elapsed))
+    return out_hint
 
 
 def _doctor(runtime):
@@ -312,13 +309,10 @@ def build_runtime(args):
 
 def _validate_scripts(runtime):
     required = [
-        (runtime.exphub_root / "exphub" / "pipeline" / "segment" / "service.py").resolve(),
-        (runtime.exphub_root / "exphub" / "pipeline" / "prompt" / "service.py").resolve(),
-        (runtime.exphub_root / "exphub" / "pipeline" / "infer" / "service.py").resolve(),
-        (runtime.exphub_root / "exphub" / "pipeline" / "merge" / "service.py").resolve(),
-        (runtime.exphub_root / "exphub" / "pipeline" / "slam" / "service.py").resolve(),
+        (runtime.exphub_root / "exphub" / "pipeline" / "encode" / "service.py").resolve(),
+        (runtime.exphub_root / "exphub" / "pipeline" / "decode" / "service.py").resolve(),
         (runtime.exphub_root / "exphub" / "pipeline" / "eval" / "service.py").resolve(),
-        (runtime.exphub_root / "exphub" / "pipeline" / "stats" / "service.py").resolve(),
+        (runtime.exphub_root / "exphub" / "pipeline" / "export" / "service.py").resolve(),
     ]
     for path in required:
         if not path.is_file():
@@ -331,24 +325,37 @@ def run_runtime(runtime):
     mode = str(runtime.args.mode or "all").strip().lower()
     if mode == "doctor":
         _doctor(runtime)
-        return OrchestrationResult(mode=mode, exp_dir=runtime.paths.exp_dir, step_times=dict(runtime.step_times))
+        return OrchestrationResult(
+            mode=mode,
+            exp_dir=runtime.paths.exp_dir,
+            step_times=dict(runtime.step_times),
+            result_root=runtime.paths.exp_dir,
+        )
 
-    runtime.dataset()
+    if mode != "export":
+        runtime.dataset()
 
     if mode in ("all", "workflow"):
         stages = list(STAGE_ORDER)
     else:
         stages = [mode]
 
+    last_out_hint = runtime.paths.exp_dir
     for stage_name in stages:
         service_module = _SERVICE_BY_STAGE.get(stage_name)
         if service_module is None:
             raise RuntimeError("unsupported stage mode: {}".format(stage_name))
-        _run_step(runtime, stage_name, service_module)
+        last_out_hint = _run_step(runtime, stage_name, service_module) or last_out_hint
 
-    apply_keep_level(runtime.paths.exp_dir, runtime.args.keep_level)
+    if mode != "export":
+        apply_keep_level(runtime.paths.exp_dir, runtime.args.keep_level)
     runtime_info("DONE.")
-    return OrchestrationResult(mode=mode, exp_dir=runtime.paths.exp_dir, step_times=dict(runtime.step_times))
+    return OrchestrationResult(
+        mode=mode,
+        exp_dir=runtime.paths.exp_dir,
+        step_times=dict(runtime.step_times),
+        result_root=Path(last_out_hint).resolve() if last_out_hint else runtime.paths.exp_dir,
+    )
 
 
 def run(args):

@@ -9,6 +9,7 @@ FORMAL_SEGMENT_POLICY = "state"
 FORMAL_SEGMENT_POLICIES = (FORMAL_SEGMENT_POLICY,)
 
 SEGMENT_MANIFEST_NAME = "segment_manifest.json"
+ALIGNED_SEGMENT_PLAN_NAME = "aligned_segment_plan.json"
 SEGMENT_REPORT_NAME = "report.json"
 SEGMENT_VISUALS_DIRNAME = "visuals"
 SEGMENT_OVERVIEW_NAME = "state_overview.png"
@@ -52,6 +53,7 @@ def build_contract(paths):
             "frames_dir": paths.segment_frames_dir,
             "keyframes_dir": paths.segment_keyframes_dir,
             "manifest": paths.segment_manifest_path,
+            "aligned_plan": paths.segment_aligned_plan_path,
             "report": paths.segment_report_path,
             "visuals_dir": paths.segment_visuals_dir,
             "overview": paths.segment_state_overview_path,

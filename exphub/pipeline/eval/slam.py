@@ -1,23 +1,20 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import re
 import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic
-from exphub.common.logging import debug_info, log_info, log_prog
-from exphub.contracts import slam as slam_contract
+from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, write_json_atomic
+from exphub.common.logging import log_info, log_prog, log_warn
 
 try:
     from tqdm import tqdm
@@ -43,10 +40,6 @@ class StreamConfig:
     intr_scale_mode: str
     target_area: int = 384 * 512
     divisible: int = 8
-
-
-def _ensure_dir(path_obj):
-    Path(path_obj).mkdir(parents=True, exist_ok=True)
 
 
 def _read_text(path_obj):
@@ -92,7 +85,6 @@ def _resolve_timestamp(seq_i, file_frame_idx, timestamps, fps_fallback):
             return float(timestamps[file_frame_idx])
         if 0 <= seq_i < len(timestamps):
             return float(timestamps[seq_i])
-
     if fps_fallback and fps_fallback > 0:
         idx = file_frame_idx if file_frame_idx >= 0 else seq_i
         return float(idx) / float(fps_fallback)
@@ -145,7 +137,6 @@ def droid_stream(files, cfg):
 
     for seq_i, path_obj in enumerate(files):
         frame_idx = _parse_frame_index(path_obj.name)
-
         image_bgr = cv2.imread(str(path_obj), cv2.IMREAD_COLOR)
         if image_bgr is None:
             continue
@@ -159,7 +150,7 @@ def droid_stream(files, cfg):
             image_bgr = cv2.undistort(image_bgr, camera, cfg.dist)
 
         h0, w0 = image_bgr.shape[:2]
-        scale = np.sqrt(float(cfg.target_area) / float(h0 * w0))
+        scale = (float(cfg.target_area) / float(h0 * w0)) ** 0.5
         h1_pre = int(h0 * scale)
         w1_pre = int(w0 * scale)
 
@@ -232,8 +223,8 @@ def _save_trajectory(traj_est, timestamps_sec, tum_path, npz_path):
     if matrices.shape[0] != timestamps.shape[0]:
         raise RuntimeError("pose count {} does not match timestamp count {}".format(matrices.shape[0], timestamps.shape[0]))
 
-    _ensure_dir(Path(tum_path).parent)
-    _ensure_dir(Path(npz_path).parent)
+    Path(tum_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(npz_path).parent.mkdir(parents=True, exist_ok=True)
     np.savez(str(npz_path), tstamps=timestamps, poses=matrices)
 
     with open(str(tum_path), "w", encoding="utf-8") as handle:
@@ -306,7 +297,7 @@ def _run_track(exp_dir, track_name, input_root, args):
     frames_dir, calib_path, timestamps_path = _resolve_input_paths(input_root)
     files = list_frames_sorted(frames_dir)
     if args.t0 > 0:
-        files = files[args.t0:]
+        files = files[args.t0 :]
     if args.stride > 1:
         files = files[:: args.stride]
     if args.max_frames > 0:
@@ -324,8 +315,8 @@ def _run_track(exp_dir, track_name, input_root, args):
     if not weights_path.is_absolute():
         weights_path = Path(args.droid_repo).resolve() / weights_path
 
-    track_dir = Path(args.slam_dir).resolve() / str(track_name)
-    _ensure_dir(track_dir)
+    track_dir = Path(args.out_dir).resolve() / str(track_name)
+    track_dir.mkdir(parents=True, exist_ok=True)
 
     run_meta = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -386,7 +377,19 @@ def _run_track(exp_dir, track_name, input_root, args):
         for t_int, image, intrinsics, _timestamp in droid_stream(files, stream_cfg):
             yield int(t_int), image, intrinsics
 
-    traj_est = droid.terminate(stream_for_terminate())
+    termination_mode = "backend_optimized"
+    try:
+        traj_est = droid.terminate(stream_for_terminate())
+    except ValueError as exc:
+        # DROID can fail to build any backend proximity edges on very short clips.
+        # In that case we still have a valid tracked keyframe trajectory, so fall
+        # back to the trajectory filler without swallowing unrelated errors.
+        if "not enough values to unpack" not in str(exc):
+            raise
+        log_warn("slam backend produced no proximity factors; using trajectory filler only")
+        camera_trajectory = droid.traj_filler(stream_for_terminate())
+        traj_est = camera_trajectory.inv().data.cpu().numpy()
+        termination_mode = "traj_filler_only"
     tum_path = (track_dir / "traj_est.tum").resolve()
     npz_path = (track_dir / "traj_est.npz").resolve()
     _save_trajectory(traj_est, timestamps_used, tum_path=tum_path, npz_path=npz_path)
@@ -398,6 +401,7 @@ def _run_track(exp_dir, track_name, input_root, args):
             "timestamp_last": float(timestamps_used[-1]) if timestamps_used else None,
             "tum_path": str(tum_path),
             "npz_path": str(npz_path),
+            "termination_mode": termination_mode,
         }
     )
     run_meta_path = (track_dir / "run_meta.json").resolve()
@@ -413,6 +417,7 @@ def _run_track(exp_dir, track_name, input_root, args):
         "run_meta_path": _relative_path(exp_dir, run_meta_path),
         "frames_processed": int(len(timestamps_used)),
         "status": "success",
+        "termination_mode": termination_mode,
     }
 
 
@@ -423,12 +428,12 @@ def _write_slam_report(report_path, report_obj):
     return Path(report_path).resolve()
 
 
-def _run_formal_mainline(args):
+def run_slam_substage(args):
     exp_dir = Path(args.exp_dir).resolve()
-    slam_dir = Path(args.slam_dir).resolve()
-    if slam_dir.exists():
-        shutil.rmtree(str(slam_dir), ignore_errors=True)
-    slam_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.out_dir).resolve()
+    if out_dir.exists():
+        shutil.rmtree(str(out_dir), ignore_errors=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     seq = str(args.seq or "both").strip().lower()
     if seq == "auto":
@@ -447,17 +452,18 @@ def _run_formal_mainline(args):
         track_reports[track_name] = _run_track(exp_dir, track_name, input_root, args)
 
     primary_track = "gen" if "gen" in track_reports else "ori"
-    primary_src = (slam_dir / primary_track / "traj_est.tum").resolve()
-    primary_dst = (slam_dir / "traj_est.txt").resolve()
+    primary_src = (out_dir / primary_track / "traj_est.tum").resolve()
+    primary_dst = (out_dir / "traj_est.txt").resolve()
     primary_path = _copy_if_exists(primary_src, primary_dst)
 
     reference_path = ""
     if "ori" in track_reports:
-        reference_path = str((slam_dir / "ori" / "traj_est.tum").resolve())
+        reference_path = str((out_dir / "ori" / "traj_est.tum").resolve())
 
     report = {
-        "report_schema_version": "slam_report.v1",
-        "step": "slam",
+        "report_schema_version": "eval_slam_report.v1",
+        "step": "eval",
+        "substage": "slam",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "slam_status": "success",
         "requested_seq": str(seq),
@@ -485,85 +491,20 @@ def _run_formal_mainline(args):
         },
         "warnings": [],
     }
-    report_path = _write_slam_report(slam_dir / "report.json", report)
-    log_info("slam report: {}".format(report_path))
-    return report_path
-
-
-def run(runtime):
-    contract = slam_contract.build_contract(runtime.paths)
-    seq = runtime.args.droid_seq
-    if seq == "auto":
-        seq = "both"
-
-    if seq in ("ori", "both"):
-        ensure_dir(runtime.paths.segment_frames_dir, "segment frames dir")
-    if seq in ("gen", "both"):
-        ensure_dir(runtime.paths.merge_frames_dir, "merge frames dir")
-        ensure_file(runtime.paths.merge_manifest_path, "merge manifest")
-
-    helper_path = (runtime.exphub_root / "exphub" / "pipeline" / "slam" / "service.py").resolve()
-    cmd = [
-        "python",
-        str(helper_path),
-        "--run-formal-mainline",
-        "--exp_dir",
-        str(runtime.paths.exp_dir),
-        "--slam_dir",
-        str(runtime.paths.slam_dir),
-        "--segment_dir",
-        str(runtime.paths.segment_dir),
-        "--merge_dir",
-        str(runtime.paths.merge_dir),
-        "--merge_manifest",
-        str(runtime.paths.merge_manifest_path),
-        "--seq",
-        str(seq),
-        "--droid_repo",
-        str(runtime.args.droid_repo),
-        "--weights",
-        str(runtime.args.droid_weights),
-        "--fps",
-        runtime.fps_arg,
-        "--undistort_mode",
-        "auto",
-        "--resize_interp",
-        "linear",
-        "--intr_scale_mode",
-        "demo",
-    ]
-    if not runtime.viz_enable:
-        cmd.append("--disable_vis")
-
-    runtime.step_runner.run_env_python(
-        cmd,
-        phase_name="slam",
-        log_name="slam.log",
-        cwd=runtime.exphub_root,
-    )
-
-    ensure_file(contract.artifacts[slam_contract.REPORT], "slam report")
-    ensure_file(contract.artifacts[slam_contract.PRIMARY_TRAJECTORY], "slam primary trajectory")
-    if seq in ("ori", "both"):
-        ensure_file(contract.artifacts[slam_contract.ORI_TUM], "slam ori trajectory")
-        ensure_file(contract.artifacts[slam_contract.ORI_META], "slam ori meta")
-    if seq in ("gen", "both"):
-        ensure_file(contract.artifacts[slam_contract.GEN_TUM], "slam gen trajectory")
-        ensure_file(contract.artifacts[slam_contract.GEN_META], "slam gen meta")
-
-    report_obj = read_json_dict(contract.artifacts[slam_contract.REPORT])
-    primary_track = str(report_obj.get("primary_track", "") or "")
-    if primary_track and primary_track not in ("ori", "gen"):
-        raise RuntimeError("invalid primary_track in slam report: {}".format(primary_track))
-    debug_info("[OK] slam primary track={}".format(primary_track or "<none>"))
-    return contract.root
+    report_path = _write_slam_report(out_dir / "report.json", report)
+    log_info("eval slam report: {}".format(report_path))
+    return {
+        "report_path": report_path,
+        "report": report,
+        "out_dir": out_dir,
+    }
 
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-formal-mainline", action="store_true")
     parser.add_argument("--exp_dir", required=True)
-    parser.add_argument("--slam_dir", required=True)
+    parser.add_argument("--out_dir", required=True)
     parser.add_argument("--segment_dir", required=True)
     parser.add_argument("--merge_dir", required=True)
     parser.add_argument("--merge_manifest", required=True)
@@ -576,18 +517,18 @@ def _build_arg_parser():
     parser.add_argument("--undistort_mode", choices=["auto", "on", "off"], default="auto")
     parser.add_argument("--resize_interp", choices=["linear", "area"], default="linear")
     parser.add_argument("--intr_scale_mode", choices=["demo", "correct"], default="demo")
-    parser.add_argument("--buffer", type=int, default=2048)
+    parser.add_argument("--buffer", type=int, default=512)
     parser.add_argument("--image_size", default=[240, 320])
     parser.add_argument("--disable_vis", action="store_true")
     parser.add_argument("--beta", type=float, default=0.3)
-    parser.add_argument("--filter_thresh", type=float, default=2.4)
-    parser.add_argument("--warmup", type=int, default=8)
-    parser.add_argument("--keyframe_thresh", type=float, default=4.0)
-    parser.add_argument("--frontend_thresh", type=float, default=16.0)
+    parser.add_argument("--filter_thresh", type=float, default=1.5)
+    parser.add_argument("--warmup", type=int, default=12)
+    parser.add_argument("--keyframe_thresh", type=float, default=2.0)
+    parser.add_argument("--frontend_thresh", type=float, default=12.0)
     parser.add_argument("--frontend_window", type=int, default=25)
     parser.add_argument("--frontend_radius", type=int, default=2)
     parser.add_argument("--frontend_nms", type=int, default=1)
-    parser.add_argument("--backend_thresh", type=float, default=22.0)
+    parser.add_argument("--backend_thresh", type=float, default=20.0)
     parser.add_argument("--backend_radius", type=int, default=2)
     parser.add_argument("--backend_nms", type=int, default=3)
     parser.add_argument("--upsample", action="store_true")
@@ -599,9 +540,9 @@ def _build_arg_parser():
 def main(argv=None):
     args = _build_arg_parser().parse_args(argv)
     if not args.run_formal_mainline:
-        raise SystemExit("slam service helper requires --run-formal-mainline")
+        raise SystemExit("eval slam helper requires --run-formal-mainline")
     args.stereo = False
-    _run_formal_mainline(args)
+    run_slam_substage(args)
 
 
 if __name__ == "__main__":

@@ -77,6 +77,7 @@ def _cleanup_min(exp_dir: Path) -> None:
             "calib.txt",
             "timestamps.txt",
             "keyframes",
+            "aligned_segment_plan.json",
             "segment_manifest.json",
             "report.json",
             "visuals",
@@ -86,9 +87,7 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir,
         exp_dir / "prompt",
         {
-            "base_prompt.json",
-            "state_prompt_manifest.json",
-            "runtime_prompt_plan.json",
+            "prompt_manifest.json",
             "report.json",
         },
     )
@@ -101,6 +100,19 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir,
         exp_dir / "merge",
         {"merge_manifest.json", "report.json", "calib.txt", "timestamps.txt"},
+    )
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "eval",
+        {
+            "compression.json",
+            "details.csv",
+            "metrics",
+            "plots",
+            "report.json",
+            "slam",
+            "summary.txt",
+        },
     )
 
 

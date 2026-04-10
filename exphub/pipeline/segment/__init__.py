@@ -1,7 +1,7 @@
-def run(runtime):
-    from .service import run as _run
+"""Legacy segment namespace.
 
-    return _run(runtime)
+The formal encode stage owns scene split; this package remains only as a
+temporary namespace for state-analysis modules and will be removed later.
+"""
 
-
-__all__ = ["run"]
+__all__ = []

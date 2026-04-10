@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from typing import Dict, List
-
 
 INVARIANT_BASE_POSITIVE_LINES = [
     "Maintain first-person viewpoint continuity across the full sequence.",
     "Preserve stable scene geometry, perspective, and camera alignment.",
     "Keep exposure and white balance stable over time.",
     "Preserve temporal coherence without flicker or drifting structure.",
-]  # type: List[str]
+]
 
 INVARIANT_BASE_NEGATIVE_ITEMS = [
     "flickering",
@@ -24,30 +22,27 @@ INVARIANT_BASE_NEGATIVE_ITEMS = [
     "double edges",
     "heavy blur",
     "low quality",
-]  # type: List[str]
+]
 
 
 def _collapse_ws(text):
-    # type: (object) -> str
     return " ".join(str(text or "").strip().split()).strip()
 
 
-def get_invariant_base_prompt():
-    # type: () -> str
+def get_base_prompt():
     return _collapse_ws(" ".join([str(item).strip() for item in INVARIANT_BASE_POSITIVE_LINES if str(item).strip()]))
 
 
-def get_invariant_negative_prompt():
-    # type: () -> str
+def get_negative_prompt():
     return ", ".join([str(item).strip() for item in INVARIANT_BASE_NEGATIVE_ITEMS if str(item).strip()]).strip()
 
 
 def build_base_prompt_payload():
-    # type: () -> Dict[str, object]
     return {
-        "version": 2,
-        "schema": "base_prompt.v2",
-        "base_prompt": get_invariant_base_prompt(),
-        "negative_prompt": get_invariant_negative_prompt(),
-        "source": "invariant_base_prompt",
+        "version": 1,
+        "schema": "base_prompt.v1",
+        "base_prompt": get_base_prompt(),
+        "negative_prompt": get_negative_prompt(),
+        "source": "encode.text_gen.base_prompt",
+        "geometry_constraints_included": True,
     }

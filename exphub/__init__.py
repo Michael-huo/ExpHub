@@ -2,7 +2,7 @@
 
 This package provides a single entrypoint: `python -m exphub ...`.
 It orchestrates existing ExpHub steps
-(segment/prompt/infer/merge/slam/eval/stats/doctor)
+(encode/decode/eval/export/doctor)
 while keeping outputs clean via keep_level policies.
 """
 

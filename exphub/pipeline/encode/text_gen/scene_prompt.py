@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
 
-from exphub.pipeline.prompt.backends import create_backend
+from exphub.pipeline.prompt.backends import SmolVlm2PromptBackend
 
 
 SCENE_PROMPT_INSTRUCTION = (
@@ -30,7 +30,6 @@ _SCENE_PROMPT_PREFIXES = [
 ]
 _SCENE_PROMPT_WORD_LIMIT = 18
 _SCENE_PROMPT_MAX_PHRASES = 4
-
 _SCENE_PROMPT_LEADIN_PATTERNS = [
     r"^(?:this|the)\s+(?:image|frame|scene|view)\s+(?:shows|depicts|features)\s+",
     r"^(?:image|frame|scene)\s+(?:shows|depicts|features)\s+",
@@ -50,31 +49,9 @@ _SCENE_PROMPT_DROP_PATTERNS = [
     r"\bappears to be\b",
     r"\bseems to be\b",
 ]
-_SCENE_PROMPT_FILLER_WORDS = {
-    "clearly",
-    "fairly",
-    "mainly",
-    "mostly",
-    "overall",
-    "rather",
-    "somewhat",
-    "very",
-}
-_SCENE_PROMPT_WEAK_PHRASES = {
-    "image",
-    "frame",
-    "scene",
-    "view",
-}
-_SCENE_PROMPT_MODIFIER_ONLY = {
-    "bright",
-    "dim",
-    "long",
-    "narrow",
-    "open",
-    "straight",
-    "wide",
-}
+_SCENE_PROMPT_FILLER_WORDS = {"clearly", "fairly", "mainly", "mostly", "overall", "rather", "somewhat", "very"}
+_SCENE_PROMPT_WEAK_PHRASES = {"image", "frame", "scene", "view"}
+_SCENE_PROMPT_MODIFIER_ONLY = {"bright", "dim", "long", "narrow", "open", "straight", "wide"}
 _SCENE_PROMPT_REPLACEMENTS = [
     (r"\bfirst[\s-]?person(?:\s+view)?\b", ""),
     (r"\bwalkway\b", "path"),
@@ -111,19 +88,16 @@ _SCENE_PROMPT_CONNECTOR_REPLACEMENTS = [
 
 
 def _as_dict(value):
-    # type: (object) -> Dict[str, object]
     if isinstance(value, dict):
         return value
     return {}
 
 
 def _collapse_ws(text):
-    # type: (object) -> str
     return " ".join(str(text or "").strip().split()).strip()
 
 
 def _relative_to_exp(exp_dir, target_path):
-    # type: (Path, Path) -> str
     exp_root = Path(exp_dir).resolve()
     target = Path(target_path).resolve()
     try:
@@ -133,7 +107,6 @@ def _relative_to_exp(exp_dir, target_path):
 
 
 def _safe_int(value, default=0):
-    # type: (object, int) -> int
     try:
         return int(value)
     except Exception:
@@ -141,12 +114,10 @@ def _safe_int(value, default=0):
 
 
 def _word_list(text):
-    # type: (object) -> List[str]
     return [part for part in _collapse_ws(text).split(" ") if part]
 
 
 def _drop_filler_words(text):
-    # type: (str) -> str
     kept = []
     for token in _word_list(text):
         if token in _SCENE_PROMPT_FILLER_WORDS:
@@ -156,7 +127,6 @@ def _drop_filler_words(text):
 
 
 def _normalize_scene_phrase(text):
-    # type: (str) -> str
     phrase = _collapse_ws(text).strip(" \t\r\n,;:.")
     if not phrase:
         return ""
@@ -169,7 +139,6 @@ def _normalize_scene_phrase(text):
 
 
 def _dedupe_scene_phrases(phrases):
-    # type: (List[str]) -> List[str]
     unique = []
     seen = set()
     for raw_phrase in list(phrases or []):
@@ -188,7 +157,6 @@ def _dedupe_scene_phrases(phrases):
 
 
 def _merge_scene_phrase_parts(parts):
-    # type: (List[str]) -> List[str]
     merged = []
     modifier_prefix = []
     for raw_part in list(parts or []):
@@ -209,7 +177,6 @@ def _merge_scene_phrase_parts(parts):
 
 
 def _trim_phrase_words(phrases, word_limit):
-    # type: (List[str], int) -> str
     remaining = max(1, int(word_limit))
     out = []
     for phrase in list(phrases or []):
@@ -229,7 +196,6 @@ def _trim_phrase_words(phrases, word_limit):
 
 
 def normalize_scene_prompt(text):
-    # type: (object) -> Tuple[str, Dict[str, object]]
     raw_prompt = _collapse_ws(text).strip(" \t\r\n\"'`")
     prompt = str(raw_prompt)
     prompt_lower = prompt.lower()
@@ -275,7 +241,6 @@ def normalize_scene_prompt(text):
 
 
 def _resolve_frame_path(frames_dir, start_frame, end_frame, preferred_frame):
-    # type: (Path, int, int, int) -> Path
     frames_root = Path(frames_dir).resolve()
     start_idx = int(start_frame)
     end_idx = int(end_frame)
@@ -305,7 +270,6 @@ def _resolve_frame_path(frames_dir, start_frame, end_frame, preferred_frame):
 
 
 def _pick_primary_frame(state_row, keyframe_indices, frames_dir):
-    # type: (Dict[str, object], List[int], Path) -> Dict[str, object]
     start_frame = int(state_row.get("start_frame", 0) or 0)
     end_frame = int(state_row.get("end_frame", 0) or 0)
     midpoint_frame = int(start_frame + max(0, int(end_frame - start_frame)) // 2)
@@ -333,19 +297,18 @@ def _pick_primary_frame(state_row, keyframe_indices, frames_dir):
     }
 
 
-def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_dir=""):
-    # type: (Dict[str, object], Path, str) -> Dict[str, object]
+def build_scene_prompt_payload(segment_inputs, frames_dir, prompt_model_dir=""):
     manifest = _as_dict(segment_inputs.get("segment_manifest"))
     state_payload = _as_dict(segment_inputs.get("state_segments_payload"))
     state_rows = list(state_payload.get("segments") or [])
     if not state_rows:
-        raise RuntimeError("state_segments payload has no segments for scene encoding")
+        raise RuntimeError("segment manifest has no state segments for scene prompts")
 
     keyframe_indices = sorted(set(int(v) for v in list(_as_dict(manifest.get("keyframes")).get("indices") or [])))
     exp_dir = Path(segment_inputs.get("exp_dir")).resolve()
     frames_root = Path(frames_dir).resolve()
 
-    backend = create_backend(model_ref=str(prompt_model_dir or ""))
+    backend = SmolVlm2PromptBackend(model_ref=str(prompt_model_dir or ""))
     backend.load()
     backend_meta = dict(backend.meta() or {})
     backend_name = str(backend_meta.get("backend", "smolvlm2") or "smolvlm2")
@@ -361,15 +324,10 @@ def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_dir=""):
         raw_prompt = backend.generate([str(primary_frame["image_path"])], SCENE_PROMPT_INSTRUCTION)
         scene_prompt, normalization_meta = normalize_scene_prompt(raw_prompt)
         if not scene_prompt:
-            raise RuntimeError(
-                "scene encoding returned empty prompt for state segment {}".format(
-                    _safe_int(state_row.get("segment_id"), idx)
-                )
-            )
+            raise RuntimeError("scene prompt is empty for state segment {}".format(_safe_int(state_row.get("segment_id"), idx)))
         encoded_segments.append(
             {
                 "state_segment_id": _safe_int(state_row.get("segment_id"), idx),
-                "source_segment_id": _safe_int(state_row.get("segment_id"), idx),
                 "state_label": str(state_row.get("state_label", "state_unlabeled") or "state_unlabeled"),
                 "start_frame": int(state_row.get("start_frame", 0) or 0),
                 "end_frame": int(state_row.get("end_frame", 0) or 0),
@@ -378,7 +336,7 @@ def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_dir=""):
                 "raw_scene_prompt_word_count": int(normalization_meta.get("raw_word_count", 0) or 0),
                 "scene_prompt_word_count": int(normalization_meta.get("normalized_word_count", 0) or 0),
                 "scene_prompt_normalization": dict(normalization_meta),
-                "scene_prompt_source": "state_v2t_primary_frame",
+                "scene_prompt_source": "smolvlm2_primary_frame",
                 "scene_encoding_backend": str(backend_name),
                 "representative_frame": {
                     "frame_idx": int(primary_frame["frame_idx"]),
@@ -392,10 +350,12 @@ def build_state_scene_encoding(segment_inputs, frames_dir, prompt_model_dir=""):
 
     return {
         "version": 1,
-        "source": "state_level_scene_encoding_v2",
-        "scene_prompt_mode": "state_v2t_primary_frame",
+        "schema": "scene_prompt_manifest.v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "source": "encode.text_gen.scene_prompt",
+        "scene_prompt_mode": "smolvlm2_primary_frame",
+        "scene_prompt_style": "compact_canonical_phrase_v1",
         "backend": str(backend_name),
         "backend_meta": dict(backend_meta),
-        "scene_prompt_style": "compact_canonical_phrase_v1",
-        "state_segments": encoded_segments,
+        "segments": encoded_segments,
     }
