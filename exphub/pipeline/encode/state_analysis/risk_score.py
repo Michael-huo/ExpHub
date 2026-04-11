@@ -42,7 +42,7 @@ def _risk_level_for_score(score):
     return "low"
 
 
-def _assert_aligned_segment_rows(motion_rows, semantic_rows):
+def _assert_matching_segment_rows(motion_rows, semantic_rows):
     for idx, (motion_raw, semantic_raw) in enumerate(zip(motion_rows, semantic_rows)):
         motion_row = _as_dict(motion_raw)
         semantic_row = _as_dict(semantic_raw)
@@ -50,7 +50,7 @@ def _assert_aligned_segment_rows(motion_rows, semantic_rows):
         semantic_segment_id = _safe_int(semantic_row.get("segment_id"), idx)
         if motion_segment_id != semantic_segment_id:
             raise RuntimeError(
-                "generation risk requires aligned segment ids: motion={} semantic={}".format(
+                "generation risk requires matched segment ids: motion={} semantic={}".format(
                     int(motion_segment_id),
                     int(semantic_segment_id),
                 )
@@ -65,7 +65,7 @@ def _assert_aligned_segment_rows(motion_rows, semantic_rows):
         )
         if motion_range != semantic_range:
             raise RuntimeError(
-                "generation risk requires aligned segment ranges: motion={} semantic={}".format(
+                "generation risk requires matched segment ranges: motion={} semantic={}".format(
                     motion_range,
                     semantic_range,
                 )
@@ -81,7 +81,7 @@ def build_generation_risk_payload(motion_score_payload, semantic_shift_payload):
         raise RuntimeError("generation risk requires non-empty motion score and semantic shift segments")
     if len(motion_rows) != len(semantic_rows):
         raise RuntimeError("motion score and semantic shift segment counts must match")
-    _assert_aligned_segment_rows(motion_rows, semantic_rows)
+    _assert_matching_segment_rows(motion_rows, semantic_rows)
 
     segments = []
     for idx, (motion_raw, semantic_raw) in enumerate(zip(motion_rows, semantic_rows)):

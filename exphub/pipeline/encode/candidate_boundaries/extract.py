@@ -36,7 +36,7 @@ def build_candidate_boundaries_payload(motion_score_payload, semantic_shift_payl
     if not motion_rows or not semantic_rows or not risk_rows:
         raise RuntimeError("candidate boundary extraction requires motion, semantic, and risk segments")
     if not (len(motion_rows) == len(semantic_rows) == len(risk_rows)):
-        raise RuntimeError("candidate boundary extraction requires aligned segment counts")
+        raise RuntimeError("candidate boundary extraction requires matched signal segment counts")
 
     boundaries = []
     for idx in range(1, len(risk_rows)):

@@ -38,23 +38,17 @@ def _focus_name(args):
     return "{}_{}".format(str(args.dataset), str(args.sequence))
 
 
-def _export_source(args):
-    return str(args.export_source or "aligned").strip().lower() or "aligned"
-
-
 def _export_root(runtime):
     base = Path(str(runtime.args.export_root or "").strip()).resolve() if str(runtime.args.export_root or "").strip() else (
         runtime.exphub_root / "exports"
     ).resolve()
     scope = str(runtime.args.export_scope or "single")
     focus_name = _focus_name(runtime.args)
-    source_name = _export_source(runtime.args)
     return (
         base
         / scope
         / sanitize_token(focus_name, max_len=64)
         / sanitize_token(runtime.args.tag, max_len=64)
-        / sanitize_token(source_name, max_len=32)
     ).resolve()
 
 
@@ -228,7 +222,6 @@ def _make_encode_args(runtime, target, export_root, clip_plan, profile):
         export_root=str(runtime.args.export_root or ""),
         export_scope=str(runtime.args.export_scope),
         export_focus=str(runtime.args.export_focus),
-        export_source=str(_export_source(runtime.args)),
         export_target_fps=int(profile["target_fps"]),
         export_target_num_frames=int(profile["target_num_frames"]),
         export_target_width=int(profile["target_width"]),
@@ -260,7 +253,7 @@ def _metadata_entry(export_root, split, clip_path, caption):
     }
 
 
-def _candidate_rejections_to_skips(target, clip_plan, exp_dir, export_source, rejections):
+def _candidate_rejections_to_skips(target, clip_plan, exp_dir, rejections):
     skips = []
     for rejection in list(rejections or []):
         item = dict(rejection or {})
@@ -270,7 +263,6 @@ def _candidate_rejections_to_skips(target, clip_plan, exp_dir, export_source, re
                 "sequence": str(target["sequence"]),
                 "clip_index": int(clip_plan["clip_index"]),
                 "start_sec": float(clip_plan["start_sec"]),
-                "export_source": str(export_source),
             }
         )
         if exp_dir is not None:
@@ -281,7 +273,6 @@ def _candidate_rejections_to_skips(target, clip_plan, exp_dir, export_source, re
 
 def run(runtime):
     args = runtime.args
-    export_source = _export_source(args)
     cfg = _load_cfg(runtime)
     export_root = _export_root(runtime)
     profile = _export_profile(args)
@@ -295,8 +286,7 @@ def run(runtime):
         raise RuntimeError("export resolved no dataset targets")
 
     log_info(
-        "export start: source={} scope={} focus={} targets={} profile={}fps/{}f/{}x{} harvest={:.2f}s stride={:.2f}s".format(
-            str(export_source),
+        "export start: planner=generation_units scope={} focus={} targets={} profile={}fps/{}f/{}x{} harvest={:.2f}s stride={:.2f}s".format(
             str(args.export_scope),
             str(args.export_focus),
             int(len(targets)),
@@ -326,7 +316,6 @@ def run(runtime):
                 {
                     "dataset": str(target["dataset"]),
                     "sequence": str(target["sequence"]),
-                    "export_source": str(export_source),
                     "reason": "bag_too_short_for_harvest_window",
                     "bag_duration_sec": float(bag_info.get("duration_sec", 0.0) or 0.0),
                     "harvest_sec": float(profile["harvest_sec"]),
@@ -335,8 +324,7 @@ def run(runtime):
             continue
 
         log_info(
-            "export bag: source={} dataset={} sequence={} harvest_windows={} duration={:.2f}s".format(
-                str(export_source),
+            "export bag: dataset={} sequence={} harvest_windows={} duration={:.2f}s".format(
                 str(target["dataset"]),
                 str(target["sequence"]),
                 int(len(harvest_plan_items)),
@@ -352,9 +340,7 @@ def run(runtime):
                 segment_manifest = read_json_dict(segment_manifest_path)
                 prompt_manifest = read_json_dict(prompt_manifest_path)
                 candidate_result = clip_builder.select_training_candidates(
-                    export_source=export_source,
                     segment_manifest=segment_manifest,
-                    prompt_manifest=prompt_manifest,
                     exp_dir=exp_dir,
                     profile=profile,
                 )
@@ -363,7 +349,6 @@ def run(runtime):
                         target=target,
                         clip_plan=clip_plan,
                         exp_dir=exp_dir,
-                        export_source=export_source,
                         rejections=candidate_result.get("rejections") or [],
                     )
                 )
@@ -411,7 +396,6 @@ def run(runtime):
                         "start_sec": float(clip_plan["start_sec"]),
                         "harvest_sec": float(profile["harvest_sec"]),
                         "split": str(split),
-                        "export_source": str(export_source),
                         "file_path": metadata_entry["file_path"],
                         "text": metadata_entry["text"],
                         "type": "video",
@@ -425,12 +409,11 @@ def run(runtime):
                         "target_fps": int(profile["target_fps"]),
                         "selection_reason": str(candidate.get("selection_reason", "") or ""),
                         "candidate_summary": dict(candidate.get("summary") or {}),
+                        "source_unit_ids": list(candidate.get("source_unit_ids") or []),
+                        "source_span_id": str(candidate.get("source_span_id", "") or ""),
+                        "source_prompt_ref": dict(candidate.get("source_prompt_ref") or {}),
+                        "resolved_prompt_source": str(candidate.get("resolved_prompt_source", "prompt_spans") or "prompt_spans"),
                     }
-                    if export_source == "generation_units":
-                        clip_record["source_unit_ids"] = list(candidate.get("source_unit_ids") or [])
-                        clip_record["source_span_id"] = str(candidate.get("source_span_id", "") or "")
-                        clip_record["source_prompt_ref"] = dict(candidate.get("source_prompt_ref") or {})
-                        clip_record["resolved_prompt_source"] = str(candidate.get("resolved_prompt_source", "prompt_spans") or "prompt_spans")
                     exported_clips.append(clip_record)
             except Exception as exc:
                 skipped_clips.append(
@@ -439,13 +422,11 @@ def run(runtime):
                         "sequence": str(target["sequence"]),
                         "clip_index": int(clip_plan["clip_index"]),
                         "start_sec": float(clip_plan["start_sec"]),
-                        "export_source": str(export_source),
                         "reason": "export_failed:{}".format(_collapse_ws(exc)),
                     }
                 )
                 log_warn(
-                    "export clip skipped: source={} dataset={} sequence={} start_sec={} reason={}".format(
-                        str(export_source),
+                    "export clip skipped: dataset={} sequence={} start_sec={} reason={}".format(
                         str(target["dataset"]),
                         str(target["sequence"]),
                         str(clip_plan["start_sec"]),
@@ -456,7 +437,6 @@ def run(runtime):
     metadata_paths = dataset_writer.write_metadata_files(export_root, entries_by_split)
     dataset_report = report.build_dataset_report(
         export_root=export_root,
-        export_source=str(export_source),
         scope=str(args.export_scope),
         focus_name=str(_focus_name(args)),
         training_spec=clip_builder.training_spec(profile),
@@ -468,8 +448,7 @@ def run(runtime):
     report_path = report.write_dataset_report(export_root, dataset_report)
 
     log_prog(
-        "export summary: source={} clips={} skipped={} elapsed={:.2f}s".format(
-            str(export_source),
+        "export summary: clips={} skipped={} elapsed={:.2f}s".format(
             int(len(exported_clips)),
             int(len(skipped_clips)),
             float(time.time() - total_t0),
@@ -492,7 +471,6 @@ def _build_arg_parser():
     parser.add_argument("--export_root", default="")
     parser.add_argument("--export_scope", default="single", choices=["single", "dataset", "focus"])
     parser.add_argument("--export_focus", default="ncd_scand", choices=sorted(FOCUS_DATASETS.keys()))
-    parser.add_argument("--export_source", default="aligned", choices=["aligned", "generation_units"])
     parser.add_argument("--export_target_fps", type=int, default=clip_builder.DEFAULT_EXPORT_FPS)
     parser.add_argument("--export_target_num_frames", type=int, default=clip_builder.DEFAULT_EXPORT_NUM_FRAMES)
     parser.add_argument("--export_target_width", type=int, default=clip_builder.DEFAULT_EXPORT_WIDTH)

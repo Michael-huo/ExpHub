@@ -16,6 +16,56 @@ from exphub.pipeline.encode.unit_planner import build_generation_units_payload
 _PROMPT_PHASE = "prompt_smol"
 
 
+def _refresh_mainline_manifests(runtime, generation_units, prompt_spans):
+    segment_manifest = read_json_dict(runtime.paths.segment_manifest_path)
+    prompt_report = read_json_dict(runtime.paths.prompt_report_path)
+    if segment_manifest:
+        artifacts = dict(segment_manifest.get("artifacts") or {})
+        artifacts.update(
+            {
+                "motion_score": "segment/motion_score.json",
+                "semantic_shift": "segment/semantic_shift.json",
+                "generation_risk": "segment/generation_risk.json",
+                "candidate_boundaries": "segment/candidate_boundaries.json",
+                "generation_units": "segment/generation_units.json",
+                "prompt_spans": "prompt/prompt_spans.json",
+            }
+        )
+        segment_manifest["artifacts"] = artifacts
+        segment_manifest["generation_units"] = {
+            "schema": str(generation_units.get("schema", "generation_units.v1") or "generation_units.v1"),
+            "path": "segment/generation_units.json",
+            "summary": dict(generation_units.get("summary") or {}),
+        }
+        segment_manifest["planner"] = {
+            "planner": "generation_units",
+            "prompt_strategy": "prompt_spans",
+            "planned_artifacts": {
+                "motion_score": "segment/motion_score.json",
+                "semantic_shift": "segment/semantic_shift.json",
+                "generation_risk": "segment/generation_risk.json",
+                "candidate_boundaries": "segment/candidate_boundaries.json",
+                "generation_units": "segment/generation_units.json",
+                "prompt_spans": "prompt/prompt_spans.json",
+            },
+        }
+        summary = dict(segment_manifest.get("summary") or {})
+        summary["generation_unit_count"] = int((generation_units.get("summary") or {}).get("unit_count", 0) or 0)
+        summary["prompt_span_count"] = int((prompt_spans.get("summary") or {}).get("span_count", 0) or 0)
+        segment_manifest["summary"] = summary
+        write_json_atomic(runtime.paths.segment_manifest_path, segment_manifest, indent=2)
+    if prompt_report:
+        prompt_report["planner"] = "generation_units"
+        prompt_report["prompt_strategy"] = "prompt_spans"
+        artifacts = dict(prompt_report.get("artifacts") or {})
+        artifacts["prompt_spans"] = "prompt/prompt_spans.json"
+        prompt_report["artifacts"] = artifacts
+        summary = dict(prompt_report.get("summary") or {})
+        summary["prompt_span_count"] = int((prompt_spans.get("summary") or {}).get("span_count", 0) or 0)
+        prompt_report["summary"] = summary
+        write_json_atomic(runtime.paths.prompt_report_path, prompt_report, indent=2)
+
+
 def _scene_split_helper_path(runtime):
     return (runtime.exphub_root / "exphub" / "pipeline" / "encode" / "scene_split" / "core.py").resolve()
 
@@ -104,7 +154,6 @@ def run_scene_split(runtime):
     ensure_dir(contract.artifacts["frames_dir"], "segment frames dir")
     ensure_dir(contract.artifacts["keyframes_dir"], "segment keyframes dir")
     ensure_file(contract.artifacts["manifest"], "segment manifest")
-    ensure_file(contract.artifacts["aligned_plan"], "aligned segment plan")
     ensure_file(contract.artifacts["report"], "segment report")
     ensure_file(contract.artifacts["overview"], "segment state overview")
     ensure_file(contract.artifacts["calib"], "segment calib")
@@ -169,6 +218,7 @@ def run_generation_unit_planner(runtime):
     write_json_atomic(runtime.paths.segment_candidate_boundaries_path, candidate_boundaries, indent=2)
     write_json_atomic(runtime.paths.segment_generation_units_path, generation_units, indent=2)
     write_json_atomic(runtime.paths.prompt_spans_path, prompt_spans, indent=2)
+    _refresh_mainline_manifests(runtime, generation_units, prompt_spans)
 
     ensure_file(runtime.paths.segment_motion_score_path, "motion score")
     ensure_file(runtime.paths.segment_semantic_shift_path, "semantic shift")

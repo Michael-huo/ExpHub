@@ -441,8 +441,6 @@ def run_slam_substage(args):
     if seq not in ("ori", "gen", "both"):
         raise RuntimeError("unsupported slam seq: {}".format(seq))
 
-    eval_source = str(args.eval_source or "aligned").strip().lower() or "aligned"
-    decode_source = str(args.decode_source or eval_source).strip().lower() or "aligned"
     infer_report = dict(read_json_dict(Path(args.infer_report)) or {})
     merge_report = dict(read_json_dict(Path(args.merge_report)) or {})
     merge_manifest = dict(read_json_dict(Path(args.merge_manifest)) or {})
@@ -473,13 +471,8 @@ def run_slam_substage(args):
         "substage": "slam",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "slam_status": "success",
-        "eval_source": str(eval_source),
-        "decode_source": str(
-            merge_report.get("decode_source")
-            or infer_report.get("decode_source")
-            or merge_summary.get("decode_source")
-            or decode_source
-        ),
+        "planner": "generation_units",
+        "prompt_strategy": "prompt_spans",
         "source_unit_count": int(merge_summary.get("source_unit_count", 0) or 0),
         "source_span_count": int(merge_summary.get("source_span_count", 0) or 0),
         "shared_anchor_count": int(merge_summary.get("shared_anchor_count", 0) or 0),
@@ -530,8 +523,6 @@ def _build_arg_parser():
     parser.add_argument("--merge_dir", required=True)
     parser.add_argument("--merge_report", required=True)
     parser.add_argument("--merge_manifest", required=True)
-    parser.add_argument("--eval_source", default="aligned")
-    parser.add_argument("--decode_source", default="aligned")
     parser.add_argument("--seq", default="both")
     parser.add_argument("--droid_repo", required=True)
     parser.add_argument("--weights", required=True)

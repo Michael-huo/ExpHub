@@ -279,26 +279,16 @@ def _parse_infer_log_details(log_path: Path) -> Dict[str, object]:
     return out
 
 
-def _load_experiment_report(
-    exp_dir: Path,
-    step_times: Dict[str, float],
-    eval_source: str = "aligned",
-    decode_source: str = "aligned",
-) -> Dict[str, object]:
+def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict[str, object]:
     phase_names = ["encode", "decode", "eval"]
     total_time = sum(float(x) for x in step_times.values())
 
-    eval_source_name = str(eval_source or "aligned").strip().lower() or "aligned"
-    decode_source_name = str(decode_source or "aligned").strip().lower() or "aligned"
     eval_dir = exp_dir / "eval"
-    if eval_source_name != "aligned":
-        eval_dir = eval_dir / eval_source_name
     eval_report = _read_json_dict(eval_dir / "report.json")
     traj_metrics = dict(eval_report.get("traj_eval") or {}) if isinstance(eval_report.get("traj_eval"), dict) else {}
     if not traj_metrics:
         traj_metrics = _read_json_dict(eval_dir / "metrics" / "traj_eval.json")
-    infer_log_name = "infer_aligned.log" if decode_source_name == "aligned" else "infer_{}.log".format(decode_source_name)
-    infer_details = _parse_infer_log_details(exp_dir / "logs" / infer_log_name)
+    infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
 
     compression_obj = {}
     if isinstance(eval_report.get("compression"), dict):
@@ -384,13 +374,8 @@ def _print_rows(rows: List[tuple]) -> None:
         _info("{:<{w}} : {}".format(str(key), value, w=width))
 
 
-def _print_experiment_report(
-    exp_dir: Path,
-    step_times: Dict[str, float],
-    eval_source: str = "aligned",
-    decode_source: str = "aligned",
-) -> None:
-    report = _load_experiment_report(exp_dir, step_times, eval_source=eval_source, decode_source=decode_source)
+def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> None:
+    report = _load_experiment_report(exp_dir, step_times)
     total_time = float(report.get("total_time") or 0.0)
     phase_times = dict(report.get("phase_times") or {})
     infer_details = dict(report.get("infer_details") or {})
@@ -453,7 +438,6 @@ def _load_export_report(export_root: Path, step_times: Dict[str, float]) -> Dict
     outputs = dict(dataset_report.get("outputs") or {})
     return {
         "export_root": str(export_root),
-        "export_source": str(dataset_report.get("export_source", "") or ""),
         "total_time": float(sum(float(x) for x in step_times.values())),
         "phase_times": {"export": _as_float_or_none(step_times.get("export"))},
         "summary": summary,
@@ -467,8 +451,6 @@ def _print_export_report(export_root: Path, step_times: Dict[str, float]) -> Non
     phase_times = dict(payload.get("phase_times") or {})
     summary = dict(payload.get("summary") or {})
     outputs = dict(payload.get("outputs") or {})
-    export_source = str(payload.get("export_source", "") or "unknown")
-
     sep = "=" * 70
     div = "-" * 70
     _info(sep)
@@ -476,7 +458,6 @@ def _print_export_report(export_root: Path, step_times: Dict[str, float]) -> Non
     _info(sep)
     _print_rows(
         [
-            ("source", export_source),
             ("export", _fmt_phase_seconds(_as_float_or_none(phase_times.get("export")), total_time)),
             ("total", _fmt_seconds(total_time)),
         ]
@@ -564,8 +545,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         choices=["wan_fun_5b_inp"],
         help="infer backend for the current workflow",
     )
-    ap.add_argument("--decode_source", default="aligned", choices=["aligned", "generation_units"])
-    ap.add_argument("--eval_source", default="aligned", choices=["aligned", "generation_units"])
     ap.add_argument(
         "--infer_model_dir",
         default="",
@@ -577,7 +556,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--export_root", default="", help="override export root (default: <exphub>/exports/<scope>/<focus>/<tag>)")
     ap.add_argument("--export_scope", default="single", choices=["single", "dataset", "focus"])
     ap.add_argument("--export_focus", default="ncd_scand", choices=["ncd_scand", "ncd", "scand"])
-    ap.add_argument("--export_source", default="aligned", choices=["aligned", "generation_units"])
     ap.add_argument("--export_target_fps", type=int, default=24)
     ap.add_argument("--export_target_num_frames", type=int, default=73)
     ap.add_argument("--export_target_width", type=int, default=832)
@@ -661,12 +639,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         if mode_norm == "export":
             _print_export_report(result.result_root, result.step_times)
         elif mode_norm != "doctor":
-            _print_experiment_report(
-                result.exp_dir,
-                result.step_times,
-                eval_source=str(getattr(args, "eval_source", "aligned") or "aligned"),
-                decode_source=str(getattr(args, "decode_source", "aligned") or "aligned"),
-            )
+            _print_experiment_report(result.exp_dir, result.step_times)
     except (ConfigError, RunError, RuntimeError) as e:
         _die(str(e))
 

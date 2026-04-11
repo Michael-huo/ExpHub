@@ -18,7 +18,6 @@ def _relative_to_root(root_dir, target_path):
 
 def build_dataset_report(
     export_root,
-    export_source,
     scope,
     focus_name,
     training_spec,
@@ -60,8 +59,9 @@ def build_dataset_report(
         "report_schema_version": "export_dataset_report.v1",
         "step": "export",
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "planner": "generation_units",
+        "prompt_strategy": "prompt_spans",
         "workflow": "input -> encode -> export",
-        "export_source": str(export_source),
         "export_scope": str(scope),
         "export_focus": str(focus_name),
         "training_spec": dict(training_spec or {}),
