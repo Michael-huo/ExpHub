@@ -123,7 +123,7 @@ def build_generation_units_payload(
     if not motion_rows or not semantic_rows or not risk_rows:
         raise RuntimeError("generation unit planner requires motion, semantic, and risk segments")
     if not (len(motion_rows) == len(semantic_rows) == len(risk_rows)):
-        raise RuntimeError("generation unit planner requires aligned segment counts")
+        raise RuntimeError("generation unit planner requires matched signal segment counts")
     if int(sequence_end_idx) < int(sequence_start_idx):
         raise RuntimeError("generation unit planner received inverted sequence range")
 

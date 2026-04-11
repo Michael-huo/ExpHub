@@ -18,8 +18,6 @@ from exphub.pipeline.encode.scene_split import diagnostics
 
 
 _BAR_FORMAT = "[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
-_DECODE_ALIGNMENT_MODULUS = 4
-_EXPORT_TARGET_FRAMES = 73
 
 
 def _maybe_progress(iterable):
@@ -372,270 +370,6 @@ def _build_keyframes_meta(plan, kf_gap, keyframes_mode, actual_mode, keyframe_by
     }
 
 
-def _decode_legal_num_frames(desired_num_frames):
-    desired = max(1, int(desired_num_frames))
-    if desired == 1:
-        return 1
-    return int(((desired - 1) // _DECODE_ALIGNMENT_MODULUS) * _DECODE_ALIGNMENT_MODULUS + 1)
-
-
-def _decode_length_units(num_frames):
-    frames = int(num_frames)
-    if frames <= 0:
-        raise ValueError("decode length must be > 0")
-    if (frames - 1) % int(_DECODE_ALIGNMENT_MODULUS) != 0:
-        raise ValueError("decode length is not legal: {}".format(frames))
-    return int((frames - 1) // int(_DECODE_ALIGNMENT_MODULUS))
-
-
-def _allocate_decode_units(target_units, total_units):
-    targets = [max(0.0, float(item)) for item in list(target_units or [])]
-    units = [max(0, int(math.floor(item))) for item in targets]
-    remain = int(total_units) - int(sum(units))
-
-    while remain > 0:
-        best_idx = 0
-        best_delta = None
-        for idx, target in enumerate(targets):
-            cur = float(units[idx])
-            delta = ((cur + 1.0) - target) ** 2 - (cur - target) ** 2
-            if best_delta is None or delta < best_delta:
-                best_delta = delta
-                best_idx = idx
-        units[best_idx] += 1
-        remain -= 1
-
-    while remain < 0:
-        best_idx = None
-        best_delta = None
-        for idx, target in enumerate(targets):
-            cur = int(units[idx])
-            if cur <= 0:
-                continue
-            delta = ((float(cur - 1) - target) ** 2) - ((float(cur) - target) ** 2)
-            if best_delta is None or delta < best_delta:
-                best_delta = delta
-                best_idx = idx
-        if best_idx is None:
-            raise ValueError("decode unit projection underflow: total_units={}".format(int(total_units)))
-        units[best_idx] -= 1
-        remain += 1
-
-    return units, targets
-
-
-def _build_raw_boundary_indices(raw_segments):
-    rows = list(raw_segments or [])
-    if not rows:
-        return []
-    boundaries = [int(_safe_int(rows[0].get("start_frame"), 0))]
-    for item in rows:
-        boundaries.append(int(_safe_int(item.get("end_frame"), boundaries[-1])))
-    return boundaries
-
-
-def build_aligned_segment_plan(state_segments_payload):
-    payload = dict(state_segments_payload or {})
-    raw_segments = list(payload.get("segments") or [])
-    if not raw_segments:
-        return {
-            "version": 2,
-            "schema": "aligned_segment_plan.v2",
-            "stage": "encode",
-            "substage": "scene_split",
-            "source": "encode.scene_split.aligned_segments",
-            "policy": {
-                "projection_mode": "global_boundary_snap",
-                "decode_length_rule": "length_is_1_mod_{}".format(int(_DECODE_ALIGNMENT_MODULUS)),
-                "boundary_model": "shared_snapped_boundaries",
-                "first_boundary": "fixed_to_raw_start",
-                "last_boundary": "fixed_to_raw_end",
-            },
-            "raw_boundary_indices": [],
-            "aligned_boundary_indices": [],
-            "segments": [],
-            "summary": {
-                "segment_count": 0,
-                "boundary_count": 0,
-                "decode_valid_segment_count": 0,
-                "export_ready_segment_count": 0,
-                "shifted_segment_count": 0,
-                "shared_boundary_count": 0,
-                "mean_abs_boundary_shift": 0.0,
-                "max_abs_boundary_shift": 0,
-            },
-        }
-
-    prev_raw_end = None
-    for idx, raw_item in enumerate(raw_segments):
-        row = dict(raw_item or {})
-        raw_start_idx = int(_safe_int(row.get("start_frame"), 0))
-        raw_end_idx = int(_safe_int(row.get("end_frame"), raw_start_idx))
-        if raw_end_idx < raw_start_idx:
-            raise ValueError("state segment {} has invalid raw range".format(idx))
-        if prev_raw_end is not None and raw_start_idx != int(prev_raw_end) + 1:
-            raise ValueError(
-                "state segments must stay contiguous for global aligned projection: prev_end={} current_start={}".format(
-                    int(prev_raw_end),
-                    int(raw_start_idx),
-                )
-            )
-        prev_raw_end = int(raw_end_idx)
-
-    raw_boundary_indices = _build_raw_boundary_indices(raw_segments)
-    total_span = int(raw_boundary_indices[-1] - raw_boundary_indices[0])
-    if total_span < 0:
-        raise ValueError("aligned segment plan received negative raw span")
-    if total_span % int(_DECODE_ALIGNMENT_MODULUS) != 0:
-        raise ValueError(
-            "global aligned projection impossible: raw span {} is not divisible by {}".format(
-                int(total_span),
-                int(_DECODE_ALIGNMENT_MODULUS),
-            )
-        )
-
-    total_units = int(total_span // int(_DECODE_ALIGNMENT_MODULUS))
-    target_units = []
-    desired_num_frames_list = []
-    for raw_item in raw_segments:
-        row = dict(raw_item or {})
-        raw_start_idx = int(_safe_int(row.get("start_frame"), 0))
-        raw_end_idx = int(_safe_int(row.get("end_frame"), raw_start_idx))
-        desired_num_frames = int(max(0, raw_end_idx - raw_start_idx + 1))
-        desired_num_frames_list.append(desired_num_frames)
-        target_units.append(max(0.0, float(desired_num_frames - 1) / float(_DECODE_ALIGNMENT_MODULUS)))
-
-    projected_units, projected_targets = _allocate_decode_units(target_units, total_units)
-    aligned_boundary_indices = [int(raw_boundary_indices[0])]
-    for unit in projected_units:
-        aligned_boundary_indices.append(
-            int(aligned_boundary_indices[-1] + int(unit) * int(_DECODE_ALIGNMENT_MODULUS))
-        )
-    if int(aligned_boundary_indices[-1]) != int(raw_boundary_indices[-1]):
-        raise ValueError(
-            "global aligned projection internal error: aligned_end={} raw_end={}".format(
-                int(aligned_boundary_indices[-1]),
-                int(raw_boundary_indices[-1]),
-            )
-        )
-
-    aligned_segments = []
-    decode_valid_count = 0
-    export_ready_count = 0
-    shifted_segment_count = 0
-    boundary_shifts = [int(aligned) - int(raw) for raw, aligned in zip(raw_boundary_indices, aligned_boundary_indices)]
-
-    for idx, raw_item in enumerate(raw_segments):
-        row = dict(raw_item or {})
-        segment_id = _safe_int(row.get("segment_id"), idx)
-        raw_start_idx = _safe_int(row.get("start_frame"), 0)
-        raw_end_idx = _safe_int(row.get("end_frame"), raw_start_idx)
-        desired_start_idx = int(raw_start_idx)
-        desired_end_idx = int(raw_end_idx)
-        desired_num_frames = int(max(0, desired_end_idx - desired_start_idx + 1))
-        aligned_boundary_start_idx = int(aligned_boundary_indices[idx])
-        aligned_boundary_end_idx = int(aligned_boundary_indices[idx + 1])
-        aligned_start_idx = int(aligned_boundary_start_idx)
-        aligned_end_idx = int(aligned_boundary_end_idx)
-        aligned_num_frames = int(aligned_end_idx - aligned_start_idx + 1)
-        left_shift = int(aligned_start_idx - desired_start_idx)
-        right_shift = int(aligned_end_idx - desired_end_idx)
-        align_reason = "already_decode_legal"
-        if (
-            int(left_shift) != 0
-            or int(right_shift) != 0
-            or int(aligned_num_frames) != int(desired_num_frames)
-        ):
-            align_reason = "global_boundary_snap_projection"
-            shifted_segment_count += 1
-
-        is_valid_for_decode = bool(
-            aligned_num_frames > 0 and (int(aligned_num_frames) - 1) % int(_DECODE_ALIGNMENT_MODULUS) == 0
-        )
-        is_valid_for_export = bool(aligned_num_frames >= int(_EXPORT_TARGET_FRAMES))
-        if is_valid_for_decode:
-            decode_valid_count += 1
-        if is_valid_for_export:
-            export_ready_count += 1
-
-        aligned_segments.append(
-            {
-                "segment_id": int(segment_id),
-                "state_label": str(row.get("state_label", "state_unlabeled") or "state_unlabeled"),
-                "risk_level": str(row.get("risk_level", "") or ""),
-                "raw_boundary_indices": [
-                    int(raw_boundary_indices[idx]),
-                    int(raw_boundary_indices[idx + 1]),
-                ],
-                "aligned_boundary_indices": [
-                    int(aligned_boundary_indices[idx]),
-                    int(aligned_boundary_indices[idx + 1]),
-                ],
-                "raw_start_idx": int(raw_start_idx),
-                "raw_end_idx": int(raw_end_idx),
-                "desired_start_idx": int(desired_start_idx),
-                "desired_end_idx": int(desired_end_idx),
-                "desired_num_frames": int(desired_num_frames),
-                "aligned_start_idx": int(aligned_start_idx),
-                "aligned_end_idx": int(aligned_end_idx),
-                "aligned_num_frames": int(aligned_num_frames),
-                "left_shift": int(left_shift),
-                "right_shift": int(right_shift),
-                "align_reason": str(align_reason),
-                "is_valid_for_decode": bool(is_valid_for_decode),
-                "is_valid_for_export": bool(is_valid_for_export),
-                "state_score_peak": _safe_float(row.get("state_score_peak"), 0.0),
-                "detector_score_peak": _safe_float(row.get("detector_score_peak"), 0.0),
-            }
-        )
-
-    return {
-        "version": 2,
-        "schema": "aligned_segment_plan.v2",
-        "stage": "encode",
-        "substage": "scene_split",
-        "source": "encode.scene_split.aligned_segments",
-        "policy": {
-            "projection_mode": "global_boundary_snap",
-            "decode_length_rule": "length_is_1_mod_{}".format(int(_DECODE_ALIGNMENT_MODULUS)),
-            "export_target_num_frames": int(_EXPORT_TARGET_FRAMES),
-            "boundary_model": "shared_snapped_boundaries",
-            "first_boundary": "fixed_to_raw_start",
-            "last_boundary": "fixed_to_raw_end",
-            "boundary_policy": "global_projection_nearest_legal_snap",
-            "center_policy": "preserve_semantic_distribution_via_global_unit_allocation",
-            "shift_semantics": "signed_offset_vs_raw_semantic_edge",
-        },
-        "raw_boundary_indices": [int(item) for item in raw_boundary_indices],
-        "aligned_boundary_indices": [int(item) for item in aligned_boundary_indices],
-        "segments": aligned_segments,
-        "summary": {
-            "segment_count": int(len(aligned_segments)),
-            "boundary_count": int(len(aligned_boundary_indices)),
-            "decode_valid_segment_count": int(decode_valid_count),
-            "export_ready_segment_count": int(export_ready_count),
-            "shifted_segment_count": int(shifted_segment_count),
-            "shared_boundary_count": int(max(0, len(aligned_boundary_indices) - 2)),
-            "mean_abs_boundary_shift": float(
-                sum([abs(int(item)) for item in boundary_shifts]) / float(len(boundary_shifts))
-            )
-            if boundary_shifts
-            else 0.0,
-            "max_abs_boundary_shift": int(max([abs(int(item)) for item in boundary_shifts]) if boundary_shifts else 0),
-            "projection_stats": {
-                "solver": "greedy_global_l2_rounding",
-                "total_span": int(total_span),
-                "total_units": int(total_units),
-                "target_units": [float(item) for item in projected_targets],
-                "projected_units": [int(item) for item in projected_units],
-                "desired_num_frames": [int(item) for item in desired_num_frames_list],
-                "aligned_num_frames": [int(item.get("aligned_num_frames", 0) or 0) for item in aligned_segments],
-                "boundary_shifts": [int(item) for item in boundary_shifts],
-            },
-        },
-    }
-
-
 def run_formal_mainline(args):
     from exphub.pipeline.segment.state.detector import run_state_mainline
 
@@ -678,7 +412,6 @@ def run_formal_mainline(args):
     log_info("scene split artifacts completed in {:.2f}s".format(materialize_sec))
 
     state_segments_payload = dict(detector_result["state_segments_payload"])
-    aligned_segment_plan_payload = build_aligned_segment_plan(state_segments_payload)
     state_report_payload = dict(detector_result["state_report_payload"])
     quality_diagnostics = diagnostics.build_quality_diagnostics(
         paths=paths,
@@ -709,7 +442,6 @@ def run_formal_mainline(args):
         policy_name="state",
         keyframes_meta=keyframes_meta,
         state_segments_payload=state_segments_payload,
-        aligned_segment_plan_payload=aligned_segment_plan_payload,
         state_report_payload=state_report_payload,
         quality_diagnostics=quality_diagnostics,
     )
@@ -718,25 +450,21 @@ def run_formal_mainline(args):
         inputs_meta=inputs_meta,
         keyframes_meta=keyframes_meta,
         state_segments_payload=state_segments_payload,
-        aligned_segment_plan_payload=aligned_segment_plan_payload,
         state_report_payload=state_report_payload,
         quality_diagnostics=quality_diagnostics,
         timings=timings,
     )
-    diagnostics.write_aligned_segment_plan(paths, aligned_segment_plan_payload)
     diagnostics.write_segment_manifest(paths, manifest)
     diagnostics.write_segment_report(paths, report)
 
     log_prog(
-        "scene split summary: frames={} keyframes={} state_segments={} aligned_segments={}".format(
+        "scene split summary: frames={} keyframes={} state_segments={}".format(
             int(extraction_meta.get("frame_count", 0) or 0),
             int(keyframes_meta.get("keyframe_count", 0) or 0),
             int((state_segments_payload.get("summary") or {}).get("segment_count", 0) or 0),
-            int((aligned_segment_plan_payload.get("summary") or {}).get("segment_count", 0) or 0),
         )
     )
     log_info("scene split manifest: {}".format(paths.manifest_path))
-    log_info("scene split aligned plan: {}".format(paths.aligned_plan_path))
     if visual_result.get("state_overview_path") is not None:
         log_info("scene split overview: {}".format(visual_result["state_overview_path"]))
     return paths.manifest_path

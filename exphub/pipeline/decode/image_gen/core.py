@@ -20,7 +20,6 @@ from exphub.pipeline.decode.image_gen.runtime import (
     build_execution_plan,
     build_image_gen_runtime,
     build_prompt_resolution,
-    load_prompt_manifest,
     load_segment_manifest,
     merge_prompt_resolution_into_runs_plan,
     write_backend_runtime_files,
@@ -31,20 +30,12 @@ from exphub.pipeline.infer.backends import create_backend
 REPORT_FILENAME = "report.json"
 
 
-def _decode_source_name(value):
-    source_name = str(value or "aligned").strip().lower()
-    return source_name or "aligned"
-
-
 def run(runtime):
-    decode_source = _decode_source_name(getattr(runtime.args, "decode_source", "aligned"))
-    contract = infer_contract.build_contract(runtime.paths, decode_source=decode_source)
+    contract = infer_contract.build_contract(runtime.paths)
     ensure_dir(runtime.paths.segment_frames_dir, "segment frames dir")
     ensure_file(runtime.paths.segment_manifest_path, "segment manifest")
-    ensure_file(runtime.paths.prompt_manifest_path, "prompt manifest")
-    if decode_source == "generation_units":
-        ensure_file(runtime.paths.segment_generation_units_path, "generation units")
-        ensure_file(runtime.paths.prompt_spans_path, "prompt spans")
+    ensure_file(runtime.paths.segment_generation_units_path, "generation units")
+    ensure_file(runtime.paths.prompt_spans_path, "prompt spans")
 
     runtime.paths.exp_dir.mkdir(parents=True, exist_ok=True)
     runtime.remove_in_exp(contract.root)
@@ -60,10 +51,6 @@ def run(runtime):
         str(runtime.paths.segment_frames_dir),
         "--segment_manifest",
         str(runtime.paths.segment_manifest_path),
-        "--prompt_manifest",
-        str(runtime.paths.prompt_manifest_path),
-        "--decode_source",
-        str(decode_source),
         "--videox_root",
         str(runtime.args.videox_root),
         "--gpus",
@@ -87,7 +74,7 @@ def run(runtime):
     runtime.step_runner.run_env_python(
         cmd,
         phase_name=infer_phase,
-        log_name="infer_{}.log".format(str(decode_source)),
+        log_name="infer.log",
         cwd=runtime.exphub_root,
     )
 
@@ -303,6 +290,8 @@ def build_image_gen_report(exp_dir, infer_dir, runs_plan_obj, prompt_resolution,
         "substage": "image_gen",
         "created_at": str((runtime_summary or {}).get("created_at", "") or ""),
         "image_gen_status": "success",
+        "planner": "generation_units",
+        "prompt_strategy": "prompt_spans",
         "infer_backend": str((runtime_summary or {}).get("execution_backend", "") or ""),
         "gpus": int((runtime_summary or {}).get("gpus", 0) or 0),
         "fps": int((runtime_summary or {}).get("fps", 0) or 0),
@@ -312,7 +301,6 @@ def build_image_gen_report(exp_dir, infer_dir, runs_plan_obj, prompt_resolution,
         "used_frames": int((runtime_summary or {}).get("used_frames", 0) or 0),
         "used_start_idx": int((runtime_summary or {}).get("used_start_idx", 0) or 0),
         "used_end_idx": int((runtime_summary or {}).get("used_end_idx", 0) or 0),
-        "decode_source": str((runtime_summary or {}).get("decode_source", "aligned") or "aligned"),
         "schedule_source": str((runtime_summary or {}).get("schedule_source", "") or ""),
         "mean_deploy_gap": (runtime_summary or {}).get("mean_deploy_gap"),
         "runs_plan_path": str(runs_plan_path),
@@ -345,7 +333,6 @@ def build_image_gen_report(exp_dir, infer_dir, runs_plan_obj, prompt_resolution,
             "config_path": str((backend_meta or {}).get("config_path", "") or ""),
         },
         "prompt_resolution_summary": {
-            "decode_source": str((runtime_summary or {}).get("decode_source", "aligned") or "aligned"),
             "state_prompt_enabled": bool((runtime_summary or {}).get("state_prompt_enabled", False)),
             "state_prompt_segment_count": int((runtime_summary or {}).get("state_prompt_segment_count", 0) or 0),
             "matched_execution_segment_count": int((runtime_summary or {}).get("matched_execution_segment_count", 0) or 0),
@@ -359,14 +346,12 @@ def build_image_gen_report(exp_dir, infer_dir, runs_plan_obj, prompt_resolution,
         "source_files": {
             "runs_plan": _relative_path(exp_dir, runs_plan_path),
             "segment_manifest": str(source_files.get("segment_manifest", "") or ""),
-            "aligned_segment_plan": str(source_files.get("aligned_segment_plan", "") or ""),
-            "prompt_manifest": str(source_files.get("prompt_manifest", "") or ""),
             "generation_units": str(source_files.get("generation_units", "") or ""),
             "prompt_spans": str(source_files.get("prompt_spans", "") or ""),
         },
         "artifact_contract": {
             "formal_files": ["runs_plan.json", REPORT_FILENAME],
-            "formal_prompt_inputs": ["prompt_manifest.json", "segment_manifest.json"],
+            "formal_prompt_inputs": ["generation_units.json", "prompt_spans.json", "segment_manifest.json"],
             "transitional_files": [],
         },
     }
@@ -397,20 +382,14 @@ def write_image_gen_report(infer_dir, report):
 def _run_formal_mainline(args):
     frames_dir = ensure_dir(args.frames_dir, "segment frames dir")
     exp_dir = Path(args.exp_dir).resolve()
-    decode_source = _decode_source_name(args.decode_source)
     infer_dir = (exp_dir / "infer").resolve()
-    if decode_source != "aligned":
-        infer_dir = (infer_dir / decode_source).resolve()
     infer_dir.mkdir(parents=True, exist_ok=True)
 
     frames_avail = _list_frame_count(frames_dir)
     segment_manifest = load_segment_manifest(str(args.segment_manifest))
-    prompt_manifest = load_prompt_manifest(str(args.prompt_manifest))
     image_gen_runtime = build_image_gen_runtime(
         segment_manifest=segment_manifest,
-        prompt_manifest=prompt_manifest,
         infer_backend=str(args.infer_backend),
-        decode_source=str(decode_source),
     )
     execution_plan = build_execution_plan(image_gen_runtime)
     execution_segments = list(execution_plan.get("segments") or [])
@@ -465,7 +444,7 @@ def _run_formal_mainline(args):
     )
     log_info(
         "image gen detail: schedule_source={} used_frames={}".format(
-            str(execution_plan.get("schedule_source", "") or "segment.aligned_segment_plan"),
+            str(execution_plan.get("schedule_source", "") or "segment.generation_units"),
             int(used_frames),
         )
     )
@@ -486,12 +465,14 @@ def _run_formal_mainline(args):
     plan_obj = json.loads(runs_plan_path.read_text(encoding="utf-8"))
     if not isinstance(plan_obj, dict):
         raise RuntimeError("invalid runs_plan.json: {}".format(runs_plan_path))
-    plan_obj["decode_source"] = str(decode_source)
+    plan_obj["planner"] = "generation_units"
+    plan_obj["prompt_strategy"] = "prompt_spans"
     plan_obj["schedule_source"] = str(execution_plan.get("schedule_source", "") or plan_obj.get("schedule_source", "") or "")
     plan_obj["skipped_units"] = list(image_gen_runtime.get("skipped_units") or [])
     plan_obj = merge_prompt_resolution_into_runs_plan(plan_obj, prompt_resolution.get("segment_resolutions", []))
     plan_obj = _augment_runs_plan_with_saved_frames(infer_dir, plan_obj)
-    plan_obj["decode_source"] = str(decode_source)
+    plan_obj["planner"] = "generation_units"
+    plan_obj["prompt_strategy"] = "prompt_spans"
     plan_obj["schedule_source"] = str(execution_plan.get("schedule_source", "") or plan_obj.get("schedule_source", "") or "")
     plan_obj["image_gen_runtime_version"] = int(prompt_resolution.get("image_gen_runtime_version", 1) or 1)
     plan_obj["image_gen_runtime_schema"] = str(prompt_resolution.get("image_gen_runtime_schema", "") or "image_gen_runtime.v1")
@@ -510,7 +491,6 @@ def _run_formal_mainline(args):
         "used_frames": int(used_frames),
         "used_start_idx": int(used_start_idx),
         "used_end_idx": int(used_end_idx),
-        "decode_source": str(decode_source),
         "schedule_source": str(execution_plan.get("schedule_source", "") or ""),
         "execution_backend": str(execution_plan.get("execution_backend", "") or ""),
         "mean_deploy_gap": float(mean_deploy_gap),
@@ -545,8 +525,6 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir")
     parser.add_argument("--frames_dir", required=True, help="segment frames dir")
     parser.add_argument("--segment_manifest", required=True, help="formal segment_manifest.json path")
-    parser.add_argument("--prompt_manifest", required=True, help="formal prompt_manifest.json path")
-    parser.add_argument("--decode_source", default="aligned", choices=["aligned", "generation_units"])
     parser.add_argument("--videox_root", required=True, help="VideoX-Fun repo root")
     parser.add_argument("--gpus", type=int, default=1)
     parser.add_argument("--fps", type=float, required=True)

@@ -18,11 +18,6 @@ from exphub.pipeline.eval.metrics import run_metrics_substage
 from exphub.pipeline.eval.slam import run_slam_substage
 
 
-def _source_name(value):
-    source_name = str(value or "aligned").strip().lower()
-    return source_name or "aligned"
-
-
 def _build_slam_args(args):
     return argparse.Namespace(
         exp_dir=args.exp_dir,
@@ -33,8 +28,6 @@ def _build_slam_args(args):
         merge_dir=args.merge_dir,
         merge_report=args.merge_report,
         merge_manifest=args.merge_manifest,
-        eval_source=args.eval_source,
-        decode_source=args.decode_source,
         seq=args.seq,
         droid_repo=args.droid_repo,
         weights=args.weights,
@@ -70,8 +63,6 @@ def _build_metrics_args(args, slam_report_path):
         exp_dir=args.exp_dir,
         out_dir=args.out_dir,
         slam_report=str(slam_report_path),
-        eval_source=args.eval_source,
-        decode_source=args.decode_source,
         alignment_mode="se3",
         delta=1.0,
         delta_unit="frames",
@@ -90,8 +81,6 @@ def _build_diagnostics_args(args, slam_report_path, metrics_result):
         infer_report=str(args.infer_report),
         merge_report=str(args.merge_report),
         merge_manifest=str(args.merge_manifest),
-        eval_source=str(args.eval_source),
-        decode_source=str(args.decode_source),
         traj_metrics=str(artifacts.get("traj_metrics_path")),
         summary=str(artifacts.get("summary_path")),
         details=str(artifacts.get("details_path")),
@@ -111,18 +100,16 @@ def _run_formal_mainline(args):
 
 
 def run(runtime):
-    eval_source = _source_name(getattr(runtime.args, "eval_source", "aligned"))
-    decode_source = _source_name(eval_source)
-    contract = eval_contract.build_contract(runtime.paths, eval_source=eval_source)
+    contract = eval_contract.build_contract(runtime.paths)
     ensure_dir(runtime.paths.segment_dir, "segment dir")
-    ensure_dir(runtime.paths.infer_source_dir(decode_source), "infer dir")
-    ensure_dir(runtime.paths.merge_source_dir(decode_source), "merge dir")
+    ensure_dir(runtime.paths.infer_dir, "infer dir")
+    ensure_dir(runtime.paths.merge_dir, "merge dir")
     ensure_file(runtime.paths.segment_manifest_path, "segment manifest")
-    ensure_file(runtime.paths.prompt_manifest_path, "prompt manifest")
-    ensure_file(runtime.paths.infer_runs_plan_source_path(decode_source), "image gen runs plan")
-    ensure_file(runtime.paths.infer_report_source_path(decode_source), "image gen report")
-    ensure_file(runtime.paths.merge_manifest_source_path(decode_source), "sequence merge manifest")
-    ensure_file(runtime.paths.merge_report_source_path(decode_source), "sequence merge report")
+    ensure_file(runtime.paths.prompt_spans_path, "prompt spans")
+    ensure_file(runtime.paths.infer_runs_plan_path, "image gen runs plan")
+    ensure_file(runtime.paths.infer_report_path, "image gen report")
+    ensure_file(runtime.paths.merge_manifest_path, "sequence merge manifest")
+    ensure_file(runtime.paths.merge_report_path, "sequence merge report")
 
     runtime.remove_in_exp(contract.root)
     contract.root.mkdir(parents=True, exist_ok=True)
@@ -139,19 +126,15 @@ def run(runtime):
         "--segment_dir",
         str(runtime.paths.segment_dir),
         "--infer_dir",
-        str(runtime.paths.infer_source_dir(decode_source)),
+        str(runtime.paths.infer_dir),
         "--infer_report",
-        str(runtime.paths.infer_report_source_path(decode_source)),
+        str(runtime.paths.infer_report_path),
         "--merge_dir",
-        str(runtime.paths.merge_source_dir(decode_source)),
+        str(runtime.paths.merge_dir),
         "--merge_report",
-        str(runtime.paths.merge_report_source_path(decode_source)),
+        str(runtime.paths.merge_report_path),
         "--merge_manifest",
-        str(runtime.paths.merge_manifest_source_path(decode_source)),
-        "--eval_source",
-        str(eval_source),
-        "--decode_source",
-        str(decode_source),
+        str(runtime.paths.merge_manifest_path),
         "--seq",
         str(runtime.args.droid_seq),
         "--droid_repo",
@@ -169,7 +152,7 @@ def run(runtime):
     runtime.step_runner.run_env_python(
         cmd,
         phase_name="slam",
-        log_name="eval_{}.log".format(str(eval_source)),
+        log_name="eval.log",
         cwd=runtime.exphub_root,
     )
 
@@ -207,8 +190,6 @@ def _build_arg_parser():
     parser.add_argument("--merge_dir", required=True)
     parser.add_argument("--merge_report", required=True)
     parser.add_argument("--merge_manifest", required=True)
-    parser.add_argument("--eval_source", default="aligned", choices=["aligned", "generation_units"])
-    parser.add_argument("--decode_source", default="aligned", choices=["aligned", "generation_units"])
     parser.add_argument("--seq", default="both")
     parser.add_argument("--droid_repo", required=True)
     parser.add_argument("--weights", required=True)

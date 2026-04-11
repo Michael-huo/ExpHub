@@ -1443,7 +1443,6 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
                         "align_reason": str(seg_spec.get("align_reason", "") or ""),
                         "is_valid_for_decode": bool(seg_spec.get("is_valid_for_decode", False)),
                         "is_valid_for_export": bool(seg_spec.get("is_valid_for_export", False)),
-                        "decode_source": str(seg_spec.get("decode_source", "aligned") or "aligned"),
                         "run_id": str(seg_spec.get("run_id", "") or ""),
                         "source_unit_id": str(seg_spec.get("source_unit_id", "") or ""),
                         "source_span_id": str(seg_spec.get("source_span_id", "") or ""),

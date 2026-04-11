@@ -18,11 +18,6 @@ from exphub.common.logging import log_info, log_prog, log_warn
 from exphub.contracts import merge as merge_contract
 
 
-def _decode_source_name(value):
-    source_name = str(value or "aligned").strip().lower()
-    return source_name or "aligned"
-
-
 def _safe_int(value, default=0):
     try:
         return int(value)
@@ -214,7 +209,6 @@ def _write_report(report_path, report_obj):
 
 def _run_formal_mainline(args):
     exp_dir = Path(args.exp_dir).resolve()
-    decode_source = _decode_source_name(args.decode_source)
     segment_dir = ensure_dir(args.segment_dir, "segment dir")
     runs_root = ensure_dir(args.runs_root, "image gen runs dir")
     plan_path = ensure_file(args.plan, "image gen runs plan")
@@ -357,7 +351,6 @@ def _run_formal_mainline(args):
                 "align_reason": str(item.get("align_reason", "") or ""),
                 "left_shift": int(_safe_int(item.get("left_shift"), 0)),
                 "right_shift": int(_safe_int(item.get("right_shift"), 0)),
-                "decode_source": str(item.get("decode_source", decode_source) or decode_source),
                 "run_id": str(item.get("run_id", "") or ""),
                 "source_unit_id": str(item.get("source_unit_id", "") or ""),
                 "source_span_id": str(item.get("source_span_id", "") or ""),
@@ -415,7 +408,8 @@ def _run_formal_mainline(args):
         "contract": "decode_sequence_merge_mainline",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "inputs": {
-            "decode_source": str(decode_source),
+            "planner": "generation_units",
+            "prompt_strategy": "prompt_spans",
             "segment_dir": _relative_path(exp_dir, segment_dir),
             "runs_root": _relative_path(exp_dir, runs_root),
             "runs_plan": _relative_path(exp_dir, plan_path),
@@ -429,7 +423,6 @@ def _run_formal_mainline(args):
             "preview": _relative_path(exp_dir, preview_path) if preview_ok else "",
         },
         "summary": {
-            "decode_source": str(decode_source),
             "segment_count": int(len(segments)),
             "source_unit_count": int(len(source_unit_ids)),
             "source_span_count": int(len(source_span_ids)),
@@ -456,7 +449,8 @@ def _run_formal_mainline(args):
         "substage": "sequence_merge",
         "merge_status": "success",
         "created_at": manifest["created_at"],
-        "decode_source": str(decode_source),
+        "planner": "generation_units",
+        "prompt_strategy": "prompt_spans",
         "fps": int(output_fps),
         "segment_count": int(len(segments)),
         "source_unit_count": int(len(source_unit_ids)),
@@ -504,11 +498,10 @@ def _run_formal_mainline(args):
 
 
 def run(runtime):
-    decode_source = _decode_source_name(getattr(runtime.args, "decode_source", "aligned"))
-    contract = merge_contract.build_contract(runtime.paths, decode_source=decode_source)
+    contract = merge_contract.build_contract(runtime.paths)
     ensure_dir(runtime.paths.segment_dir, "segment dir")
-    ensure_dir(runtime.paths.infer_runs_source_dir(decode_source), "image gen runs dir")
-    ensure_file(runtime.paths.infer_runs_plan_source_path(decode_source), "image gen runs plan")
+    ensure_dir(runtime.paths.infer_runs_dir, "image gen runs dir")
+    ensure_file(runtime.paths.infer_runs_plan_path, "image gen runs plan")
 
     runtime.remove_in_exp(contract.root)
     helper_path = (runtime.exphub_root / "exphub" / "pipeline" / "decode" / "sequence_merge" / "core.py").resolve()
@@ -520,20 +513,18 @@ def run(runtime):
         "--segment_dir",
         str(runtime.paths.segment_dir),
         "--runs_root",
-        str(runtime.paths.infer_runs_source_dir(decode_source)),
+        str(runtime.paths.infer_runs_dir),
         "--plan",
-        str(runtime.paths.infer_runs_plan_source_path(decode_source)),
+        str(runtime.paths.infer_runs_plan_path),
         "--out_dir",
         str(contract.root),
-        "--decode_source",
-        str(decode_source),
         "--fps",
         runtime.fps_arg,
     ]
     runtime.step_runner.run_env_python(
         cmd,
         phase_name=runtime.infer_phase_name(),
-        log_name="merge_{}.log".format(str(decode_source)),
+        log_name="merge.log",
         cwd=runtime.exphub_root,
     )
 
@@ -553,7 +544,6 @@ def _build_arg_parser():
     parser.add_argument("--runs_root", required=True)
     parser.add_argument("--plan", required=True)
     parser.add_argument("--out_dir", required=True)
-    parser.add_argument("--decode_source", default="aligned", choices=["aligned", "generation_units"])
     parser.add_argument("--fps", default="0")
     parser.add_argument("--no_preview", action="store_true")
     return parser
