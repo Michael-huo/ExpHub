@@ -284,16 +284,16 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
     total_time = sum(float(x) for x in step_times.values())
 
     eval_dir = exp_dir / "eval"
-    eval_report = _read_json_dict(eval_dir / "report.json")
+    eval_report = _read_json_dict(eval_dir / "eval_report.json")
     traj_metrics = dict(eval_report.get("traj_eval") or {}) if isinstance(eval_report.get("traj_eval"), dict) else {}
     if not traj_metrics:
-        traj_metrics = _read_json_dict(eval_dir / "metrics" / "traj_eval.json")
+        traj_metrics = _read_json_dict(eval_dir / "eval_traj_report.json")
     infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
 
     compression_obj = {}
     if isinstance(eval_report.get("compression"), dict):
         compression_obj = dict(eval_report.get("compression") or {})
-    compression_snapshot = _read_json_dict(eval_dir / "compression.json")
+    compression_snapshot = _read_json_dict(eval_dir / "eval_compression_report.json")
 
     ori_bytes = _pick_first_int(
         compression_obj,
@@ -433,7 +433,7 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
 
 
 def _load_export_report(export_root: Path, step_times: Dict[str, float]) -> Dict[str, object]:
-    dataset_report = _read_json_dict(export_root / "dataset_report.json")
+    dataset_report = _read_json_dict(export_root / "export_dataset_report.json")
     summary = dict(dataset_report.get("summary") or {})
     outputs = dict(dataset_report.get("outputs") or {})
     return {

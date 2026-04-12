@@ -129,12 +129,12 @@ def build_eval_report(traj_metrics, summary_text):
         "summary_text": str(summary_text or ""),
         "artifact_contract": {
             "formal_files": [
-                "report.json",
-                "summary.txt",
-                "details.csv",
-                "metrics/traj_eval.json",
-                "plots/traj_xy.png",
-                "plots/metrics_overview.png",
+                "eval_report.json",
+                "eval_summary.txt",
+                "eval_details.csv",
+                "eval_traj_report.json",
+                "eval_traj_xy.png",
+                "eval_metrics_overview.png",
             ],
         },
     }
@@ -170,7 +170,7 @@ def write_eval_details(out_dir, traj_records):
                 "est_z": item.get("est_z", ""),
             }
         )
-    details_path = Path(out_dir).resolve() / "details.csv"
+    details_path = Path(out_dir).resolve() / "eval_details.csv"
     write_csv(details_path, _detail_fieldnames(), rows)
     return details_path
 
@@ -196,8 +196,7 @@ def _curve_xy(curve):
 
 def save_metrics_overview(out_dir, traj_overview):
     plt = _setup_matplotlib()
-    plot_path = Path(out_dir).resolve() / "plots" / "metrics_overview.png"
-    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    plot_path = Path(out_dir).resolve() / "eval_metrics_overview.png"
 
     fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.8), dpi=180)
     fig.patch.set_facecolor("white")
@@ -230,18 +229,16 @@ def save_metrics_overview(out_dir, traj_overview):
 def write_eval_artifacts(out_dir, traj_result, summary_text):
     out_path = Path(out_dir).resolve()
     out_path.mkdir(parents=True, exist_ok=True)
-    metrics_dir = out_path / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
 
     traj_metrics = dict((traj_result or {}).get("metrics") or {})
     report = build_eval_report(traj_metrics, summary_text)
 
-    report_path = out_path / "report.json"
+    report_path = out_path / "eval_report.json"
     write_json(report_path, report, indent=2)
-    write_json(metrics_dir / "traj_eval.json", traj_metrics, indent=2)
+    write_json(out_path / "eval_traj_report.json", traj_metrics, indent=2)
     details_path = write_eval_details(out_path, (traj_result or {}).get("records", []))
     metrics_plot_path = save_metrics_overview(out_path, (traj_result or {}).get("overview", {}))
-    write_text(out_path / "summary.txt", str(summary_text or "") + "\n")
+    write_text(out_path / "eval_summary.txt", str(summary_text or "") + "\n")
     return {
         "report_path": report_path,
         "details_path": details_path,

@@ -100,7 +100,7 @@ def _read_stage_report(path_obj, warnings):
 
 
 def _build_compression_summary(exp_dir, segment_report, prompt_report, warnings):
-    segment_frames_dir = Path(exp_dir).resolve() / "segment" / "frames"
+    segment_frames_dir = Path(exp_dir).resolve() / "input" / "frames"
     ori_frames, ori_bytes = _dir_png_stats(segment_frames_dir)
 
     keyframes_frames = _pick_int(
@@ -114,11 +114,11 @@ def _build_compression_summary(exp_dir, segment_report, prompt_report, warnings)
     prompt_bytes = _pick_int(prompt_report, [("outputs", "bytes_sum"), ("outputs", "prompt_bytes")])
 
     if prompt_bytes is None:
-        msg = "missing prompt bytes_sum in prompt/report.json; prompt_bytes set to null"
+        msg = "missing prompt bytes_sum in prompt report; prompt_bytes set to null"
         warnings.append(msg)
         log_warn(msg)
     if ori_frames <= 0:
-        msg = "segment/frames unavailable for eval compression scan; ori_frames and ori_bytes set to null"
+        msg = "input/frames unavailable for eval compression scan; ori_frames and ori_bytes set to null"
         warnings.append(msg)
         log_warn(msg)
         ori_frames = None
@@ -195,35 +195,35 @@ def _build_generation_unit_summary(infer_report, merge_report, merge_manifest):
 def _build_stage_table(exp_dir, stage_reports, traj_metrics, inputs, eval_dir):
     return {
         "encode": {
-            "status": _stage_status(
-                stage_reports["segment"].get("segment_status"),
-                stage_reports["prompt"].get("prompt_status"),
-            ),
-            "created_at": _stage_created_at(stage_reports["segment"], stage_reports["prompt"]),
+            "status": _stage_status("success" if stage_reports["input"] else "", "success" if stage_reports["encode"] else ""),
+            "created_at": _stage_created_at(stage_reports["input"], stage_reports["encode"]),
             "artifacts": {
-                "segment_report": _relative_path(exp_dir, Path(exp_dir) / "segment" / "report.json"),
-                "prompt_report": _relative_path(exp_dir, Path(exp_dir) / "prompt" / "report.json"),
+                "input_report": _relative_path(exp_dir, Path(exp_dir) / "input" / "input_report.json"),
+                "encode_plan": _relative_path(exp_dir, Path(exp_dir) / "encode" / "encode_plan.json"),
+                "prompt_spans": _relative_path(exp_dir, Path(exp_dir) / "encode" / "prompt_spans.json"),
+                "encode_report": _relative_path(exp_dir, Path(exp_dir) / "encode" / "encode_report.json"),
             },
         },
         "decode": {
             "status": _stage_status(
-                stage_reports["infer"].get("infer_status"),
+                stage_reports["decode"].get("image_gen_status"),
+                stage_reports["decode"].get("decode_status"),
                 stage_reports["merge"].get("merge_status"),
             ),
-            "created_at": _stage_created_at(stage_reports["infer"], stage_reports["merge"]),
+            "created_at": _stage_created_at(stage_reports["decode"], stage_reports["merge"]),
             "artifacts": {
-                "infer_report": _relative_path(exp_dir, Path(inputs.get("infer_report")).resolve()),
-                "merge_report": _relative_path(exp_dir, Path(inputs.get("merge_report")).resolve()),
-                "merge_manifest": _relative_path(exp_dir, Path(inputs.get("merge_manifest")).resolve()),
+                "decode_plan": _relative_path(exp_dir, Path(inputs.get("decode_plan")).resolve()),
+                "decode_report": _relative_path(exp_dir, Path(inputs.get("decode_report")).resolve()),
+                "decode_merge_report": _relative_path(exp_dir, Path(inputs.get("decode_merge_report")).resolve()),
             },
         },
         "eval": {
             "status": _stage_status(stage_reports["slam"].get("slam_status"), traj_metrics.get("eval_status")),
             "created_at": _stage_created_at(stage_reports["slam"], {"created_at": traj_metrics.get("created_at")}),
             "artifacts": {
-                "slam_report": _relative_path(exp_dir, Path(eval_dir).resolve() / "slam" / "report.json"),
-                "traj_metrics": _relative_path(exp_dir, Path(eval_dir).resolve() / "metrics" / "traj_eval.json"),
-                "report": _relative_path(exp_dir, Path(eval_dir).resolve() / "report.json"),
+                "slam_report": _relative_path(exp_dir, Path(eval_dir).resolve() / "eval_slam_report.json"),
+                "traj_metrics": _relative_path(exp_dir, Path(eval_dir).resolve() / "eval_traj_report.json"),
+                "report": _relative_path(exp_dir, Path(eval_dir).resolve() / "eval_report.json"),
             },
         },
     }
@@ -251,9 +251,9 @@ def run_diagnostics_substage(args):
 
     warnings = []
     stage_reports = {
-        "segment": _read_stage_report(exp_dir / "segment" / "report.json", warnings),
-        "prompt": _read_stage_report(exp_dir / "prompt" / "report.json", warnings),
-        "infer": _read_stage_report(Path(args.infer_report), warnings),
+        "input": _read_stage_report(exp_dir / "input" / "input_report.json", warnings),
+        "encode": _read_stage_report(exp_dir / "encode" / "encode_report.json", warnings),
+        "decode": _read_stage_report(Path(args.infer_report), warnings),
         "merge": _read_stage_report(Path(args.merge_report), warnings),
         "slam": _read_stage_report(Path(args.slam_report), warnings),
     }
@@ -268,11 +268,11 @@ def run_diagnostics_substage(args):
         warnings.append(msg)
         log_warn(msg)
 
-    compression_summary = _build_compression_summary(exp_dir, stage_reports["segment"], stage_reports["prompt"], warnings)
+    compression_summary = _build_compression_summary(exp_dir, stage_reports["input"], stage_reports["encode"], warnings)
     quality = _build_quality(traj_metrics, stage_reports["slam"])
     compression_snapshot = _build_compression_snapshot(compression_summary)
     source_summary = _build_generation_unit_summary(
-        infer_report=stage_reports["infer"],
+        infer_report=stage_reports["decode"],
         merge_report=stage_reports["merge"],
         merge_manifest=merge_manifest,
     )
@@ -288,11 +288,10 @@ def run_diagnostics_substage(args):
         "shared_anchor_count": int(source_summary["shared_anchor_count"]),
         "workflow": "encode -> decode -> eval",
         "inputs": {
-            "segment_report": _relative_path(exp_dir, exp_dir / "segment" / "report.json"),
-            "prompt_report": _relative_path(exp_dir, exp_dir / "prompt" / "report.json"),
-            "infer_report": _relative_path(exp_dir, Path(args.infer_report).resolve()),
-            "merge_report": _relative_path(exp_dir, Path(args.merge_report).resolve()),
-            "merge_manifest": _relative_path(exp_dir, Path(args.merge_manifest).resolve()),
+            "input_report": _relative_path(exp_dir, exp_dir / "input" / "input_report.json"),
+            "encode_report": _relative_path(exp_dir, exp_dir / "encode" / "encode_report.json"),
+            "decode_report": _relative_path(exp_dir, Path(args.infer_report).resolve()),
+            "decode_merge_report": _relative_path(exp_dir, Path(args.merge_report).resolve()),
             "slam_report": _relative_path(exp_dir, Path(args.slam_report).resolve()),
             "traj_metrics": _relative_path(exp_dir, Path(args.traj_metrics).resolve()),
             "summary": _relative_path(exp_dir, Path(args.summary).resolve()),
@@ -303,9 +302,9 @@ def run_diagnostics_substage(args):
             stage_reports,
             traj_metrics,
             inputs={
-                "infer_report": args.infer_report,
-                "merge_report": args.merge_report,
-                "merge_manifest": args.merge_manifest,
+                "decode_plan": args.infer_report,
+                "decode_report": args.infer_report,
+                "decode_merge_report": args.merge_report,
             },
             eval_dir=eval_dir,
         ),
@@ -323,26 +322,26 @@ def run_diagnostics_substage(args):
         "warnings": warnings,
         "artifact_contract": {
             "formal_files": [
-                "report.json",
-                "compression.json",
-                "summary.txt",
-                "details.csv",
-                "metrics/traj_eval.json",
-                "plots/traj_xy.png",
-                "plots/metrics_overview.png",
-                "slam/report.json",
-                "slam/traj_est.txt",
+                "eval_report.json",
+                "eval_compression_report.json",
+                "eval_summary.txt",
+                "eval_details.csv",
+                "eval_traj_report.json",
+                "eval_traj_xy.png",
+                "eval_metrics_overview.png",
+                "eval_slam_report.json",
+                "traj_est.txt",
             ],
             "formal_track_files": [
-                "slam/<track>/traj_est.tum",
-                "slam/<track>/traj_est.npz",
-                "slam/<track>/run_meta.json",
+                "<track>/traj_est.tum",
+                "<track>/traj_est.npz",
+                "<track>/run_meta.json",
             ],
         },
     }
 
-    report_path = eval_dir / "report.json"
-    compression_path = eval_dir / "compression.json"
+    report_path = eval_dir / "eval_report.json"
+    compression_path = eval_dir / "eval_compression_report.json"
     write_json_atomic(report_path, final_report, indent=2)
     write_json_atomic(compression_path, compression_snapshot, indent=2)
     log_prog("eval diagnostics: final report generated")

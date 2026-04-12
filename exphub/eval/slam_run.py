@@ -56,21 +56,34 @@ def _parse_frame_index(name):
         return -1
 
 
-def _load_calib(calib_path):
+def _load_calib(calib_source):
     import numpy as np
 
-    arr = np.loadtxt(str(calib_path), delimiter=" ")
+    if isinstance(calib_source, (list, tuple)):
+        arr = np.asarray(list(calib_source), dtype=np.float64).reshape(-1)
+    else:
+        arr = np.loadtxt(str(calib_source), delimiter=" ")
     arr = np.asarray(arr, dtype=np.float64).reshape(-1)
     if arr.size < 4:
-        raise ValueError("calib must have >=4 numbers: {}".format(calib_path))
+        raise ValueError("calib must have >=4 numbers: {}".format(calib_source))
     fx, fy, cx, cy = [float(item) for item in arr[:4]]
     dist = arr[4:].astype(np.float64) if arr.size > 4 else None
     return fx, fy, cx, cy, dist
 
 
-def _load_timestamps_list(ts_path):
+def _load_timestamps_list(ts_source):
+    if isinstance(ts_source, (list, tuple)):
+        out = []
+        for item in list(ts_source):
+            try:
+                out.append(float(item))
+            except Exception:
+                continue
+        return out
+    if ts_source is None:
+        return []
     out = []
-    for line in _read_text(ts_path).splitlines():
+    for line in _read_text(ts_source).splitlines():
         text = str(line).strip()
         if not text or text.startswith("#"):
             continue
@@ -257,11 +270,22 @@ def _show_image(image_chw):
 def _resolve_input_paths(root_dir):
     root = Path(root_dir).resolve()
     frames_dir = ensure_dir(root / "frames", "slam input frames")
-    calib_path = ensure_file(root / "calib.txt", "slam calib")
-    timestamps_path = root / "timestamps.txt"
-    if not timestamps_path.is_file():
-        timestamps_path = None
-    return frames_dir, calib_path, timestamps_path
+    manifest_candidates = [
+        root / "input_report.json",
+        root.parent / "input" / "input_report.json",
+    ]
+    manifest_path = None
+    for candidate in manifest_candidates:
+        if Path(candidate).is_file():
+            manifest_path = Path(candidate).resolve()
+            break
+    if manifest_path is None:
+        raise RuntimeError("missing required slam input report: {}".format(manifest_candidates[0].resolve()))
+    manifest_obj = dict(read_json_dict(manifest_path) or {})
+    camera_obj = dict(manifest_obj.get("camera") or {})
+    calib_source = list(camera_obj.get("calib") or [])
+    timestamps_source = list(camera_obj.get("timestamps") or [])
+    return frames_dir, calib_source, timestamps_source, manifest_path
 
 
 def _setup_droid_import(droid_repo):
@@ -294,7 +318,7 @@ def _copy_if_exists(src_path, dst_path):
 def _run_track(exp_dir, track_name, input_root, args):
     import torch
 
-    frames_dir, calib_path, timestamps_path = _resolve_input_paths(input_root)
+    frames_dir, calib_source, timestamps_source, manifest_path = _resolve_input_paths(input_root)
     files = list_frames_sorted(frames_dir)
     if args.t0 > 0:
         files = files[args.t0 :]
@@ -305,8 +329,8 @@ def _run_track(exp_dir, track_name, input_root, args):
     if not files:
         raise RuntimeError("no frames available for slam track {}: {}".format(track_name, frames_dir))
 
-    fx, fy, cx, cy, dist = _load_calib(calib_path)
-    timestamps = _load_timestamps_list(timestamps_path) if timestamps_path is not None else None
+    fx, fy, cx, cy, dist = _load_calib(calib_source)
+    timestamps = _load_timestamps_list(timestamps_source)
 
     _setup_droid_import(args.droid_repo)
     from droid import Droid  # noqa
@@ -323,8 +347,8 @@ def _run_track(exp_dir, track_name, input_root, args):
         "track": str(track_name),
         "input_root": str(Path(input_root).resolve()),
         "frames_dir": str(frames_dir),
-        "calib": str(calib_path),
-        "timestamps": str(timestamps_path) if timestamps_path is not None else "",
+        "calib": f"{manifest_path}#camera.calib",
+        "timestamps": f"{manifest_path}#camera.timestamps",
         "slam_out_dir": str(track_dir),
         "droid_repo": str(Path(args.droid_repo).resolve()),
         "weights": str(weights_path.resolve()),
@@ -491,7 +515,7 @@ def run_slam_substage(args):
         "tracks": track_reports,
         "artifact_contract": {
             "formal_files": [
-                "report.json",
+                "eval_slam_report.json",
                 "traj_est.txt",
             ],
             "formal_track_files": [
@@ -503,7 +527,7 @@ def run_slam_substage(args):
         },
         "warnings": [],
     }
-    report_path = _write_slam_report(out_dir / "report.json", report)
+    report_path = _write_slam_report(out_dir / "eval_slam_report.json", report)
     log_info("eval slam report: {}".format(report_path))
     return {
         "report_path": report_path,

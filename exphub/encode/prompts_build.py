@@ -10,8 +10,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_dir, ensure_file, read_json_dict, write_json_atomic
-from exphub.common.logging import log_info, log_prog
+from exphub.common.io import ensure_file, read_json_dict, write_json_atomic
+from exphub.common.logging import log_info
 from ._base_prompt import build_base_prompt_payload
 from ._motion_prompt import build_motion_prompt_payload
 from ._scene_prompt import build_scene_prompt_payload
@@ -72,32 +72,32 @@ def _count_by_key(items, key):
         if not isinstance(item, dict):
             continue
         name = _collapse_ws(item.get(key, "")) or "unknown"
-        counts[name] = int(counts.get(name, 0)) + 1
+        counts[name] = int(counts.get(name, 0) or 0) + 1
     return counts
 
 
-def load_segment_text_inputs(segment_manifest_path):
-    manifest_path = ensure_file(segment_manifest_path, "segment manifest")
-    manifest = read_json_dict(manifest_path)
-    if not manifest:
-        raise RuntimeError("invalid segment manifest: {}".format(manifest_path))
+def load_input_text_inputs(input_report_path):
+    report_path = ensure_file(input_report_path, "input report")
+    report = read_json_dict(report_path)
+    if not report:
+        raise RuntimeError("invalid input report: {}".format(report_path))
 
-    exp_dir = manifest_path.parent.parent.resolve()
-    state_segments_payload = _as_dict(manifest.get("state_segments"))
+    exp_dir = report_path.parent.parent.resolve()
+    state_segments_payload = _as_dict(report.get("state_segments"))
     if not state_segments_payload:
-        raise RuntimeError("segment manifest missing state_segments payload: {}".format(manifest_path))
+        raise RuntimeError("input report missing state_segments payload: {}".format(report_path))
 
-    frames_meta = _as_dict(manifest.get("frames"))
+    frames_meta = _as_dict(report.get("frames"))
     return {
-        "segment_manifest_path": manifest_path,
-        "segment_manifest": manifest,
+        "input_report_path": report_path,
+        "input_report": report,
         "state_segments_payload": state_segments_payload,
         "frame_count": int(frames_meta.get("frame_count", 0) or 0),
         "frame_count_used": int(frames_meta.get("frame_count_used", 0) or 0),
         "exp_dir": exp_dir,
         "source_files": {
-            "segment_manifest": _relative_to_exp(exp_dir, manifest_path),
-            "state_segments": "{}#state_segments".format(_relative_to_exp(exp_dir, manifest_path)),
+            "input_report": _relative_to_exp(exp_dir, report_path),
+            "state_segments": "{}#state_segments".format(_relative_to_exp(exp_dir, report_path)),
         },
     }
 
@@ -105,6 +105,8 @@ def load_segment_text_inputs(segment_manifest_path):
 def _build_prompt_segment_map(prompt_segments):
     mapping = {}
     for item in list(prompt_segments or []):
+        if not isinstance(item, dict):
+            continue
         state_segment_id = _safe_int(item.get("state_segment_id"), -1)
         if state_segment_id < 0:
             continue
@@ -185,7 +187,7 @@ def build_prompt_manifest(segment_inputs, frames_dir, prompt_model_dir=""):
         "backend_meta": dict(scene_prompt_payload.get("backend_meta") or {}),
         "segments": segments,
         "source_files": {
-            "segment_manifest": str((segment_inputs.get("source_files") or {}).get("segment_manifest", "") or ""),
+            "input_report": str((segment_inputs.get("source_files") or {}).get("input_report", "") or ""),
         },
         "summary": {
             "prompt_segment_count": int(len(segments)),
@@ -193,143 +195,52 @@ def build_prompt_manifest(segment_inputs, frames_dir, prompt_model_dir=""):
             "scene_prompt_segment_count": int(len([item for item in segments if _collapse_ws(item.get("scene_prompt", ""))])),
         },
         "artifact_paths": {
-            "segment_manifest": str((segment_inputs.get("source_files") or {}).get("segment_manifest", "") or ""),
-            "prompt_manifest": _relative_to_exp(exp_dir, Path(exp_dir) / "prompt" / "prompt_manifest.json"),
+            "input_report": str((segment_inputs.get("source_files") or {}).get("input_report", "") or ""),
         },
     }
 
 
-def _sha1_bytes(payload_bytes):
-    import hashlib
-
-    return hashlib.sha1(payload_bytes).hexdigest()
-
-
-def build_prompt_report(prompt_dir, prompt_manifest, frame_files_count, total_sec):
-    prompt_dir = Path(prompt_dir).resolve()
-    prompt_manifest_path = (prompt_dir / "prompt_manifest.json").resolve()
-    prompt_manifest_bytes = prompt_manifest_path.read_bytes()
-    segments = list(_as_dict(prompt_manifest).get("segments") or [])
-    return {
-        "report_schema_version": "prompt_report.v5",
-        "step": "encode",
-        "substage": "text_gen",
-        "prompt_status": "success",
-        "prompt_structure": "base_scene_motion",
-        "prompt_total_sec": float(total_sec),
-        "frames_count": int(frame_files_count),
-        "prompt_manifest_path": str(prompt_manifest_path),
-        "prompt_manifest_size": int(len(prompt_manifest_bytes)),
-        "prompt_manifest_sha1": _sha1_bytes(prompt_manifest_bytes),
-        "outputs": {
-            "bytes_sum": 0,
-            "prompt_bytes": 0,
-            "report_bytes": 0,
-            "prompt_manifest_bytes": int(len(prompt_manifest_bytes)),
-        },
-        "base_prompt_preview": str(prompt_manifest.get("base_prompt", "") or ""),
-        "negative_prompt_preview": str(prompt_manifest.get("negative_prompt", "") or ""),
-        "assembly_notes": {
-            "scene_prompt_mode": str(prompt_manifest.get("scene_prompt_mode", "") or ""),
-            "scene_prompt_style": str(prompt_manifest.get("scene_prompt_style", "") or ""),
-            "motion_prompt_mode": str(prompt_manifest.get("motion_prompt_mode", "") or ""),
-            "scene_encoding_backend": str(prompt_manifest.get("scene_encoding_backend", "") or ""),
-        },
-        "prompt_statistics": {
-            "prompt_segment_count": int(len(segments)),
-            "state_label_counts": dict(_count_by_key(segments, "state_label")),
-            "continuity_emphasis_counts": dict(_count_by_key(segments, "continuity_emphasis")),
-        },
-        "source_files": {
-            "prompt_manifest": _relative_to_exp(prompt_dir.parent, prompt_manifest_path),
-        },
-        "artifact_contract": {
-            "formal_files": ["prompt_manifest.json", "report.json"],
-            "transitional_files": [],
-        },
-    }
-
-
-def write_prompt_report(prompt_dir, report):
-    prompt_dir = Path(prompt_dir).resolve()
-    report_path = prompt_dir / "report.json"
-    report_obj = dict(report or {})
-    report_obj["report_path"] = str(report_path)
-    last_size = None
-    for _ in range(3):
-        write_json_atomic(report_path, report_obj, indent=2)
-        report_bytes = report_path.read_bytes()
-        report_size = int(len(report_bytes))
-        outputs = dict(report_obj.get("outputs", {}) or {})
-        outputs["report_bytes"] = report_size
-        outputs["prompt_bytes"] = int(int(outputs.get("report_bytes", 0) or 0) + int(outputs.get("prompt_manifest_bytes", 0) or 0))
-        outputs["bytes_sum"] = int(outputs.get("prompt_bytes", 0) or 0)
-        report_obj["outputs"] = outputs
-        report_obj["report_size"] = report_size
-        if report_size == last_size:
-            break
-        last_size = report_size
-    write_json_atomic(report_path, report_obj, indent=2)
-    return report_path
-
-
-def run_formal_mainline(args):
-    total_t0 = time.time()
+def _run_formal_mainline(args):
     exp_dir = Path(args.exp_dir).resolve()
-    prompt_dir = (exp_dir / "prompt").resolve()
-    prompt_dir.mkdir(parents=True, exist_ok=True)
+    input_report_path = ensure_file(args.input_report, "input report")
+    out_path = Path(args.out_path).resolve()
+    frames_dir = (exp_dir / "input" / "frames").resolve()
+    started = time.time()
 
-    segment_inputs = load_segment_text_inputs(args.segment_manifest)
-    frames_dir = ensure_dir(exp_dir / "segment" / "frames", "segment frames dir")
-    frame_files = [item for item in sorted(frames_dir.iterdir()) if item.is_file()]
-    if not frame_files:
-        raise RuntimeError("no frame files found in {}".format(frames_dir))
-
+    segment_inputs = load_input_text_inputs(input_report_path)
     prompt_manifest = build_prompt_manifest(
         segment_inputs=segment_inputs,
         frames_dir=frames_dir,
         prompt_model_dir=str(args.prompt_model_dir or ""),
     )
-    backend_meta = dict(prompt_manifest.get("backend_meta") or {})
-    if backend_meta:
-        log_info("processor loaded in {:.2f}s".format(float(backend_meta.get("processor_load_sec", 0.0) or 0.0)))
-        log_info("model weights loaded in {:.2f}s".format(float(backend_meta.get("model_load_sec", 0.0) or 0.0)))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(out_path, prompt_manifest, indent=2)
 
-    write_json_atomic(prompt_dir / "prompt_manifest.json", prompt_manifest, indent=2)
-    prompt_report = build_prompt_report(
-        prompt_dir=prompt_dir,
-        prompt_manifest=prompt_manifest,
-        frame_files_count=len(frame_files),
-        total_sec=float(time.time() - total_t0),
+    log_info(
+        "prompt manifest generated: count={} sec={:.2f}".format(
+            int((prompt_manifest.get("summary") or {}).get("prompt_segment_count", 0) or 0),
+            float(time.time() - started),
+        )
     )
-    prompt_report["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    prompt_report["frames_dir"] = str(frames_dir)
-    report_path = write_prompt_report(prompt_dir, prompt_report)
-
-    log_prog("prompt manifest assembled from base + scene + motion")
-    log_info("prompt manifest generated: count={}".format(int((prompt_manifest.get("summary") or {}).get("prompt_segment_count", 0) or 0)))
-    log_info("scene prompt backend: {}".format(str(prompt_manifest.get("scene_encoding_backend", "") or "<missing>")))
-    log_info("wrote: {}".format(prompt_dir / "prompt_manifest.json"))
-    log_info("wrote: {}".format(report_path))
-    return report_path
+    log_info("wrote: {}".format(out_path))
+    return out_path
 
 
 def _build_arg_parser():
-    parser = argparse.ArgumentParser(description="ExpHub encode.text_gen mainline.")
-    parser.add_argument("--run-formal-mainline", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir")
-    parser.add_argument("--segment_manifest", required=True, help="scene_split segment_manifest.json path")
-    parser.add_argument("--fps", type=float, required=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-formal-mainline", action="store_true")
+    parser.add_argument("--exp_dir", required=True)
+    parser.add_argument("--input_report", required=True)
+    parser.add_argument("--out_path", required=True)
     parser.add_argument("--prompt_model_dir", default="")
-    parser.add_argument("--backend_python_phase", default="prompt_smol")
     return parser
 
 
 def main(argv=None):
     args = _build_arg_parser().parse_args(argv)
     if not args.run_formal_mainline:
-        raise SystemExit("[ERR] use --run-formal-mainline")
-    run_formal_mainline(args)
+        raise SystemExit("prompt helper requires --run-formal-mainline")
+    _run_formal_mainline(args)
 
 
 if __name__ == "__main__":

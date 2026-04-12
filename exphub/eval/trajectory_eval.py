@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from exphub.common.logging import log_info
-from .report_build import append_warning, read_json, read_timestamps
+from .report_build import append_warning, read_json
 
 
 _STAT_KEYS = ["rmse", "mean", "median", "std", "min", "max"]
@@ -239,7 +239,7 @@ def _candidate_exp_roots(path_candidates):
 
 def _resolve_eval_exp_root(path_candidates):
     for candidate in _candidate_exp_roots(path_candidates):
-        if (candidate / "segment" / "segment_manifest.json").is_file():
+        if (candidate / "input" / "input_report.json").is_file():
             return candidate
     return None
 
@@ -247,7 +247,11 @@ def _resolve_eval_exp_root(path_candidates):
 def _segment_timestamp_map(exp_root):
     if exp_root is None:
         return {}
-    timestamps = read_timestamps(Path(exp_root).resolve() / "segment" / "timestamps.txt")
+    manifest_path = Path(exp_root).resolve() / "input" / "input_report.json"
+    manifest_obj = read_json(manifest_path) if manifest_path.is_file() else {}
+    if not isinstance(manifest_obj, dict):
+        manifest_obj = {}
+    timestamps = list((manifest_obj.get("camera") or {}).get("timestamps") or [])
     out = {}
     for idx, value in enumerate(timestamps):
         try:
@@ -273,11 +277,11 @@ def _load_formal_keyframe_context(config, metrics_obj):
         "timestamps_by_frame": {},
     }
     if exp_root is None:
-        append_warning(metrics_obj, "eval plot keyframes unavailable: missing segment formal artifacts")
+        append_warning(metrics_obj, "eval plot keyframes unavailable: missing input formal artifacts")
         return empty_context
 
     exp_root = Path(exp_root).resolve()
-    manifest_path = exp_root / "segment" / "segment_manifest.json"
+    manifest_path = exp_root / "input" / "input_report.json"
     manifest_obj = read_json(manifest_path) if manifest_path.is_file() else {}
     if not isinstance(manifest_obj, dict):
         manifest_obj = {}
@@ -298,7 +302,7 @@ def _load_formal_keyframe_context(config, metrics_obj):
         frame_indices.append(frame_idx)
     frame_indices.sort()
     if not frame_indices:
-        append_warning(metrics_obj, "eval plot keyframes unavailable: empty keyframe indices in formal segment artifacts")
+        append_warning(metrics_obj, "eval plot keyframes unavailable: empty keyframe indices in formal input artifacts")
         return empty_context
 
     timestamps_by_frame = {}
@@ -676,8 +680,7 @@ def _save_traj_plot(out_dir, ref_traj, est_traj, ape_result, metrics_obj, keyfra
         return None
 
     plt = _setup_matplotlib()
-    plot_path = Path(out_dir).resolve() / "plots" / "traj_xy.png"
-    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    plot_path = Path(out_dir).resolve() / "eval_traj_xy.png"
     ref_timestamps = np.asarray(getattr(ref_traj, "timestamps", []), dtype=np.float64).reshape(-1)
     _plot_traj_xy(
         plt,

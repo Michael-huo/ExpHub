@@ -154,30 +154,27 @@ class ImageGenRequest(object):
 
 
 def load_segment_manifest(path):
-    manifest = _load_manifest(path, "segment manifest")
+    manifest = _load_manifest(path, "input report")
     state_segments = list(_as_dict(manifest.get("state_segments")).get("segments") or [])
     if not state_segments:
-        raise ValueError("segment manifest must contain state_segments.segments")
+        raise ValueError("input report must contain state_segments.segments")
     return manifest
 
 
 def _load_generation_units(exp_root, segment_manifest):
     segment_payload = _as_dict(segment_manifest)
-    artifact_meta = _as_dict(segment_payload.get("generation_units"))
-    artifact_path = str(
-        artifact_meta.get("path", "")
-        or _as_dict(segment_payload.get("artifacts")).get("generation_units", "")
-        or "segment/generation_units.json"
-    ).strip()
+    artifact_path = str((Path(exp_root).resolve() / "encode" / "encode_plan.json").resolve())
     payload = _load_manifest((Path(exp_root).resolve() / artifact_path).resolve(), "generation units")
     units = list(payload.get("units") or [])
     if not units:
         raise ValueError("generation units must contain units")
+    if not payload.get("sequence_range"):
+        payload["sequence_range"] = dict(payload.get("sequence_range") or {})
     return payload
 
 
 def _load_prompt_spans(exp_root):
-    payload = _load_manifest((Path(exp_root).resolve() / "prompt" / "prompt_spans.json").resolve(), "prompt spans")
+    payload = _load_manifest((Path(exp_root).resolve() / "encode" / "prompt_spans.json").resolve(), "prompt spans")
     spans = list(payload.get("spans") or [])
     if not spans:
         raise ValueError("prompt spans must contain spans")
@@ -297,7 +294,7 @@ def build_image_gen_runtime(segment_manifest, infer_backend="wan_fun_5b_inp"):
                 decode_blocked = True
             continue
 
-        prompt_ref["artifact_path"] = _collapse_ws(prompt_ref.get("artifact_path", "")) or "prompt/prompt_spans.json"
+        prompt_ref["artifact_path"] = _collapse_ws(prompt_ref.get("artifact_path", "")) or "encode/prompt_spans.json"
         resolved_prompt = str(prompt_span.get("resolved_prompt", "") or "")
         if not _collapse_ws(resolved_prompt):
             raise RuntimeError("prompt span {} missing resolved_prompt".format(span_id))
@@ -383,8 +380,8 @@ def build_image_gen_runtime(segment_manifest, infer_backend="wan_fun_5b_inp"):
         "segments": segments,
         "skipped_units": skipped_units,
         "source_files": {
-            "segment_manifest": _relative_path(exp_dir, segment_payload["_path"]),
-            "generation_units": _relative_path(exp_dir, generation_units_payload["_path"]),
+            "input_report": _relative_path(exp_dir, segment_payload["_path"]),
+            "encode_plan": _relative_path(exp_dir, generation_units_payload["_path"]),
             "prompt_spans": _relative_path(exp_dir, prompt_spans_payload["_path"]),
         },
         "summary": {

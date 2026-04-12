@@ -20,7 +20,7 @@ from exphub.eval.slam_run import run_slam_substage
 def _build_slam_args(args):
     return argparse.Namespace(
         exp_dir=args.exp_dir,
-        out_dir=str((Path(args.out_dir).resolve() / "slam").resolve()),
+        out_dir=str(Path(args.out_dir).resolve()),
         segment_dir=args.segment_dir,
         infer_dir=args.infer_dir,
         infer_report=args.infer_report,
@@ -99,15 +99,14 @@ def _run_formal_mainline(args):
 
 
 def run(runtime):
-    ensure_dir(runtime.paths.segment_dir, "segment dir")
-    ensure_dir(runtime.paths.infer_dir, "infer dir")
-    ensure_dir(runtime.paths.merge_dir, "merge dir")
-    ensure_file(runtime.paths.segment_manifest_path, "segment manifest")
+    ensure_dir(runtime.paths.input_dir, "input dir")
+    ensure_dir(runtime.paths.decode_dir, "decode dir")
+    ensure_file(runtime.paths.input_report_path, "input report")
+    ensure_file(runtime.paths.encode_report_path, "encode report")
+    ensure_file(runtime.paths.decode_plan_path, "decode plan")
+    ensure_file(runtime.paths.decode_report_path, "decode report")
+    ensure_file(runtime.paths.decode_merge_report_path, "decode merge report")
     ensure_file(runtime.paths.prompt_spans_path, "prompt spans")
-    ensure_file(runtime.paths.infer_runs_plan_path, "image gen runs plan")
-    ensure_file(runtime.paths.infer_report_path, "image gen report")
-    ensure_file(runtime.paths.merge_manifest_path, "sequence merge manifest")
-    ensure_file(runtime.paths.merge_report_path, "sequence merge report")
 
     runtime.remove_in_exp(runtime.paths.eval_dir)
     runtime.paths.eval_dir.mkdir(parents=True, exist_ok=True)
@@ -120,17 +119,17 @@ def run(runtime):
         "--out_dir",
         str(runtime.paths.eval_dir),
         "--segment_dir",
-        str(runtime.paths.segment_dir),
+        str(runtime.paths.input_dir),
         "--infer_dir",
-        str(runtime.paths.infer_dir),
+        str(runtime.paths.decode_dir),
         "--infer_report",
-        str(runtime.paths.infer_report_path),
+        str(runtime.paths.decode_report_path),
         "--merge_dir",
-        str(runtime.paths.merge_dir),
+        str(runtime.paths.decode_dir),
         "--merge_report",
-        str(runtime.paths.merge_report_path),
+        str(runtime.paths.decode_merge_report_path),
         "--merge_manifest",
-        str(runtime.paths.merge_manifest_path),
+        str(runtime.paths.decode_merge_report_path),
         "--seq",
         str(runtime.args.droid_seq),
         "--droid_repo",
@@ -156,10 +155,10 @@ def run(runtime):
         (runtime.paths.eval_slam_report_path, "eval slam report"),
         (runtime.paths.eval_slam_primary_traj_path, "eval slam primary trajectory"),
         (runtime.paths.eval_report_path, "eval report"),
-        (runtime.paths.eval_compression_path, "eval compression snapshot"),
+        (runtime.paths.eval_compression_report_path, "eval compression report"),
         (runtime.paths.eval_summary_path, "eval summary"),
         (runtime.paths.eval_details_path, "eval details"),
-        (runtime.paths.eval_traj_metrics_path, "eval traj metrics"),
+        (runtime.paths.eval_traj_report_path, "eval traj report"),
         (runtime.paths.eval_metrics_overview_path, "eval metrics overview plot"),
     ]
     for artifact_path, label in required_artifacts:

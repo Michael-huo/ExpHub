@@ -85,7 +85,7 @@ def _load_manifest(path, artifact_name):
 
 
 def _load_generation_units_payload(exp_dir):
-    path = (Path(exp_dir).resolve() / "segment" / "generation_units.json").resolve()
+    path = (Path(exp_dir).resolve() / "encode" / "encode_plan.json").resolve()
     payload = _load_manifest(path, "generation units")
     if not list(payload.get("units") or []):
         raise RuntimeError("generation units contains zero units: {}".format(path))
@@ -93,7 +93,7 @@ def _load_generation_units_payload(exp_dir):
 
 
 def _load_prompt_spans_payload(exp_dir):
-    path = (Path(exp_dir).resolve() / "prompt" / "prompt_spans.json").resolve()
+    path = (Path(exp_dir).resolve() / "encode" / "prompt_spans.json").resolve()
     payload = _load_manifest(path, "prompt spans")
     if not list(payload.get("spans") or []):
         raise RuntimeError("prompt spans contains zero spans: {}".format(path))
@@ -175,9 +175,9 @@ def select_training_candidates(
         else _load_prompt_spans_payload(exp_dir)
     )
     if generation_units_path is None:
-        generation_units_path = (Path(exp_dir).resolve() / "segment" / "generation_units.json").resolve()
+        generation_units_path = (Path(exp_dir).resolve() / "encode" / "encode_plan.json").resolve()
     if prompt_spans_path is None:
-        prompt_spans_path = (Path(exp_dir).resolve() / "prompt" / "prompt_spans.json").resolve()
+        prompt_spans_path = (Path(exp_dir).resolve() / "encode" / "prompt_spans.json").resolve()
 
     units = list(_as_dict(generation_units_obj).get("units") or [])
     spans = list(_as_dict(prompt_spans_obj).get("spans") or [])
@@ -270,7 +270,7 @@ def select_training_candidates(
                 "source_unit_ids": list(source_unit_ids),
                 "source_span_id": str(span_id),
                 "source_prompt_ref": {
-                    "artifact_path": "prompt/prompt_spans.json",
+                    "artifact_path": "encode/prompt_spans.json",
                     "span_id": str(span_id),
                 },
                 "source_files": {
@@ -302,7 +302,7 @@ def select_training_candidates(
                     "source_unit_ids": list(source_unit_ids),
                     "source_span_id": str(span_id),
                     "source_prompt_ref": {
-                        "artifact_path": "prompt/prompt_spans.json",
+                        "artifact_path": "encode/prompt_spans.json",
                         "span_id": str(span_id),
                     },
                     "resolved_prompt_source": "prompt_spans",

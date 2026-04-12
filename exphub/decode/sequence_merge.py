@@ -13,7 +13,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, write_json_atomic, write_text_atomic
+from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, remove_path, write_json_atomic, write_text_atomic
 from exphub.common.logging import log_info, log_prog, log_warn
 def _safe_int(value, default=0):
     try:
@@ -36,7 +36,7 @@ def _sha1_bytes(payload):
 
 
 def _guard_safe_out_dir(out_dir, exp_dir, runs_root):
-    merge_root = (Path(exp_dir).resolve() / "merge").resolve()
+    merge_root = (Path(exp_dir).resolve() / "decode").resolve()
     out_dir_resolved = Path(out_dir).resolve()
     runs_root_resolved = Path(runs_root).resolve()
 
@@ -98,6 +98,31 @@ def _load_runs_plan(plan_path):
                 )
             )
     return payload
+
+
+def _load_input_report(input_dir):
+    report_path = ensure_file(Path(input_dir).resolve() / "input_report.json", "input report")
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid input report payload: {}".format(report_path))
+    return payload, report_path
+
+
+def _float_list(values):
+    out = []
+    for item in list(values or []):
+        try:
+            out.append(float(item))
+        except Exception:
+            continue
+    return out
+
+
+def _format_calib_lines(calib_values):
+    values = _float_list(calib_values)
+    if not values:
+        return ""
+    return " ".join("{:.10f}".format(float(item)) for item in values) + "\n"
 
 
 def _resolve_output_fps(plan_obj, runs_root, fps_override):
@@ -206,7 +231,7 @@ def _write_report(report_path, report_obj):
 
 def _run_formal_mainline(args):
     exp_dir = Path(args.exp_dir).resolve()
-    segment_dir = ensure_dir(args.segment_dir, "segment dir")
+    input_dir = ensure_dir(args.segment_dir, "input dir")
     runs_root = ensure_dir(args.runs_root, "image gen runs dir")
     plan_path = ensure_file(args.plan, "image gen runs plan")
     out_dir = Path(args.out_dir).resolve()
@@ -214,13 +239,29 @@ def _run_formal_mainline(args):
     plan_obj = _load_runs_plan(plan_path)
     _guard_safe_out_dir(out_dir, exp_dir, runs_root)
 
-    if out_dir.exists():
-        shutil.rmtree(str(out_dir), ignore_errors=True)
+    for stale_path in (
+        out_dir / "frames",
+        out_dir / "decode_merge_report.json",
+        out_dir / "calib.txt",
+        out_dir / "timestamps.txt",
+        out_dir / "preview.mp4",
+    ):
+        remove_path(stale_path)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_frames = (out_dir / "frames").resolve()
     out_frames.mkdir(parents=True, exist_ok=True)
 
     segments = list(plan_obj.get("segments") or [])
+    input_report, input_report_path = _load_input_report(input_dir)
+    camera_meta = dict(input_report.get("camera") or {})
+    source_timestamp_values = _float_list(camera_meta.get("timestamps"))
+    source_calib_values = _float_list(camera_meta.get("calib"))
+    if not source_timestamp_values:
+        max_source_idx = max((int(item.get("actual_saved_end_idx", 0) or 0) for item in segments), default=-1)
+        if max_source_idx >= 0:
+            fps_fallback = float(_safe_int(args.fps, 0) or 0)
+            if fps_fallback > 0.0:
+                source_timestamp_values = [float(idx) / fps_fallback for idx in range(max_source_idx + 1)]
     merged_start_idx = None
     merged_end_idx = None
     merged_frame_count = 0
@@ -233,8 +274,12 @@ def _run_formal_mainline(args):
     merged_segments = []
     source_unit_ids = set()
     source_span_ids = set()
-    src_timestamps = ensure_file(segment_dir / "timestamps.txt", "segment timestamps")
-    timestamp_lines = [line for line in src_timestamps.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip()]
+    if not source_timestamp_values:
+        raise RuntimeError(
+            "input report missing camera timestamps and unable to synthesize timestamps: {}".format(
+                input_report_path,
+            )
+        )
 
     for seg_idx, item in enumerate(segments):
         run_name = str(item.get("run_name"))
@@ -306,14 +351,14 @@ def _run_formal_mainline(args):
             merged_frame_count += 1
         out_end = merged_frame_count - 1 if merged_frame_count > out_start else out_start - 1
 
-        if len(timestamp_lines) < cur_end + 1:
+        if len(source_timestamp_values) < cur_end + 1:
             raise RuntimeError(
                 "segment timestamps too short for aligned range: have={} need={}".format(
-                    len(timestamp_lines),
+                    len(source_timestamp_values),
                     cur_end + 1,
                 )
             )
-        current_timestamps = timestamp_lines[cur_start : cur_end + 1]
+        current_timestamps = source_timestamp_values[cur_start : cur_end + 1]
         if len(current_timestamps) != actual_saved_frames:
             raise RuntimeError(
                 "sequence merge timestamp slice mismatch for run={}: slice={} actual_saved_frames={}".format(
@@ -369,10 +414,11 @@ def _run_formal_mainline(args):
     if merged_end_idx is None:
         raise RuntimeError("failed to resolve merged end index from image gen runs plan")
 
-    src_calib = ensure_file(segment_dir / "calib.txt", "segment calib")
     calib_path = (out_dir / "calib.txt").resolve()
     timestamps_path = (out_dir / "timestamps.txt").resolve()
-    write_text_atomic(calib_path, src_calib.read_text(encoding="utf-8", errors="ignore"))
+    if not source_calib_values:
+        raise RuntimeError("input report missing camera calib: {}".format(input_report_path))
+    write_text_atomic(calib_path, _format_calib_lines(source_calib_values))
 
     if int(expected_merged_frame_count) != int(merged_frame_count):
         raise RuntimeError(
@@ -397,9 +443,9 @@ def _run_formal_mainline(args):
         if not preview_ok:
             preview_ok = _python_make_video(out_frames, output_fps, preview_path)
 
-    manifest = {
+    report = {
         "version": 1,
-        "schema": "sequence_merge_manifest.v1",
+        "schema": "decode_merge_report.v1",
         "stage": "decode",
         "substage": "sequence_merge",
         "contract": "decode_sequence_merge_mainline",
@@ -407,16 +453,16 @@ def _run_formal_mainline(args):
         "inputs": {
             "planner": "generation_units",
             "prompt_strategy": "prompt_spans",
-            "segment_dir": _relative_path(exp_dir, segment_dir),
+            "input_dir": _relative_path(exp_dir, input_dir),
             "runs_root": _relative_path(exp_dir, runs_root),
             "runs_plan": _relative_path(exp_dir, plan_path),
-            "upstream_contract": "decode.image_gen/runs_plan.json",
+            "upstream_contract": "decode.image_gen/decode_plan.json",
         },
         "artifacts": {
             "frames_dir": _relative_path(exp_dir, out_frames),
             "timestamps": _relative_path(exp_dir, timestamps_path),
             "calib": _relative_path(exp_dir, calib_path),
-            "report": _relative_path(exp_dir, out_dir / "report.json"),
+            "report": _relative_path(exp_dir, out_dir / "decode_merge_report.json"),
             "preview": _relative_path(exp_dir, preview_path) if preview_ok else "",
         },
         "summary": {
@@ -435,19 +481,7 @@ def _run_formal_mainline(args):
             "skipped_unit_count": int(len(list(plan_obj.get("skipped_units") or []))),
         },
         "segments": merged_segments,
-    }
-    manifest_path = (out_dir / "merge_manifest.json").resolve()
-    write_json_atomic(manifest_path, manifest, indent=2)
-    manifest_bytes = manifest_path.read_bytes()
-
-    report = {
-        "report_schema_version": "sequence_merge_report.v1",
-        "step": "decode",
-        "substage": "sequence_merge",
         "merge_status": "success",
-        "created_at": manifest["created_at"],
-        "planner": "generation_units",
-        "prompt_strategy": "prompt_spans",
         "fps": int(output_fps),
         "segment_count": int(len(segments)),
         "source_unit_count": int(len(source_unit_ids)),
@@ -455,7 +489,6 @@ def _run_formal_mainline(args):
         "shared_anchor_count": int(shared_boundary_count),
         "merged_start_idx": int(merged_start_idx),
         "merged_end_idx": int(merged_end_idx),
-        "inputs": dict(manifest.get("inputs") or {}),
         "outputs": {
             "frames_dir": _relative_path(exp_dir, out_frames),
             "frame_count": int(merged_frame_count),
@@ -463,9 +496,7 @@ def _run_formal_mainline(args):
             "timestamps_path": _relative_path(exp_dir, timestamps_path),
             "calib_path": _relative_path(exp_dir, calib_path),
             "preview_path": _relative_path(exp_dir, preview_path) if preview_ok else "",
-            "manifest_bytes_sum": int(len(manifest_bytes)),
             "report_bytes_sum": 0,
-            "manifest_file_count": 1,
             "report_file_count": 1,
             "bytes_sum": 0,
         },
@@ -473,15 +504,13 @@ def _run_formal_mainline(args):
             "count": int(len(segments)),
             "preview": list(merged_segments[:5]),
         },
-        "manifest_path": _relative_path(exp_dir, manifest_path),
-        "manifest_sha1": _sha1_bytes(manifest_bytes),
         "artifact_contract": {
-            "formal_files": ["merge_manifest.json", "report.json", "frames/", "timestamps.txt", "calib.txt"],
+            "formal_files": ["decode_merge_report.json", "frames/", "timestamps.txt", "calib.txt"],
             "transitional_files": [],
         },
         "warnings": [],
     }
-    report_path = _write_report(out_dir / "report.json", report)
+    report_path = _write_report(out_dir / "decode_merge_report.json", report)
 
     log_prog(
         "sequence merge summary: merged_frames={} segments={}".format(
@@ -489,17 +518,23 @@ def _run_formal_mainline(args):
             int(len(segments)),
         )
     )
-    log_info("sequence merge manifest: {}".format(manifest_path))
     log_info("sequence merge report: {}".format(report_path))
     return report_path
 
 
 def run(runtime):
-    ensure_dir(runtime.paths.segment_dir, "segment dir")
-    ensure_dir(runtime.paths.infer_runs_dir, "image gen runs dir")
-    ensure_file(runtime.paths.infer_runs_plan_path, "image gen runs plan")
+    ensure_dir(runtime.paths.input_dir, "input dir")
+    ensure_dir(runtime.paths.decode_runs_dir, "image gen runs dir")
+    ensure_file(runtime.paths.decode_plan_path, "decode plan")
 
-    runtime.remove_in_exp(runtime.paths.merge_dir)
+    for path in (
+        runtime.paths.decode_frames_dir,
+        runtime.paths.decode_merge_report_path,
+        runtime.paths.decode_calib_path,
+        runtime.paths.decode_timestamps_path,
+        runtime.paths.decode_preview_path,
+    ):
+        runtime.remove_in_exp(path)
     cmd = [
         "-m",
         "exphub.decode.sequence_merge",
@@ -507,13 +542,13 @@ def run(runtime):
         "--exp_dir",
         str(runtime.paths.exp_dir),
         "--segment_dir",
-        str(runtime.paths.segment_dir),
+        str(runtime.paths.input_dir),
         "--runs_root",
-        str(runtime.paths.infer_runs_dir),
+        str(runtime.paths.decode_runs_dir),
         "--plan",
-        str(runtime.paths.infer_runs_plan_path),
+        str(runtime.paths.decode_plan_path),
         "--out_dir",
-        str(runtime.paths.merge_dir),
+        str(runtime.paths.decode_dir),
         "--fps",
         runtime.fps_arg,
     ]
@@ -524,12 +559,11 @@ def run(runtime):
         cwd=runtime.exphub_root,
     )
 
-    ensure_dir(runtime.paths.merge_frames_dir, "merge frames dir")
-    ensure_file(runtime.paths.merge_manifest_path, "merge manifest")
-    ensure_file(runtime.paths.merge_report_path, "merge report")
-    ensure_file(runtime.paths.merge_calib_path, "merge calib")
-    ensure_file(runtime.paths.merge_timestamps_path, "merge timestamps")
-    return runtime.paths.merge_dir
+    ensure_dir(runtime.paths.decode_frames_dir, "decode frames dir")
+    ensure_file(runtime.paths.decode_merge_report_path, "decode merge report")
+    ensure_file(runtime.paths.decode_calib_path, "decode calib")
+    ensure_file(runtime.paths.decode_timestamps_path, "decode timestamps")
+    return runtime.paths.decode_dir
 
 
 def _build_arg_parser():

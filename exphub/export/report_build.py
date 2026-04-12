@@ -98,7 +98,37 @@ def build_dataset_report(
     }
 
 
+def build_export_report(dataset_report):
+    summary = dict((dataset_report or {}).get("summary") or {})
+    outputs = dict((dataset_report or {}).get("outputs") or {})
+    return {
+        "report_schema_version": "export_report.v1",
+        "step": "export",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "summary": {
+            "bag_count": int(summary.get("bag_count", 0) or 0),
+            "clip_count": int(summary.get("clip_count", 0) or 0),
+            "exported_clip_count": int(summary.get("exported_clip_count", 0) or 0),
+            "skipped_clip_count": int(summary.get("skipped_clip_count", 0) or 0),
+            "prompt_span_count": int(summary.get("prompt_span_count", 0) or 0),
+            "total_units_consumed": int(summary.get("total_units_consumed", 0) or 0),
+        },
+        "outputs": {
+            "clips_dir": str(outputs.get("clips_dir", "") or ""),
+            "metadata_dir": str(outputs.get("metadata_dir", "") or ""),
+            "clip_manifests_dir": str(outputs.get("clip_manifests_dir", "") or ""),
+        },
+        "dataset_report": dict(dataset_report or {}),
+    }
+
+
 def write_dataset_report(export_root, report_obj):
-    report_path = (Path(export_root).resolve() / "dataset_report.json").resolve()
+    report_path = (Path(export_root).resolve() / "export_dataset_report.json").resolve()
+    write_json_atomic(report_path, dict(report_obj or {}), indent=2)
+    return report_path
+
+
+def write_export_report(export_root, report_obj):
+    report_path = (Path(export_root).resolve() / "export_report.json").resolve()
     write_json_atomic(report_path, dict(report_obj or {}), indent=2)
     return report_path

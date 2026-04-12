@@ -1441,7 +1441,7 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
                 height = int(sample_size[0])
             except Exception:
                 width, height = 0, 0
-            plan_path = os.path.join(runs_parent, "runs_plan.json")
+            plan_path = os.path.join(runs_parent, "decode_plan.json")
             segs = []
             for seg, seg_spec in enumerate(batch_execution_segments):
                 start_idx = int(seg_spec["start_idx"])

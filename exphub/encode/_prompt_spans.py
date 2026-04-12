@@ -163,8 +163,7 @@ def build_prompt_spans_payload(prompt_manifest, generation_units_payload):
             "multi_unit_span_count": int(len([item for item in spans if int(item.get("shared_unit_count", 0) or 0) > 1])),
         },
         "artifact_paths": {
-            "prompt_manifest": "prompt/prompt_manifest.json",
-            "generation_units": "segment/generation_units.json",
-            "prompt_spans": "prompt/prompt_spans.json",
+            "encode_plan": "encode/encode_plan.json",
+            "prompt_spans": "encode/prompt_spans.json",
         },
     }

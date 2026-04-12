@@ -234,11 +234,7 @@ def build_generation_units_payload(
             "shared_anchor_count": int(max(0, len(units) - 1)),
         },
         "artifact_paths": {
-            "motion_score": "segment/motion_score.json",
-            "semantic_shift": "segment/semantic_shift.json",
-            "generation_risk": "segment/generation_risk.json",
-            "candidate_boundaries": "segment/candidate_boundaries.json",
-            "generation_units": "segment/generation_units.json",
-            "prompt_spans": "prompt/prompt_spans.json",
+            "encode_plan": "encode/encode_plan.json",
+            "prompt_spans": "encode/prompt_spans.json",
         },
     }

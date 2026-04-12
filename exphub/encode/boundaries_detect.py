@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import shutil
 import sys
 import time
 from datetime import datetime
@@ -268,6 +269,7 @@ def _extract_frames(args, paths):
     transform = None
     last_src_stamp = None
     last_src_img = None
+    calib_out = []
     prev_t = None
     prev_msg = None
     k = 0
@@ -357,6 +359,8 @@ def _extract_frames(args, paths):
     return {
         "frame_count": int(actual_frame_count),
         "timestamps_count": int(len(timestamps_lines)),
+        "timestamps": [float(item) for item in target_rel_times],
+        "calib": [float(item) for item in calib_out],
     }
 
 
@@ -406,9 +410,8 @@ def run_formal_mainline(args):
     log_info("scene split state analysis completed in {:.2f}s".format(detect_sec))
 
     materialize_started = time.time()
-    actual_mode, keyframe_bytes_sum = diagnostics.materialize_keyframes(
+    actual_mode, keyframe_bytes_sum = diagnostics.summarize_keyframes(
         frames_dir=paths.frames_dir,
-        keyframes_dir=paths.keyframes_dir,
         keyframe_indices=detector_result["plan"]["keyframe_indices"],
         mode_requested=args.keyframes_mode,
     )
@@ -430,6 +433,7 @@ def run_formal_mainline(args):
         state_segments_payload=state_segments_payload,
         state_report_payload=state_report_payload,
         extraction_meta=extraction_meta,
+        keyframes_meta=keyframes_meta,
     )
 
     inputs_meta = {
@@ -449,25 +453,28 @@ def run_formal_mainline(args):
         "total": float(time.time() - total_started),
     }
 
-    manifest = diagnostics.build_segment_manifest(
-        paths=paths,
-        policy_name="state",
-        keyframes_meta=keyframes_meta,
-        state_segments_payload=state_segments_payload,
-        state_report_payload=state_report_payload,
-        quality_diagnostics=quality_diagnostics,
-    )
-    report = diagnostics.build_segment_report(
+    report = diagnostics.build_input_report(
         paths=paths,
         inputs_meta=inputs_meta,
         keyframes_meta=keyframes_meta,
+        extraction_meta=extraction_meta,
         state_segments_payload=state_segments_payload,
         state_report_payload=state_report_payload,
         quality_diagnostics=quality_diagnostics,
         timings=timings,
     )
-    diagnostics.write_segment_manifest(paths, manifest)
-    diagnostics.write_segment_report(paths, report)
+    diagnostics.write_input_report(paths, report)
+    for temp_path in (paths.calib_path, paths.timestamps_path):
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+    try:
+        shutil.rmtree(str(paths.root / "visuals"), ignore_errors=True)
+    except Exception:
+        pass
 
     log_prog(
         "scene split summary: frames={} keyframes={} state_segments={}".format(
@@ -476,10 +483,8 @@ def run_formal_mainline(args):
             int((state_segments_payload.get("summary") or {}).get("segment_count", 0) or 0),
         )
     )
-    log_info("scene split manifest: {}".format(paths.manifest_path))
-    if visual_result.get("state_overview_path") is not None:
-        log_info("scene split overview: {}".format(visual_result["state_overview_path"]))
-    return paths.manifest_path
+    log_info("scene split report: {}".format(paths.report_path))
+    return paths.report_path
 
 
 def _build_arg_parser():
