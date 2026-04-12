@@ -298,11 +298,11 @@ def _pick_primary_frame(state_row, keyframe_indices, frames_dir):
 
 
 def build_scene_prompt_payload(segment_inputs, frames_dir, prompt_model_dir=""):
-    manifest = _as_dict(segment_inputs.get("segment_manifest"))
+    manifest = _as_dict(segment_inputs.get("input_report") or segment_inputs.get("segment_manifest"))
     state_payload = _as_dict(segment_inputs.get("state_segments_payload"))
     state_rows = list(state_payload.get("segments") or [])
     if not state_rows:
-        raise RuntimeError("segment manifest has no state segments for scene prompts")
+        raise RuntimeError("input report has no state segments for scene prompts")
 
     keyframe_indices = sorted(set(int(v) for v in list(_as_dict(manifest.get("keyframes")).get("indices") or [])))
     exp_dir = Path(segment_inputs.get("exp_dir")).resolve()

@@ -50,89 +50,85 @@ def _prune_dir_keep_names(root: Path, d: Path, keep_names) -> None:
 
 
 def _cleanup_min(exp_dir: Path) -> None:
-    # `keep=min` is a retention policy, not a contract definition. These lists
-    # keep the current lightweight outputs we still want after the mainline run
-    # while pruning heavy intermediates that are no longer needed.
     heavy_dirs = [
-        exp_dir / "segment" / "frames",
-        exp_dir / "infer" / "runs",
-        exp_dir / "merge" / "frames",
+        exp_dir / "input" / "frames",
+        exp_dir / "decode" / "runs",
+        exp_dir / "decode" / "frames",
+        exp_dir / "export" / "clips",
     ]
     for d in heavy_dirs:
         _rm_if_exists(exp_dir, d)
 
-    # Keep stage roots required by directory contract.
-    root_keep = {"segment", "prompt", "infer", "merge", "slam", "eval", "stats", "logs"}
+    root_keep = {"input", "encode", "decode", "eval", "export", "logs"}
     if exp_dir.is_dir():
         for child in list(exp_dir.iterdir()):
-            if child.name in root_keep:
+            if child.name in root_keep or child.name == "exp_meta.json":
                 continue
             _rm_if_exists(exp_dir, child)
 
-    # Keep lightweight, reproducibility-critical metadata.
     _prune_dir_keep_names(
         exp_dir,
-        exp_dir / "segment",
+        exp_dir / "input",
         {
-            "calib.txt",
-            "timestamps.txt",
-            "keyframes",
-            "motion_score.json",
-            "semantic_shift.json",
-            "generation_risk.json",
-            "candidate_boundaries.json",
-            "generation_units.json",
-            "segment_manifest.json",
-            "report.json",
-            "visuals",
+            "input_report.json",
+            "frames",
         },
     )
     _prune_dir_keep_names(
         exp_dir,
-        exp_dir / "prompt",
+        exp_dir / "encode",
         {
-            "prompt_manifest.json",
+            "encode_plan.json",
             "prompt_spans.json",
-            "report.json",
+            "encode_report.json",
+            "encode_segmentation_overview.png",
         },
     )
     _prune_dir_keep_names(
         exp_dir,
-        exp_dir / "infer",
-        {"report.json", "runs_plan.json"},
-    )
-    _prune_dir_keep_names(
-        exp_dir,
-        exp_dir / "merge",
-        {"merge_manifest.json", "report.json", "calib.txt", "timestamps.txt"},
+        exp_dir / "decode",
+        {
+            "decode_plan.json",
+            "decode_merge_report.json",
+            "decode_report.json",
+            "frames",
+            "runs",
+            "timestamps.txt",
+            "calib.txt",
+            "preview.mp4",
+        },
     )
     _prune_dir_keep_names(
         exp_dir,
         exp_dir / "eval",
         {
-            "compression.json",
-            "details.csv",
-            "metrics",
-            "plots",
-            "report.json",
-            "slam",
-            "summary.txt",
+            "eval_report.json",
+            "eval_slam_report.json",
+            "eval_traj_report.json",
+            "eval_compression_report.json",
+            "eval_summary.txt",
+            "eval_details.csv",
+            "eval_traj_xy.png",
+            "eval_metrics_overview.png",
+        },
+    )
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "export",
+        {
+            "export_report.json",
+            "export_dataset_report.json",
+            "clips",
+            "metadata",
+            "clip_manifests",
         },
     )
 
 
 def apply_keep_level(exp_dir: Path, keep: KeepLevel) -> None:
-    """Remove non-essential artifacts according to keep level.
-
-    Canonical levels:
-    - max: keep everything.
-    - min: keep lightweight metadata + final outputs; prune heavy intermediates.
-    """
-
     keep_norm = normalize_keep_level(keep)
     if keep_norm == "max":
         return
     if not exp_dir.exists():
         return
-
     _cleanup_min(exp_dir)

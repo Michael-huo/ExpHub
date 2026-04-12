@@ -77,10 +77,11 @@ def _draw_segment_sequence(ax, segments, y_value, height):
         )
 
 
-def _save_state_overview(output_path, frame_rows, segments, final_indices=None):
+def _save_state_overview(output_path, frame_rows, segments, final_indices=None, boundary_indices=None):
     frame_rows = list(frame_rows or [])
     segments = list(segments or [])
     final_indices = [int(idx) for idx in list(final_indices or [])]
+    boundary_indices = sorted(set(int(idx) for idx in list(boundary_indices or [])))
     if not frame_rows:
         raise ValueError("state overview requires non-empty frame rows")
 
@@ -120,6 +121,16 @@ def _save_state_overview(output_path, frame_rows, segments, final_indices=None):
         end_frame = int(segment.get("end_frame", 0) or 0)
         score_ax.axvline(float(start_frame), color="#d62828", linestyle="--", linewidth=1.1)
         score_ax.axvline(float(end_frame), color="#264653", linestyle="--", linewidth=1.1)
+    for idx, frame_idx in enumerate(boundary_indices):
+        score_ax.axvline(
+            float(frame_idx),
+            color="#6d4c41",
+            linestyle=":",
+            linewidth=1.2,
+            alpha=0.95,
+            label="final boundaries" if idx == 0 else "_nolegend_",
+            zorder=4,
+        )
     if final_indices:
         y_map = dict((int(frame_idx), float(detector_scores[idx])) for idx, frame_idx in enumerate(x))
         score_ax.scatter(
@@ -188,6 +199,7 @@ def save_state_segmentation_plots(
         frame_rows=frame_rows,
         segments=segments,
         final_indices=final_indices,
+        boundary_indices=None,
     )
     return {
         "overview_path": overview_path,

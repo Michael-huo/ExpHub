@@ -26,14 +26,14 @@ from .plans_build import (
 from .runtime_manage import create_backend
 
 
-REPORT_FILENAME = "report.json"
+REPORT_FILENAME = "decode_report.json"
 
 
 def run(runtime):
-    decode_root = runtime.paths.infer_dir
-    ensure_dir(runtime.paths.segment_frames_dir, "segment frames dir")
-    ensure_file(runtime.paths.segment_manifest_path, "segment manifest")
-    ensure_file(runtime.paths.segment_generation_units_path, "generation units")
+    decode_root = runtime.paths.decode_dir
+    ensure_dir(runtime.paths.input_frames_dir, "input frames dir")
+    ensure_file(runtime.paths.input_report_path, "input report")
+    ensure_file(runtime.paths.encode_plan_path, "encode plan")
     ensure_file(runtime.paths.prompt_spans_path, "prompt spans")
 
     runtime.paths.exp_dir.mkdir(parents=True, exist_ok=True)
@@ -47,9 +47,9 @@ def run(runtime):
         "--exp_dir",
         str(runtime.paths.exp_dir),
         "--frames_dir",
-        str(runtime.paths.segment_frames_dir),
+        str(runtime.paths.input_frames_dir),
         "--segment_manifest",
-        str(runtime.paths.segment_manifest_path),
+        str(runtime.paths.input_report_path),
         "--videox_root",
         str(runtime.args.videox_root),
         "--gpus",
@@ -77,10 +77,10 @@ def run(runtime):
         cwd=runtime.exphub_root,
     )
 
-    ensure_dir(runtime.paths.infer_runs_dir, "image gen runs dir")
-    ensure_file(runtime.paths.infer_runs_plan_path, "image gen runs plan")
-    ensure_file(runtime.paths.infer_report_path, "image gen report")
-    return runtime.paths.infer_report_path
+    ensure_dir(runtime.paths.decode_runs_dir, "image gen runs dir")
+    ensure_file(runtime.paths.decode_plan_path, "decode plan")
+    ensure_file(runtime.paths.decode_report_path, "decode report")
+    return runtime.paths.decode_report_path
 
 
 def _mean(values):
@@ -278,7 +278,7 @@ def _augment_runs_plan_with_saved_frames(infer_dir, plan_obj):
 def build_image_gen_report(exp_dir, infer_dir, runs_plan_obj, prompt_resolution, backend_meta, backend_result, runtime_summary):
     infer_dir = Path(infer_dir).resolve()
     exp_dir = Path(exp_dir).resolve()
-    runs_plan_path = (infer_dir / "runs_plan.json").resolve()
+    runs_plan_path = (infer_dir / "decode_plan.json").resolve()
     runs_plan_bytes = runs_plan_path.read_bytes()
     plan_segments = list((runs_plan_obj or {}).get("segments", []) or [])
 
@@ -343,14 +343,14 @@ def build_image_gen_report(exp_dir, infer_dir, runs_plan_obj, prompt_resolution,
         "execution_segments_summary": _segment_summary(plan_segments),
         "skipped_units": list((runs_plan_obj or {}).get("skipped_units", []) or []),
         "source_files": {
-            "runs_plan": _relative_path(exp_dir, runs_plan_path),
-            "segment_manifest": str(source_files.get("segment_manifest", "") or ""),
-            "generation_units": str(source_files.get("generation_units", "") or ""),
+            "decode_plan": _relative_path(exp_dir, runs_plan_path),
+            "input_report": str(source_files.get("input_report", "") or ""),
+            "encode_plan": str(source_files.get("encode_plan", "") or ""),
             "prompt_spans": str(source_files.get("prompt_spans", "") or ""),
         },
         "artifact_contract": {
-            "formal_files": ["runs_plan.json", REPORT_FILENAME],
-            "formal_prompt_inputs": ["generation_units.json", "prompt_spans.json", "segment_manifest.json"],
+            "formal_files": ["decode_plan.json", REPORT_FILENAME],
+            "formal_prompt_inputs": ["encode/encode_plan.json", "encode/prompt_spans.json", "input/input_report.json"],
             "transitional_files": [],
         },
     }
@@ -379,9 +379,9 @@ def write_image_gen_report(infer_dir, report):
 
 
 def _run_formal_mainline(args):
-    frames_dir = ensure_dir(args.frames_dir, "segment frames dir")
+    frames_dir = ensure_dir(args.frames_dir, "input frames dir")
     exp_dir = Path(args.exp_dir).resolve()
-    infer_dir = (exp_dir / "infer").resolve()
+    infer_dir = (exp_dir / "decode").resolve()
     infer_dir.mkdir(parents=True, exist_ok=True)
 
     frames_avail = _list_frame_count(frames_dir)
@@ -460,10 +460,13 @@ def _run_formal_mainline(args):
                 pass
     dt = float(time.time() - t0)
 
-    runs_plan_path = ensure_file(infer_dir / "runs_plan.json", "runs_plan")
-    plan_obj = json.loads(runs_plan_path.read_text(encoding="utf-8"))
+    runs_plan_path = infer_dir / "decode_plan.json"
+    if runs_plan_path.is_file():
+        plan_obj = json.loads(runs_plan_path.read_text(encoding="utf-8"))
+    else:
+        plan_obj = dict(execution_plan)
     if not isinstance(plan_obj, dict):
-        raise RuntimeError("invalid runs_plan.json: {}".format(runs_plan_path))
+        raise RuntimeError("invalid decode_plan.json: {}".format(runs_plan_path))
     plan_obj["planner"] = "generation_units"
     plan_obj["prompt_strategy"] = "prompt_spans"
     plan_obj["schedule_source"] = str(execution_plan.get("schedule_source", "") or plan_obj.get("schedule_source", "") or "")
@@ -523,7 +526,7 @@ def _build_arg_parser():
     parser.add_argument("--run-formal-mainline", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir")
     parser.add_argument("--frames_dir", required=True, help="segment frames dir")
-    parser.add_argument("--segment_manifest", required=True, help="formal segment_manifest.json path")
+    parser.add_argument("--segment_manifest", required=True, help="formal input_report.json path")
     parser.add_argument("--videox_root", required=True, help="VideoX-Fun repo root")
     parser.add_argument("--gpus", type=int, default=1)
     parser.add_argument("--fps", type=float, required=True)

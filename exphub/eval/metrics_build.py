@@ -64,13 +64,11 @@ def run_metrics_substage(args):
 
     traj_metrics = dict((traj_result or {}).get("metrics") or {})
     summary_text = build_summary_text(traj_metrics)
-    metrics_dir = out_dir / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-    traj_metrics_path = metrics_dir / "traj_eval.json"
+    traj_metrics_path = out_dir / "eval_traj_report.json"
     write_json_atomic(traj_metrics_path, traj_metrics, indent=2)
     details_path = write_eval_details(out_dir, (traj_result or {}).get("records", []))
     metrics_overview_path = save_metrics_overview(out_dir, (traj_result or {}).get("overview", {}))
-    summary_path = out_dir / "summary.txt"
+    summary_path = out_dir / "eval_summary.txt"
     write_text_atomic(summary_path, str(summary_text or "") + "\n")
     log_eval_terminal_summary(traj_metrics, out_dir)
 

@@ -335,8 +335,8 @@ def run(runtime):
             exp_dir = None
             try:
                 exp_dir = _run_encode_for_clip(runtime, target, export_root, clip_plan, profile)
-                segment_manifest_path = (exp_dir / "segment" / "segment_manifest.json").resolve()
-                prompt_manifest_path = (exp_dir / "prompt" / "prompt_manifest.json").resolve()
+                segment_manifest_path = (exp_dir / "input" / "input_report.json").resolve()
+                prompt_manifest_path = (exp_dir / "encode" / "prompt_spans.json").resolve()
                 segment_manifest = read_json_dict(segment_manifest_path)
                 prompt_manifest = read_json_dict(prompt_manifest_path)
                 candidate_result = clips_build.select_training_candidates(
@@ -374,7 +374,7 @@ def run(runtime):
                     )
                     clip_output_path = (layout["split_dirs"][split] / clip_filename).resolve()
                     clips_build.write_training_clip(
-                        exp_dir / "segment" / "frames",
+                        exp_dir / "input" / "frames",
                         clip_output_path,
                         start_idx=int(candidate["clip_start_idx"]),
                         num_frames=int(candidate["clip_num_frames"]),
@@ -445,7 +445,9 @@ def run(runtime):
         skipped_clips=skipped_clips,
         metadata_paths=metadata_paths,
     )
-    report_path = report_build.write_dataset_report(export_root, dataset_report)
+    dataset_report_path = report_build.write_dataset_report(export_root, dataset_report)
+    export_report = report_build.build_export_report(dataset_report)
+    report_path = report_build.write_export_report(export_root, export_report)
 
     log_prog(
         "export summary: clips={} skipped={} elapsed={:.2f}s".format(
@@ -454,7 +456,8 @@ def run(runtime):
             float(time.time() - total_t0),
         )
     )
-    log_info("export dataset report: {}".format(report_path))
+    log_info("export report: {}".format(report_path))
+    log_info("export dataset report: {}".format(dataset_report_path))
     if not exported_clips:
         raise RuntimeError("export produced no training clips: {}".format(report_path))
     return export_root

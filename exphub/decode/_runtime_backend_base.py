@@ -196,7 +196,7 @@ class DirectInferBackend(ConfiguredInferBackend):
         value = getattr(request, "runs_parent", None)
         if value is not None:
             return str(Path(value).resolve())
-        return str((Path(request.exp_dir).resolve() / "infer").resolve())
+        return str((Path(request.exp_dir).resolve() / "decode" / "runs").resolve())
 
     def _build_cmd(self, request):
         # type: (object) -> List[str]
