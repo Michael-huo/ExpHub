@@ -7,11 +7,10 @@ from pathlib import Path
 
 from exphub.common.io import ensure_dir, ensure_file, read_json_dict, write_json_atomic
 
-from ._boundary_candidates import build_candidate_boundaries_payload
-from ._prompt_spans import build_prompt_spans_payload
-from ._scene_diagnostics import write_encode_segmentation_overview
+from .boundaries_build import build_candidate_boundaries_payload, write_encode_segmentation_overview
+from .plan_build import build_generation_units_payload
+from .prompts_build import build_prompt_spans_payload
 from .signals_build import build_generation_risk_payload, build_motion_score_payload, build_semantic_shift_payload
-from .units_plan import build_generation_units_payload
 
 
 _PROMPT_PHASE = "prompt_smol"
@@ -42,7 +41,7 @@ def _build_scene_split_cmd(runtime):
     return [
         str(segment_python),
         "-m",
-        "exphub.encode.boundaries_detect",
+        "exphub.encode.boundaries_build",
         "--run-formal-mainline",
         "--exp_dir",
         str(runtime.paths.exp_dir),
@@ -195,7 +194,7 @@ def _build_encode_report(runtime, input_report, encode_plan, prompt_spans, promp
 
 
 def run_scene_split(runtime):
-    from exphub.encode.boundaries_detect import require_formal_segment_policy
+    from exphub.encode.boundaries_build import require_formal_segment_policy
 
     require_formal_segment_policy(runtime.args.segment_policy)
     runtime.ensure_clean_exp_dir()

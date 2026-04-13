@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from ._unit_constraints import (
-    DEFAULT_MIN_EXECUTABLE_FRAMES,
-    enforce_contiguous_shared_anchors,
-    is_valid_for_decode,
-    is_valid_for_export,
-    unit_duration_frames,
-)
-from ._unit_costs import boundary_choice_cost, span_policy_for_risk_level
+DEFAULT_MIN_DECODE_FRAMES = 10
+DEFAULT_MIN_EXPORT_FRAMES = 12
+DEFAULT_MIN_EXECUTABLE_FRAMES = max(DEFAULT_MIN_DECODE_FRAMES, DEFAULT_MIN_EXPORT_FRAMES)
+
+_RISK_SPAN_POLICY = {
+    "low": {"min": 24, "target": 56, "max": 72},
+    "medium": {"min": 16, "target": 36, "max": 48},
+    "high": {"min": 12, "target": 20, "max": 28},
+}
 
 
 _HIGH_RISK_THRESHOLD = 0.66
@@ -59,6 +60,52 @@ def _motion_label_for_score(score):
     if score >= 0.33:
         return "mixed"
     return "steady"
+
+
+def unit_duration_frames(start_idx, end_idx):
+    return int(max(0, int(end_idx) - int(start_idx) + 1))
+
+
+def is_valid_for_decode(start_idx, end_idx):
+    return bool(unit_duration_frames(start_idx, end_idx) >= int(DEFAULT_MIN_DECODE_FRAMES))
+
+
+def is_valid_for_export(start_idx, end_idx):
+    return bool(unit_duration_frames(start_idx, end_idx) >= int(DEFAULT_MIN_EXPORT_FRAMES))
+
+
+def enforce_contiguous_shared_anchors(units, sequence_start_idx, sequence_end_idx):
+    items = list(units or [])
+    if not items:
+        raise RuntimeError("generation unit planner produced zero units")
+    if int(items[0].get("anchor_start_idx", -1)) != int(sequence_start_idx):
+        raise RuntimeError("generation units must start at the sequence start")
+    if int(items[-1].get("anchor_end_idx", -1)) != int(sequence_end_idx):
+        raise RuntimeError("generation units must end at the sequence end")
+    for idx in range(1, len(items)):
+        prev_end = int(items[idx - 1].get("anchor_end_idx", -1))
+        current_start = int(items[idx].get("anchor_start_idx", -2))
+        if prev_end != current_start:
+            raise RuntimeError(
+                "generation units must use shared anchors: prev_end={} current_start={}".format(prev_end, current_start)
+            )
+    for item in items:
+        start_idx = int(item.get("anchor_start_idx", -1))
+        end_idx = int(item.get("anchor_end_idx", -1))
+        if end_idx < start_idx:
+            raise RuntimeError("generation unit has invalid anchor range: start={} end={}".format(start_idx, end_idx))
+
+
+def span_policy_for_risk_level(risk_level):
+    return dict(_RISK_SPAN_POLICY.get(str(risk_level or "medium"), _RISK_SPAN_POLICY["medium"]))
+
+
+def boundary_choice_cost(start_idx, candidate_idx, policy, candidate_strength):
+    policy = dict(policy or {})
+    target_idx = int(start_idx) + int(policy.get("target", 32) or 32)
+    distance = abs(int(candidate_idx) - int(target_idx))
+    strength_bonus = float(candidate_strength) * 8.0
+    return float(distance) - float(strength_bonus)
 
 
 def _segments_covering_range(rows, start_idx, end_idx):
