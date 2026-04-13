@@ -5,6 +5,7 @@ import math
 import shutil
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -12,13 +13,367 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import list_frames_sorted
+from exphub.common.io import list_frames_sorted, write_json_atomic
 from exphub.common.logging import log_err, log_info, log_prog, log_warn
-from . import _scene_diagnostics as diagnostics
+
+diagnostics = sys.modules[__name__]
+
+
+@dataclass(frozen=True)
+class SceneSplitArtifactPaths:
+    exp_dir: Path
+    root: Path
+    frames_dir: Path
+    report_path: Path
+    calib_path: Path
+    timestamps_path: Path
+
+
+_SEMANTIC_PEAK_THRESHOLD = 0.45
+_MOTION_JUMP_THRESHOLD = 0.20
+_RISK_JUMP_THRESHOLD = 0.18
+_BOUNDARY_STRENGTH_FLOOR = 0.25
 
 
 _BAR_FORMAT = "[BAR] {l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
 FORMAL_SEGMENT_POLICY = "state"
+
+
+def build_paths(exp_dir):
+    exp_dir_path = Path(exp_dir).resolve()
+    root = (exp_dir_path / "input").resolve()
+    return SceneSplitArtifactPaths(
+        exp_dir=exp_dir_path,
+        root=root,
+        frames_dir=(root / "frames").resolve(),
+        report_path=(root / "input_report.json").resolve(),
+        calib_path=(root / ".calib_runtime.txt").resolve(),
+        timestamps_path=(root / ".timestamps_runtime.txt").resolve(),
+    )
+
+
+def relative_to_exp(exp_dir, target_path):
+    exp_dir_path = Path(exp_dir).resolve()
+    target = Path(target_path).resolve()
+    try:
+        return str(target.relative_to(exp_dir_path))
+    except Exception:
+        return str(target)
+
+
+def ensure_layout(paths):
+    paths.root.mkdir(parents=True, exist_ok=True)
+    paths.frames_dir.mkdir(parents=True, exist_ok=True)
+
+
+def remove_stale_scene_split_outputs(paths):
+    stale_paths = [
+        paths.root / "keyframes",
+        paths.root / "visuals",
+        paths.root / "state_overview.png",
+        paths.root / "state_segmentation",
+        paths.root / "signal_extraction",
+        paths.root / "state_segments.json",
+        paths.root / "state_report.json",
+        paths.root / "deploy_schedule.json",
+        paths.calib_path,
+        paths.timestamps_path,
+    ]
+    for stale_path in stale_paths:
+        try:
+            if stale_path.is_symlink() or stale_path.is_file():
+                stale_path.unlink()
+            elif stale_path.is_dir():
+                shutil.rmtree(str(stale_path), ignore_errors=True)
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+
+
+def summarize_keyframes(frames_dir, keyframe_indices, mode_requested):
+    frames_dir_path = Path(frames_dir).resolve()
+    bytes_sum = 0
+    for frame_idx in list(keyframe_indices or []):
+        src_path = frames_dir_path / "{:06d}.png".format(int(frame_idx))
+        if not src_path.is_file():
+            continue
+        try:
+            bytes_sum += int(src_path.stat().st_size)
+        except Exception:
+            pass
+    return str(mode_requested or "metadata_only"), int(bytes_sum)
+
+
+def _as_dict(value):
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _segment_row_map(rows):
+    mapped = {}
+    for idx, raw_item in enumerate(list(rows or [])):
+        row = _as_dict(raw_item)
+        segment_id = _safe_int(row.get("segment_id"), idx)
+        mapped[int(segment_id)] = row
+    return mapped
+
+
+def build_candidate_boundaries_payload(motion_score_payload, semantic_shift_payload, generation_risk_payload):
+    motion_rows = list(_as_dict(motion_score_payload).get("segments") or [])
+    semantic_rows = list(_as_dict(semantic_shift_payload).get("segments") or [])
+    risk_rows = list(_as_dict(generation_risk_payload).get("segments") or [])
+    if not motion_rows or not semantic_rows or not risk_rows:
+        raise RuntimeError("candidate boundary extraction requires motion, semantic, and risk segments")
+    if not (len(motion_rows) == len(semantic_rows) == len(risk_rows)):
+        raise RuntimeError("candidate boundary extraction requires matched signal segment counts")
+
+    boundaries = []
+    for idx in range(1, len(risk_rows)):
+        prev_motion = _as_dict(motion_rows[idx - 1])
+        curr_motion = _as_dict(motion_rows[idx])
+        prev_semantic = _as_dict(semantic_rows[idx - 1])
+        curr_semantic = _as_dict(semantic_rows[idx])
+        prev_risk = _as_dict(risk_rows[idx - 1])
+        curr_risk = _as_dict(risk_rows[idx])
+
+        frame_idx = _safe_int(curr_risk.get("start_frame"), 0)
+        motion_jump = abs(_safe_float(curr_motion.get("motion_score")) - _safe_float(prev_motion.get("motion_score")))
+        semantic_peak = _safe_float(curr_semantic.get("semantic_shift"))
+        risk_jump = abs(_safe_float(curr_risk.get("generation_risk")) - _safe_float(prev_risk.get("generation_risk")))
+        scene_change = bool(curr_semantic.get("scene_label") != prev_semantic.get("scene_label"))
+        risk_level_change = bool(curr_risk.get("risk_level") != prev_risk.get("risk_level"))
+        motion_label_change = bool(curr_motion.get("motion_label") != prev_motion.get("motion_label"))
+        stability_change = 1.0 if (scene_change or risk_level_change or motion_label_change) else 0.0
+        boundary_strength = min(
+            1.0,
+            (0.35 * semantic_peak) + (0.30 * risk_jump) + (0.20 * motion_jump) + (0.15 * stability_change),
+        )
+
+        reasons = []
+        if semantic_peak >= _SEMANTIC_PEAK_THRESHOLD:
+            reasons.append("semantic_peak")
+        if motion_jump >= _MOTION_JUMP_THRESHOLD:
+            reasons.append("motion_jump")
+        if risk_jump >= _RISK_JUMP_THRESHOLD:
+            reasons.append("risk_jump")
+        if scene_change:
+            reasons.append("scene_group_change")
+        if risk_level_change:
+            reasons.append("risk_level_change")
+        if motion_label_change:
+            reasons.append("motion_label_change")
+
+        if not reasons and boundary_strength < _BOUNDARY_STRENGTH_FLOOR:
+            continue
+
+        boundaries.append(
+            {
+                "candidate_id": int(len(boundaries)),
+                "frame_idx": int(frame_idx),
+                "previous_segment_id": _safe_int(prev_risk.get("segment_id"), idx - 1),
+                "next_segment_id": _safe_int(curr_risk.get("segment_id"), idx),
+                "strength": float(boundary_strength),
+                "reasons": reasons,
+                "source_scores": {
+                    "motion_jump": float(motion_jump),
+                    "semantic_peak": float(semantic_peak),
+                    "risk_jump": float(risk_jump),
+                    "stability_change": float(stability_change),
+                },
+            }
+        )
+
+    return {
+        "version": 1,
+        "schema": "candidate_boundaries.v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "stage": "encode",
+        "substage": "candidate_boundaries",
+        "source": "encode.candidate_boundaries.extract",
+        "extractor": "signal_transition_peaks_v1",
+        "criteria": {
+            "semantic_peak_threshold": float(_SEMANTIC_PEAK_THRESHOLD),
+            "motion_jump_threshold": float(_MOTION_JUMP_THRESHOLD),
+            "risk_jump_threshold": float(_RISK_JUMP_THRESHOLD),
+            "boundary_strength_floor": float(_BOUNDARY_STRENGTH_FLOOR),
+        },
+        "boundaries": boundaries,
+        "summary": {
+            "candidate_count": int(len(boundaries)),
+            "sequence_start_idx": _safe_int(_as_dict(risk_rows[0]).get("start_frame"), 0),
+            "sequence_end_idx": _safe_int(_as_dict(risk_rows[-1]).get("end_frame"), 0),
+            "max_strength": float(max([item.get("strength", 0.0) for item in boundaries]) if boundaries else 0.0),
+        },
+    }
+
+
+def build_quality_diagnostics(paths, state_segments_payload, state_report_payload, extraction_meta, keyframes_meta):
+    state_summary = dict(state_segments_payload.get("summary") or {})
+    state_report = dict(state_report_payload.get("state", {}) or {})
+    frame_files, frame_bytes = _dir_file_stats(paths.frames_dir)
+    return {
+        "frames": {
+            "file_count": int(frame_files),
+            "bytes_sum": int(frame_bytes),
+            "timestamps_count": int(extraction_meta.get("timestamps_count", 0) or 0),
+        },
+        "keyframes": {
+            "count": int(keyframes_meta.get("keyframe_count", 0) or 0),
+            "bytes_sum": int(keyframes_meta.get("keyframe_bytes_sum", 0) or 0),
+            "mode": str(keyframes_meta.get("mode_actual", "") or "metadata_only"),
+        },
+        "state_summary": {
+            "segment_count": int(state_summary.get("segment_count", 0) or 0),
+            "high_state_frame_ratio": float(state_summary.get("high_state_frame_ratio", 0.0) or 0.0),
+            "high_risk_interval_count": int(state_summary.get("high_risk_interval_count", 0) or 0),
+        },
+        "quality_notes": {
+            "state_report_embedded": bool(state_report_payload),
+            "diagnostics_mode": str(state_report.get("report_schema_version", "") or "state_report"),
+        },
+    }
+
+
+def build_input_report(
+    paths,
+    inputs_meta,
+    extraction_meta,
+    keyframes_meta,
+    state_segments_payload,
+    state_report_payload,
+    quality_diagnostics,
+    timings,
+):
+    timestamps = list(extraction_meta.get("timestamps") or [])
+    calib = list(extraction_meta.get("calib") or [])
+    state_summary = dict(state_segments_payload.get("summary") or {})
+    return {
+        "version": 1,
+        "schema": "input_report.v1",
+        "stage": "input",
+        "substage": "frames_prepare",
+        "policy": str(keyframes_meta.get("policy_name", "") or ""),
+        "inputs": dict(inputs_meta),
+        "artifacts": {
+            "input_report": relative_to_exp(paths.exp_dir, paths.report_path),
+            "frames_dir": relative_to_exp(paths.exp_dir, paths.frames_dir),
+        },
+        "frames": {
+            "dir": relative_to_exp(paths.exp_dir, paths.frames_dir),
+            "frame_count": int(keyframes_meta.get("frame_count_total", 0) or 0),
+            "frame_count_used": int(keyframes_meta.get("frame_count_used", 0) or 0),
+            "tail_drop": int(keyframes_meta.get("tail_drop", 0) or 0),
+        },
+        "keyframes": {
+            "count": int(keyframes_meta.get("keyframe_count", 0) or 0),
+            "indices": list(keyframes_meta.get("keyframe_indices") or []),
+            "uniform_base_indices": list(keyframes_meta.get("uniform_base_indices") or []),
+            "bytes_sum": int(keyframes_meta.get("keyframe_bytes_sum", 0) or 0),
+            "summary": dict(keyframes_meta.get("summary") or {}),
+        },
+        "state_segments": dict(state_segments_payload),
+        "state_report": dict(state_report_payload),
+        "camera": {
+            "calib": list(calib),
+            "timestamps": list(timestamps),
+        },
+        "extraction": {
+            "timestamps_count": int(extraction_meta.get("timestamps_count", 0) or 0),
+            "frame_count": int(extraction_meta.get("frame_count", 0) or 0),
+        },
+        "quality_diagnostics": dict(quality_diagnostics or {}),
+        "summary": {
+            "frame_count": int(keyframes_meta.get("frame_count_total", 0) or 0),
+            "frame_count_used": int(keyframes_meta.get("frame_count_used", 0) or 0),
+            "keyframe_count": int(keyframes_meta.get("keyframe_count", 0) or 0),
+            "state_segment_count": int(state_summary.get("segment_count", 0) or 0),
+            "high_state_frame_ratio": float(state_summary.get("high_state_frame_ratio", 0.0) or 0.0),
+            "high_risk_interval_count": int(state_summary.get("high_risk_interval_count", 0) or 0),
+        },
+        "timings_sec": dict(timings or {}),
+    }
+
+
+def write_input_report(paths, report):
+    write_json_atomic(paths.report_path, report, indent=2)
+    return paths.report_path
+
+
+def _dir_file_stats(dir_path):
+    path = Path(dir_path).resolve()
+    if not path.is_dir():
+        return 0, 0
+    file_count = 0
+    bytes_sum = 0
+    for child in sorted(path.iterdir()):
+        if not child.is_file():
+            continue
+        file_count += 1
+        try:
+            bytes_sum += int(child.stat().st_size)
+        except Exception:
+            pass
+    return int(file_count), int(bytes_sum)
+
+
+def materialize_scene_split_visuals(paths, detector_result):
+    raw_source_path = None
+    if isinstance(detector_result, dict):
+        raw_source_path = detector_result.get("state_overview_path")
+    if not raw_source_path:
+        return {}
+    source_path = Path(raw_source_path).resolve()
+    if not source_path.is_file():
+        return {}
+    handoff_path = Path(paths.root).resolve() / "state_overview.png"
+    try:
+        if source_path != handoff_path:
+            shutil.copy2(str(source_path), str(handoff_path))
+        else:
+            handoff_path.touch()
+    except Exception:
+        return {}
+    return {
+        "state_overview_path": handoff_path,
+        "source_path": source_path,
+        "handoff_path": handoff_path,
+    }
+
+
+def write_encode_segmentation_overview(output_path, input_report, encode_plan, source_path=None):
+    output_path = Path(output_path).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if source_path is not None:
+        source_path = Path(source_path).resolve()
+        if not source_path.is_file():
+            raise FileNotFoundError("encode overview source not found: {}".format(source_path))
+        if source_path != output_path:
+            shutil.copy2(str(source_path), str(output_path))
+        else:
+            output_path.touch()
+        return output_path
+
+    raise RuntimeError(
+        "encode overview source path missing from detector_result; "
+        "the overview must be produced from the real frame_rows upstream"
+    )
+    return output_path
 
 
 def require_formal_segment_policy(policy_name):

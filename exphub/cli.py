@@ -15,7 +15,7 @@ from .cleanup import normalize_keep_level
 from .config import ConfigError, get_platform_config
 from .common.logging import set_cli_log_level
 from .meta import sanitize_token
-from .encode.boundaries_detect import FORMAL_SEGMENT_POLICY, require_formal_segment_policy
+from .encode.boundaries_build import FORMAL_SEGMENT_POLICY, require_formal_segment_policy
 from .runner import build_runtime, run_runtime
 from .runner import RunError
 

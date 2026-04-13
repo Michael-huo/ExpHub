@@ -12,9 +12,68 @@ if str(_REPO_ROOT) not in sys.path:
 
 from exphub.common.io import ensure_file, read_json_dict, write_json_atomic
 from exphub.common.logging import log_info
-from ._base_prompt import build_base_prompt_payload
-from ._motion_prompt import build_motion_prompt_payload
 from ._scene_prompt import build_scene_prompt_payload
+
+
+INVARIANT_BASE_POSITIVE_LINES = [
+    "Maintain first-person viewpoint continuity across the full sequence.",
+    "Preserve stable scene geometry, perspective, and camera alignment.",
+    "Keep exposure and white balance stable over time.",
+    "Preserve temporal coherence without flicker or drifting structure.",
+]
+
+INVARIANT_BASE_NEGATIVE_ITEMS = [
+    "flickering",
+    "warping",
+    "ghosting",
+    "geometry drift",
+    "inconsistent perspective",
+    "exposure instability",
+    "white balance shifts",
+    "rolling shutter wobble",
+    "texture swimming",
+    "motion tearing",
+    "double edges",
+    "heavy blur",
+    "low quality",
+]
+
+DEFAULT_MOTION_PROMPT = {
+    "motion_prompt": "steady egomotion, smooth viewpoint progression.",
+    "negative_prompt_delta": "",
+    "continuity_emphasis": "balanced",
+}
+
+MOTION_PROMPT_BY_STATE = {
+    "low_state": {
+        "motion_prompt": "steady egomotion, smooth viewpoint progression.",
+        "negative_prompt_delta": "",
+        "continuity_emphasis": "steady",
+    },
+    "high_state": {
+        "motion_prompt": "elevated motion change, preserve transition continuity and camera stability.",
+        "negative_prompt_delta": "abrupt perspective jumps, transition discontinuity, motion tearing",
+        "continuity_emphasis": "reinforced",
+    },
+}
+
+MOTION_PROMPT_BY_PLANNER_LABEL = {
+    "steady": {
+        "motion_prompt": "steady egomotion, smooth viewpoint progression.",
+        "negative_prompt_delta": "",
+        "continuity_emphasis": "steady",
+    },
+    "mixed": {
+        "motion_prompt": "moderate motion change, keep transitions coherent and camera movement readable.",
+        "negative_prompt_delta": "jerky motion, inconsistent transition timing",
+        "continuity_emphasis": "balanced",
+    },
+    "dynamic": {
+        "motion_prompt": "dynamic motion change, preserve transition continuity and camera stability.",
+        "negative_prompt_delta": "abrupt perspective jumps, transition discontinuity, motion tearing",
+        "continuity_emphasis": "reinforced",
+    },
+}
 
 
 def _as_dict(value):
@@ -74,6 +133,233 @@ def _count_by_key(items, key):
         name = _collapse_ws(item.get(key, "")) or "unknown"
         counts[name] = int(counts.get(name, 0) or 0) + 1
     return counts
+
+
+def _collapse_ws(text):
+    return " ".join(str(text or "").strip().split()).strip()
+
+
+def get_base_prompt():
+    return _collapse_ws(" ".join([str(item).strip() for item in INVARIANT_BASE_POSITIVE_LINES if str(item).strip()]))
+
+
+def get_negative_prompt():
+    return ", ".join([str(item).strip() for item in INVARIANT_BASE_NEGATIVE_ITEMS if str(item).strip()]).strip()
+
+
+def build_base_prompt_payload():
+    return {
+        "version": 1,
+        "schema": "base_prompt.v1",
+        "base_prompt": get_base_prompt(),
+        "negative_prompt": get_negative_prompt(),
+        "source": "encode.text_gen.base_prompt",
+        "geometry_constraints_included": True,
+    }
+
+
+def _motion_payload_for_state_label(state_label):
+    motion_cfg = dict(DEFAULT_MOTION_PROMPT)
+    motion_cfg.update(_as_dict(MOTION_PROMPT_BY_STATE.get(str(state_label))))
+    return motion_cfg
+
+
+def build_motion_prompt_payload(segment_inputs):
+    state_payload = _as_dict(segment_inputs.get("state_segments_payload"))
+    state_rows = list(state_payload.get("segments") or [])
+    if not state_rows:
+        raise RuntimeError("segment manifest has no state segments for motion prompts")
+
+    segments = []
+    for idx, raw_item in enumerate(state_rows):
+        item = _as_dict(raw_item)
+        state_label = str(item.get("state_label", "state_unlabeled") or "state_unlabeled")
+        motion_cfg = _motion_payload_for_state_label(state_label)
+        state_segment_id = int(item.get("segment_id", idx) or idx)
+        segments.append(
+            {
+                "state_segment_id": int(state_segment_id),
+                "state_label": str(state_label),
+                "start_frame": int(item.get("start_frame", 0) or 0),
+                "end_frame": int(item.get("end_frame", 0) or 0),
+                "motion_prompt": str(motion_cfg.get("motion_prompt", "") or ""),
+                "negative_prompt_delta": str(motion_cfg.get("negative_prompt_delta", "") or ""),
+                "continuity_emphasis": str(motion_cfg.get("continuity_emphasis", "balanced") or "balanced"),
+                "motion_prompt_source": "scene_split.state_segments",
+            }
+        )
+
+    return {
+        "version": 1,
+        "schema": "motion_prompt_manifest.v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "source": "encode.text_gen.motion_prompt",
+        "motion_prompt_mode": "state_label_mapping_v1",
+        "segments": segments,
+        "summary": {
+            "state_segment_count": int(len(segments)),
+        },
+    }
+
+
+def resolve_motion_prompt_from_planner_label(motion_label):
+    payload = dict(DEFAULT_MOTION_PROMPT)
+    payload.update(_as_dict(MOTION_PROMPT_BY_PLANNER_LABEL.get(str(motion_label or "").strip().lower())))
+    return payload
+
+
+def _join_prompt_parts(*parts):
+    values = [_collapse_ws(part) for part in list(parts or [])]
+    values = [item for item in values if item]
+    return _collapse_ws(" ".join(values))
+
+
+def _join_negative_prompt(base_negative_prompt, negative_delta):
+    base = _collapse_ws(base_negative_prompt)
+    delta = _collapse_ws(negative_delta)
+    if not base:
+        return delta
+    if not delta:
+        return base
+    return "{}, {}".format(base, delta)
+
+
+def _labeled_prompt_clause(label, text):
+    body = _collapse_ws(text).rstrip(" ,;:.")
+    if not body:
+        return ""
+    return "{}: {}.".format(str(label), body)
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _overlap_frames(start_a, end_a, start_b, end_b):
+    left = max(int(start_a), int(start_b))
+    right = min(int(end_a), int(end_b))
+    return max(0, int(right) - int(left) + 1)
+
+
+def _segment_prompt_map(prompt_manifest):
+    mapping = {}
+    for idx, raw_item in enumerate(list(_as_dict(prompt_manifest).get("segments") or [])):
+        item = _as_dict(raw_item)
+        mapping[_safe_int(item.get("state_segment_id"), idx)] = item
+    return mapping
+
+
+def _resolve_scene_prompt(span_units, prompt_segment_map):
+    weight_by_prompt = {}
+    for unit in list(span_units or []):
+        unit_start = _safe_int(unit.get("anchor_start_idx"), 0)
+        unit_end = _safe_int(unit.get("anchor_end_idx"), 0)
+        for segment_id in list(unit.get("source_segment_ids") or []):
+            prompt_item = _as_dict(prompt_segment_map.get(_safe_int(segment_id), {}))
+            if not prompt_item:
+                continue
+            scene_prompt = _collapse_ws(prompt_item.get("scene_prompt", ""))
+            if not scene_prompt:
+                continue
+            overlap = _overlap_frames(
+                unit_start,
+                unit_end,
+                _safe_int(prompt_item.get("start_frame"), 0),
+                _safe_int(prompt_item.get("end_frame"), 0),
+            )
+            if overlap <= 0:
+                overlap = max(
+                    1,
+                    _safe_int(prompt_item.get("end_frame"), 0) - _safe_int(prompt_item.get("start_frame"), 0) + 1,
+                )
+            weight_by_prompt[scene_prompt] = int(weight_by_prompt.get(scene_prompt, 0) + overlap)
+    if not weight_by_prompt:
+        return ""
+    return max(weight_by_prompt.items(), key=lambda item: (int(item[1]), item[0]))[0]
+
+
+def build_prompt_spans_payload(prompt_manifest, generation_units_payload):
+    prompt_payload = _as_dict(prompt_manifest)
+    units_payload = _as_dict(generation_units_payload)
+    units = list(units_payload.get("units") or [])
+    if not units:
+        raise RuntimeError("prompt spans require generation units")
+
+    base_prompt = str(prompt_payload.get("base_prompt", "") or "")
+    negative_prompt = str(prompt_payload.get("negative_prompt", "") or "")
+    prompt_segment_map = _segment_prompt_map(prompt_payload)
+
+    grouped = {}
+    for raw_unit in units:
+        unit = _as_dict(raw_unit)
+        prompt_ref = _as_dict(unit.get("prompt_ref"))
+        span_id = str(prompt_ref.get("span_id", "") or "")
+        if not span_id:
+            raise RuntimeError("generation unit missing prompt_ref.span_id")
+        grouped.setdefault(span_id, []).append(unit)
+
+    ordered_span_ids = sorted(grouped.keys())
+    spans = []
+    for span_id in ordered_span_ids:
+        span_units = list(grouped.get(span_id) or [])
+        motion_label = str(span_units[0].get("motion_label", "steady") or "steady")
+        scene_label = str(span_units[0].get("scene_label", "scene_group_000") or "scene_group_000")
+        motion_prompt_payload = resolve_motion_prompt_from_planner_label(motion_label)
+        scene_prompt = _resolve_scene_prompt(span_units, prompt_segment_map)
+        resolved_prompt = _join_prompt_parts(
+            base_prompt,
+            _labeled_prompt_clause("Scene", scene_prompt),
+            _labeled_prompt_clause("Motion", motion_prompt_payload.get("motion_prompt", "")),
+        )
+        spans.append(
+            {
+                "span_id": str(span_id),
+                "scene_label": str(scene_label),
+                "motion_label": str(motion_label),
+                "anchor_start_idx": int(min([_safe_int(unit.get("anchor_start_idx"), 0) for unit in span_units])),
+                "anchor_end_idx": int(max([_safe_int(unit.get("anchor_end_idx"), 0) for unit in span_units])),
+                "unit_ids": [str(unit.get("unit_id", "") or "") for unit in span_units],
+                "source_segment_ids": sorted(
+                    set([int(segment_id) for unit in span_units for segment_id in list(unit.get("source_segment_ids") or [])])
+                ),
+                "shared_unit_count": int(len(span_units)),
+                "base_prompt": str(base_prompt),
+                "scene_prompt": str(scene_prompt),
+                "scene_prompt_source": "prompt_manifest.scene_prompt_majority_overlap",
+                "motion_prompt": str(motion_prompt_payload.get("motion_prompt", "") or ""),
+                "motion_prompt_source": "planner.motion_label_mapping",
+                "negative_prompt_delta": str(motion_prompt_payload.get("negative_prompt_delta", "") or ""),
+                "continuity_emphasis": str(motion_prompt_payload.get("continuity_emphasis", "balanced") or "balanced"),
+                "resolved_prompt": str(resolved_prompt),
+                "negative_prompt": _join_negative_prompt(negative_prompt, motion_prompt_payload.get("negative_prompt_delta", "")),
+            }
+        )
+
+    return {
+        "version": 1,
+        "schema": "prompt_spans.v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "stage": "encode",
+        "substage": "text_gen",
+        "source": "encode.text_gen.prompt_spans",
+        "prompt_structure": "base_scene_motion",
+        "grouping_policy": "contiguous_generation_units_share_prompt_when_prompt_ref.span_id_matches",
+        "base_prompt": str(base_prompt),
+        "negative_prompt": str(negative_prompt),
+        "spans": spans,
+        "summary": {
+            "span_count": int(len(spans)),
+            "shared_prompt_unit_count": int(sum([int(item.get("shared_unit_count", 0) or 0) for item in spans])),
+            "multi_unit_span_count": int(len([item for item in spans if int(item.get("shared_unit_count", 0) or 0) > 1])),
+        },
+        "artifact_paths": {
+            "encode_plan": "encode/encode_plan.json",
+            "prompt_spans": "encode/prompt_spans.json",
+        },
+    }
 
 
 def load_input_text_inputs(input_report_path):
