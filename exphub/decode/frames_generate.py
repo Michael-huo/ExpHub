@@ -350,7 +350,7 @@ def build_image_gen_report(exp_dir, infer_dir, runs_plan_obj, prompt_resolution,
         },
         "artifact_contract": {
             "formal_files": ["decode_plan.json", REPORT_FILENAME],
-            "formal_prompt_inputs": ["encode/encode_plan.json", "encode/prompt_spans.json", "input/input_report.json"],
+            "formal_prompt_inputs": ["prepare/prepare_result.json", "prepare/frames/", "encode/segment_manifest.json", "encode/encode_plan.json", "encode/prompt_spans.json"],
             "transitional_files": [],
         },
     }

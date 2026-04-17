@@ -100,8 +100,11 @@ def _load_runs_plan(plan_path):
     return payload
 
 
-def _load_input_report(input_dir):
-    report_path = ensure_file(Path(input_dir).resolve() / "input_report.json", "input report")
+def _load_input_report(input_dir, segment_manifest=None):
+    if segment_manifest:
+        report_path = ensure_file(segment_manifest, "segment manifest")
+    else:
+        report_path = ensure_file(Path(input_dir).resolve() / "input_report.json", "input report")
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise RuntimeError("invalid input report payload: {}".format(report_path))
@@ -252,7 +255,7 @@ def _run_formal_mainline(args):
     out_frames.mkdir(parents=True, exist_ok=True)
 
     segments = list(plan_obj.get("segments") or [])
-    input_report, input_report_path = _load_input_report(input_dir)
+    input_report, input_report_path = _load_input_report(input_dir, getattr(args, "segment_manifest", ""))
     camera_meta = dict(input_report.get("camera") or {})
     source_timestamp_values = _float_list(camera_meta.get("timestamps"))
     source_calib_values = _float_list(camera_meta.get("calib"))
@@ -542,7 +545,9 @@ def run(runtime):
         "--exp_dir",
         str(runtime.paths.exp_dir),
         "--segment_dir",
-        str(runtime.paths.input_dir),
+        str(runtime.paths.prepare_dir),
+        "--segment_manifest",
+        str(runtime.paths.input_report_path),
         "--runs_root",
         str(runtime.paths.decode_runs_dir),
         "--plan",
@@ -571,6 +576,7 @@ def _build_arg_parser():
     parser.add_argument("--run-formal-mainline", action="store_true")
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--segment_dir", required=True)
+    parser.add_argument("--segment_manifest", default="")
     parser.add_argument("--runs_root", required=True)
     parser.add_argument("--plan", required=True)
     parser.add_argument("--out_dir", required=True)

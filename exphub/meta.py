@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Tuple
 StageName = str
 KeepLevel = str
 
-STAGE_ORDER: Tuple[StageName, ...] = ("encode", "decode", "eval")
+STAGE_ORDER: Tuple[StageName, ...] = ("prepare", "encode", "decode", "eval")
 
 
 def sanitize_token(text: str, max_len: int = 64) -> str:
@@ -66,31 +66,26 @@ class ExperimentSpec:
     dataset: str
     sequence: str
     tag: str
-    w: int
-    h: int
-    start_sec: str
+    start: str
     dur: str
     fps: float
     kf_gap_input: int
     exp_root_override: Optional[Path] = None
 
     @staticmethod
-    def build_exp_name(tag, w, h, start_sec, dur, fps, kf_gap) -> str:
-        start_tag = dot_to_p(canon_num_str(start_sec))
+    def build_exp_name(tag, start, dur, fps) -> str:
+        start_tag = dot_to_p(canon_num_str(start))
         dur_tag = dot_to_p(canon_num_str(dur))
         fps_f = float(fps)
         if fps_f.is_integer():
             fps_tag = str(int(round(fps_f)))
         else:
-            fps_tag = canon_num_str(fps)
-        return "{tag}_{w}x{h}_t{start}s_dur{dur}s_fps{fps}_gap{kf_gap}".format(
+            fps_tag = dot_to_p(canon_num_str(fps))
+        return "{tag}_fps{fps}_dur{dur}_start{start}".format(
             tag=tag,
-            w=int(w),
-            h=int(h),
-            start=start_tag,
-            dur=dur_tag,
             fps=fps_tag,
-            kf_gap=int(kf_gap),
+            dur=dur_tag,
+            start=start_tag,
         )
 
     @staticmethod
@@ -114,12 +109,9 @@ class ExperimentSpec:
     def exp_name(self) -> str:
         return self.build_exp_name(
             tag=self.tag,
-            w=self.w,
-            h=self.h,
-            start_sec=self.start_sec,
+            start=self.start,
             dur=self.dur,
             fps=self.fps,
-            kf_gap=self.kf_gap,
         )
 
     @property

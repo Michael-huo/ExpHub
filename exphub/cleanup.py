@@ -51,6 +51,7 @@ def _prune_dir_keep_names(root: Path, d: Path, keep_names) -> None:
 
 def _cleanup_min(exp_dir: Path) -> None:
     heavy_dirs = [
+        exp_dir / "prepare" / "frames",
         exp_dir / "input" / "frames",
         exp_dir / "decode" / "runs",
         exp_dir / "decode" / "frames",
@@ -59,12 +60,21 @@ def _cleanup_min(exp_dir: Path) -> None:
     for d in heavy_dirs:
         _rm_if_exists(exp_dir, d)
 
-    root_keep = {"input", "encode", "decode", "eval", "export", "logs"}
+    root_keep = {"prepare", "input", "encode", "decode", "eval", "export", "logs"}
     if exp_dir.is_dir():
         for child in list(exp_dir.iterdir()):
-            if child.name in root_keep or child.name == "exp_meta.json":
+            if child.name in root_keep or child.name in ("run_meta.json", "exp_meta.json"):
                 continue
             _rm_if_exists(exp_dir, child)
+
+    _prune_dir_keep_names(
+        exp_dir,
+        exp_dir / "prepare",
+        {
+            "prepare_result.json",
+            "frames",
+        },
+    )
 
     _prune_dir_keep_names(
         exp_dir,
@@ -79,6 +89,7 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir / "encode",
         {
             "encode_plan.json",
+            "segment_manifest.json",
             "prompt_spans.json",
             "encode_report.json",
             "encode_segmentation_overview.png",

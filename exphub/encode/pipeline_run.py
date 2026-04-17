@@ -4,9 +4,11 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from exphub.common.io import ensure_dir, ensure_file, read_json_dict, write_json_atomic
 
+from . import boundaries_build as scene_split_diagnostics
 from .boundaries_build import build_candidate_boundaries_payload, write_encode_segmentation_overview
 from .plan_build import build_generation_units_payload
 from .prompts_build import build_prompt_spans_payload
@@ -31,53 +33,6 @@ def _relative_to_exp(exp_dir, target_path):
         return str(target)
 
 
-def _build_scene_split_cmd(runtime):
-    dataset = runtime.dataset()
-    segment_python = runtime.phase_python("segment")
-    dist_args = []
-    if dataset.dist:
-        dist_args = ["--dist"] + [str(item) for item in dataset.dist]
-
-    return [
-        str(segment_python),
-        "-m",
-        "exphub.encode.boundaries_build",
-        "--run-formal-mainline",
-        "--exp_dir",
-        str(runtime.paths.exp_dir),
-        "--bag",
-        str(dataset.bag),
-        "--topic",
-        dataset.topic,
-        "--duration",
-        str(runtime.spec.dur),
-        "--fps",
-        runtime.fps_arg,
-        "--kf_gap",
-        str(runtime.spec.kf_gap),
-        "--keyframes_mode",
-        str(runtime.args.keyframes_mode),
-        "--segment_policy",
-        str(runtime.args.segment_policy),
-        "--start_idx",
-        str(runtime.args.start_idx),
-        "--start_sec",
-        str(runtime.spec.start_sec),
-        "--width",
-        str(runtime.spec.w),
-        "--height",
-        str(runtime.spec.h),
-        "--fx",
-        str(dataset.fx),
-        "--fy",
-        str(dataset.fy),
-        "--cx",
-        str(dataset.cx),
-        "--cy",
-        str(dataset.cy),
-    ] + dist_args
-
-
 def _build_text_gen_cmd(runtime, temp_prompt_manifest_path):
     cmd = [
         "-m",
@@ -89,6 +44,8 @@ def _build_text_gen_cmd(runtime, temp_prompt_manifest_path):
         str(runtime.paths.input_report_path),
         "--out_path",
         str(temp_prompt_manifest_path),
+        "--frames_dir",
+        str(runtime.paths.prepare_frames_dir),
     ]
     prompt_model_dir = str(runtime.args.prompt_model_dir or "").strip()
     if prompt_model_dir:
@@ -193,21 +150,164 @@ def _build_encode_report(runtime, input_report, encode_plan, prompt_spans, promp
     }
 
 
+def _write_prepare_timestamps(runtime, prepare_result):
+    frame_index_map = dict(_as_dict(prepare_result).get("frame_index_map") or {})
+    timestamps = list(
+        frame_index_map.get("prepared_to_rel_time_sec")
+        or frame_index_map.get("prepared_to_time_sec")
+        or []
+    )
+    if not timestamps:
+        raise RuntimeError("prepare_result missing frame_index_map prepared relative timestamps")
+    timestamp_path = (runtime.paths.encode_dir / ".prepare_timestamps_runtime.txt").resolve()
+    timestamp_path.parent.mkdir(parents=True, exist_ok=True)
+    with timestamp_path.open("w", encoding="utf-8") as handle:
+        for value in timestamps:
+            handle.write("{:.9f}\n".format(float(value)))
+    return timestamp_path
+
+
+def _prepare_calib_values(prepare_result):
+    intrinsics = dict(_as_dict(prepare_result).get("normalized_intrinsics") or {})
+    values = [
+        float(intrinsics["fx"]),
+        float(intrinsics["fy"]),
+        float(intrinsics["cx"]),
+        float(intrinsics["cy"]),
+    ]
+    values.extend([float(item) for item in list(intrinsics.get("dist") or [])])
+    return values
+
+
+def _build_segment_manifest_paths(runtime):
+    return SimpleNamespace(
+        exp_dir=runtime.paths.exp_dir,
+        root=runtime.paths.encode_dir,
+        frames_dir=runtime.paths.prepare_frames_dir,
+        report_path=runtime.paths.input_report_path,
+        calib_path=(runtime.paths.encode_dir / ".prepare_calib_runtime.txt").resolve(),
+        timestamps_path=(runtime.paths.encode_dir / ".prepare_timestamps_runtime.txt").resolve(),
+    )
+
+
+def _prepare_inputs_meta(runtime, prepare_result):
+    normalized_resolution = dict(_as_dict(prepare_result).get("normalized_resolution") or {})
+    time_range = dict(_as_dict(prepare_result).get("time_range") or {})
+    return {
+        "bag": str(prepare_result.get("bag_path", "")),
+        "topic": str(prepare_result.get("topic", "")),
+        "fps": float(prepare_result.get("target_fps", runtime.spec.fps) or runtime.spec.fps),
+        "duration": float(time_range.get("dur_sec", runtime.spec.dur) or runtime.spec.dur),
+        "start_sec": float(time_range.get("start_sec", runtime.spec.start) or runtime.spec.start),
+        "width": int(normalized_resolution.get("width", 0) or 0),
+        "height": int(normalized_resolution.get("height", 0) or 0),
+        "prepare_result": _relative_to_exp(runtime.paths.exp_dir, runtime.paths.prepare_result_path),
+        "frames_dir": _relative_to_exp(runtime.paths.exp_dir, runtime.paths.prepare_frames_dir),
+    }
+
+
+def _run_state_detector(runtime, paths, timestamps_path):
+    detector_result_path = (runtime.paths.encode_dir / "state_detector_result.json").resolve()
+    runtime.step_runner.run_env_python(
+        [
+            "-m",
+            "exphub.encode._state_detector",
+            "--run-mainline",
+            "--segment_dir",
+            str(paths.root),
+            "--frames_dir",
+            str(runtime.paths.prepare_frames_dir),
+            "--timestamps_path",
+            str(timestamps_path),
+            "--kf_gap",
+            str(int(runtime.spec.kf_gap)),
+            "--out_path",
+            str(detector_result_path),
+        ],
+        phase_name="segment",
+        log_name="encode.log",
+        cwd=runtime.exphub_root,
+    )
+    ensure_file(detector_result_path, "state detector result")
+    detector_result = read_json_dict(detector_result_path)
+    if not detector_result:
+        raise RuntimeError("invalid state detector result: {}".format(detector_result_path))
+    return detector_result
+
+
 def run_scene_split(runtime):
     from exphub.encode.boundaries_build import require_formal_segment_policy
 
     require_formal_segment_policy(runtime.args.segment_policy)
-    runtime.ensure_clean_exp_dir()
+    ensure_file(runtime.paths.prepare_result_path, "prepare result")
+    ensure_dir(runtime.paths.prepare_frames_dir, "prepare frames dir")
     runtime.write_meta_snapshot()
 
-    runtime.step_runner.run_ros(
-        _build_scene_split_cmd(runtime),
-        log_name="encode.log",
-        cwd=runtime.exphub_root,
-    )
+    runtime.remove_in_exp(runtime.paths.encode_dir)
+    runtime.paths.encode_dir.mkdir(parents=True, exist_ok=True)
+    prepare_result = runtime.prepare_result()
+    paths = _build_segment_manifest_paths(runtime)
+    timestamps_path = _write_prepare_timestamps(runtime, prepare_result)
 
-    ensure_dir(runtime.paths.input_frames_dir, "input frames dir")
-    ensure_file(runtime.paths.input_report_path, "input report")
+    total_started = time.time()
+    detector_started = time.time()
+    detector_result = _run_state_detector(runtime, paths, timestamps_path)
+    detect_sec = float(time.time() - detector_started)
+
+    materialize_started = time.time()
+    actual_mode, keyframe_bytes_sum = scene_split_diagnostics.summarize_keyframes(
+        frames_dir=runtime.paths.prepare_frames_dir,
+        keyframe_indices=detector_result["plan"]["keyframe_indices"],
+        mode_requested=runtime.args.keyframes_mode,
+    )
+    keyframes_meta = scene_split_diagnostics._build_keyframes_meta(
+        detector_result["plan"],
+        kf_gap=int(runtime.spec.kf_gap),
+        keyframes_mode=runtime.args.keyframes_mode,
+        actual_mode=actual_mode,
+        keyframe_bytes_sum=keyframe_bytes_sum,
+    )
+    scene_split_diagnostics.materialize_scene_split_visuals(paths, detector_result)
+    materialize_sec = float(time.time() - materialize_started)
+
+    state_segments_payload = dict(detector_result["state_segments_payload"])
+    state_report_payload = dict(detector_result["state_report_payload"])
+    extraction_meta = {
+        "frame_count": int(prepare_result.get("num_frames", 0) or 0),
+        "timestamps_count": int(len(list((prepare_result.get("frame_index_map") or {}).get("prepared_to_time_sec") or []))),
+        "timestamps": list((prepare_result.get("frame_index_map") or {}).get("prepared_to_time_sec") or []),
+        "calib": _prepare_calib_values(prepare_result),
+        "source": "prepare_result",
+    }
+    quality_diagnostics = scene_split_diagnostics.build_quality_diagnostics(
+        paths=paths,
+        state_segments_payload=state_segments_payload,
+        state_report_payload=state_report_payload,
+        extraction_meta=extraction_meta,
+        keyframes_meta=keyframes_meta,
+    )
+    report = scene_split_diagnostics.build_input_report(
+        paths=paths,
+        inputs_meta=_prepare_inputs_meta(runtime, prepare_result),
+        keyframes_meta=keyframes_meta,
+        extraction_meta=extraction_meta,
+        state_segments_payload=state_segments_payload,
+        state_report_payload=state_report_payload,
+        quality_diagnostics=quality_diagnostics,
+        timings={
+            "prepare_reuse": 0.0,
+            "state_mainline": float(detect_sec),
+            "materialize": float(materialize_sec),
+            "total": float(time.time() - total_started),
+        },
+    )
+    report["schema"] = "segment_manifest.v1"
+    report["source"] = "encode.segment_manifest.from_prepare"
+    report["prepare_result"] = dict(prepare_result)
+    report["artifacts"]["prepare_result"] = _relative_to_exp(runtime.paths.exp_dir, runtime.paths.prepare_result_path)
+    scene_split_diagnostics.write_input_report(paths, report)
+
+    ensure_file(runtime.paths.input_report_path, "segment manifest")
     return runtime.paths.input_report_path
 
 
@@ -286,7 +386,7 @@ def run_generation_unit_planner(runtime):
         runtime.paths.encode_segmentation_overview_path,
         input_report=input_report,
         encode_plan=encode_plan,
-        source_path=runtime.paths.input_dir / "state_overview.png",
+        source_path=runtime.paths.encode_dir / "state_overview.png",
     )
     write_json_atomic(
         runtime.paths.encode_report_path,

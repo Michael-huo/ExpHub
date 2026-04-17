@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from exphub.cleanup import apply_keep_level
-from exphub.common.io import remove_path, write_json_atomic
+from exphub.common.io import read_json_dict, remove_path, write_json_atomic
 from exphub.common.logging import log_info, log_step, log_warn, runtime_info
 from exphub.common.paths import ExperimentPaths
 from exphub.common.subprocess import RunError, RunnerConfig, StepRunner, detect_conda_base, resolve_phase_python
@@ -18,6 +18,7 @@ from .decode import pipeline_run as decode_pipeline
 from .encode import pipeline_run as encode_pipeline
 from .eval import pipeline_run as eval_pipeline
 from .export import pipeline_run as export_pipeline
+from .prepare import prepare as prepare_pipeline
 
 
 @dataclass
@@ -40,6 +41,7 @@ class PipelineRuntime:
     step_times: Dict[str, float] = field(default_factory=dict)
     _dataset_resolved: Optional[object] = None
     _phase_python_cache: Dict[str, str] = field(default_factory=dict)
+    _prepare_result_cache: Optional[Dict[str, object]] = None
 
     @property
     def exphub_root(self) -> Path:
@@ -48,6 +50,10 @@ class PipelineRuntime:
     @property
     def fps_arg(self) -> str:
         return self.spec.fps_text
+
+    @property
+    def start_arg(self) -> str:
+        return str(self.spec.start)
 
     def dataset(self):
         if self._dataset_resolved is None:
@@ -79,6 +85,16 @@ class PipelineRuntime:
             remove_path(self.paths.exp_dir)
         self.paths.exp_dir.mkdir(parents=True, exist_ok=True)
 
+    def prepare_result(self) -> Dict[str, object]:
+        if self._prepare_result_cache is None:
+            if not self.paths.prepare_result_path.is_file():
+                raise RuntimeError("prepare_result.json not found: {}".format(self.paths.prepare_result_path))
+            payload = read_json_dict(self.paths.prepare_result_path)
+            if not payload:
+                raise RuntimeError("invalid prepare_result.json: {}".format(self.paths.prepare_result_path))
+            self._prepare_result_cache = payload
+        return dict(self._prepare_result_cache)
+
     def assert_under_exp(self, path) -> None:
         base = self.paths.exp_dir.resolve()
         target = Path(path).resolve()
@@ -92,46 +108,32 @@ class PipelineRuntime:
         remove_path(path)
 
     def write_meta_snapshot(self) -> None:
-        dataset = self.dataset()
+        prepare_result_path = self.paths.prepare_result_path
+        prepare_result = read_json_dict(prepare_result_path) if prepare_result_path.is_file() else {}
         meta = {
+            "mode": str(self.args.mode),
+            "step": str(self.args.step),
             "dataset": self.spec.dataset,
             "sequence": self.spec.sequence,
             "tag": self.spec.tag,
-            "exp_name": self.spec.exp_name,
-            "exp_dir": str(self.paths.exp_dir),
-            "inputs": {
-                "bag": str(dataset.bag),
-                "topic": dataset.topic,
-                "intrinsics": {
-                    "fx": dataset.fx,
-                    "fy": dataset.fy,
-                    "cx": dataset.cx,
-                    "cy": dataset.cy,
-                    "dist": dataset.dist,
-                },
-            },
+            "fps": self.spec.fps,
+            "dur": self.spec.dur,
+            "start": self.spec.start,
+            "run_id": self.spec.exp_name,
+            "artifact_root": str(self.paths.exp_dir),
+            "prepare_result_path": str(prepare_result_path),
             "params": {
-                "w": self.spec.w,
-                "h": self.spec.h,
                 "fps": self.spec.fps,
                 "dur": self.spec.dur,
-                "start_sec": self.spec.start_sec,
-                "start_idx": self.args.start_idx,
+                "start": self.spec.start,
                 "kf_gap": self.spec.kf_gap,
                 "segment_policy": self.args.segment_policy,
-                "base_idx": self.args.base_idx,
                 "seed_base": self.args.seed_base,
                 "gpus": self.args.gpus,
                 "planner": "generation_units",
                 "prompt_strategy": "prompt_spans",
-                "workflow": "encode -> decode -> eval -> export",
+                "workflow": "prepare -> encode -> decode -> eval",
                 "prompt_model_dir": self.args.prompt_model_dir,
-                "export_target_fps": getattr(self.args, "export_target_fps", None),
-                "export_target_num_frames": getattr(self.args, "export_target_num_frames", None),
-                "export_target_width": getattr(self.args, "export_target_width", None),
-                "export_target_height": getattr(self.args, "export_target_height", None),
-                "export_harvest_sec": getattr(self.args, "export_harvest_sec", None),
-                "export_stride_sec": getattr(self.args, "export_stride_sec", None),
                 "infer_backend": self.args.infer_backend,
                 "infer_model_dir": self.args.infer_model_dir,
                 "droid_seq": self.args.droid_seq,
@@ -139,20 +141,28 @@ class PipelineRuntime:
                 "keep_level": self.args.keep_level,
             },
             "paths": {
-                "input_dir": str(self.paths.input_dir),
+                "prepare_dir": str(self.paths.prepare_dir),
+                "prepare_frames_dir": str(self.paths.prepare_frames_dir),
                 "encode_dir": str(self.paths.encode_dir),
                 "decode_dir": str(self.paths.decode_dir),
                 "eval_dir": str(self.paths.eval_dir),
-                "export_root": str(self.paths.default_export_root),
-                "segment_python": self.phase_python("segment"),
+                "logs_dir": str(self.paths.logs_dir),
+                "segment_python": get_phase_python_config("segment"),
                 "videox_root": self.args.videox_root,
                 "droid_repo": self.args.droid_repo,
+            },
+            "prepare": {
+                "num_frames": prepare_result.get("num_frames"),
+                "normalized_resolution": prepare_result.get("normalized_resolution"),
+                "normalized_intrinsics": prepare_result.get("normalized_intrinsics"),
+                "legal_grid": prepare_result.get("legal_grid"),
             },
         }
         write_json_atomic(self.paths.exp_meta_path, meta, indent=2)
 
 
 _SERVICE_BY_STAGE = {
+    "prepare": prepare_pipeline,
     "encode": encode_pipeline,
     "decode": decode_pipeline,
     "eval": eval_pipeline,
@@ -186,7 +196,7 @@ def _format_out_hint(exp_dir: Path, out_hint) -> str:
 
 def _run_step(runtime: PipelineRuntime, step_name: str, service_module):
     started = time.time()
-    log_step("{} start mode={}".format(step_name, runtime.args.mode))
+    log_step("{} start mode={} step={}".format(step_name, runtime.args.mode, runtime.args.step))
     try:
         out_hint = service_module.run(runtime)
     except RunError as exc:
@@ -268,9 +278,7 @@ def build_runtime(args) -> PipelineRuntime:
         dataset=args.dataset,
         sequence=args.sequence,
         tag=args.tag,
-        w=args.w,
-        h=args.h,
-        start_sec=args.start_sec,
+        start=args.start,
         dur=args.dur,
         fps=args.fps,
         kf_gap_input=args.kf_gap,
@@ -297,7 +305,7 @@ def build_runtime(args) -> PipelineRuntime:
     elif args.no_viz:
         viz_enable = False
     else:
-        viz_enable = args.mode == "eval"
+        viz_enable = args.step == "eval"
 
     runtime = PipelineRuntime(
         args=args,
@@ -327,23 +335,17 @@ def _validate_scripts(runtime: PipelineRuntime) -> None:
 
 def run_runtime(runtime: PipelineRuntime) -> OrchestrationResult:
     _validate_scripts(runtime)
-    mode = str(runtime.args.mode or "all").strip().lower()
-    if mode == "doctor":
-        _doctor(runtime)
-        return OrchestrationResult(
-            mode=mode,
-            exp_dir=runtime.paths.exp_dir,
-            step_times=dict(runtime.step_times),
-            result_root=runtime.paths.exp_dir,
-        )
+    mode = str(runtime.args.mode or "").strip().lower()
+    step = str(runtime.args.step or "").strip().lower()
+    if mode != "infer":
+        raise RuntimeError("only infer mode is connected in this pass: {}".format(mode))
 
-    if mode != "export":
-        runtime.dataset()
+    runtime.dataset()
 
-    if mode in ("all", "workflow"):
+    if step == "all":
         stages = list(STAGE_ORDER)
     else:
-        stages = [mode]
+        stages = [step]
 
     last_out_hint = runtime.paths.exp_dir
     for stage_name in stages:
@@ -352,8 +354,7 @@ def run_runtime(runtime: PipelineRuntime) -> OrchestrationResult:
             raise RuntimeError("unsupported stage mode: {}".format(stage_name))
         last_out_hint = _run_step(runtime, stage_name, service_module) or last_out_hint
 
-    if mode != "export":
-        apply_keep_level(runtime.paths.exp_dir, runtime.args.keep_level)
+    apply_keep_level(runtime.paths.exp_dir, runtime.args.keep_level)
     runtime_info("DONE.")
     return OrchestrationResult(
         mode=mode,
