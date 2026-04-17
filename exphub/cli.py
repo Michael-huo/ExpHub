@@ -83,13 +83,13 @@ def _ensure(p: Path, kind: str = "file") -> None:
 
 def _print_experiment_summary(
     mode: str,
+    step: str,
     dataset: str,
     sequence: str,
     tag: str,
-    w: int,
-    h: int,
     fps_text: str,
     dur_text: str,
+    start_text: str,
     gpus: int,
     keep_level: str,
     exp_dir: Path,
@@ -97,15 +97,16 @@ def _print_experiment_summary(
     sep = "=" * 70
     rows = [
         ("Mode", mode),
+        ("Step", step),
         ("Dataset", dataset),
         ("Sequence", sequence),
         ("Tag", tag),
-        ("Resolution", "{}x{}".format(w, h)),
         ("FPS", fps_text),
         ("Duration", dur_text),
+        ("Start", start_text),
         ("GPUs", str(gpus)),
         ("Keep Level", keep_level),
-        ("Exp Dir", str(exp_dir)),
+        ("Artifact Root", str(exp_dir)),
     ]
     key_w = max(len(k) for k, _ in rows)
     _info(sep)
@@ -496,7 +497,7 @@ def _print_export_report(export_root: Path, step_times: Dict[str, float]) -> Non
 
 
 def main(argv: Optional[List[str]] = None) -> None:
-    ap = argparse.ArgumentParser(prog="python -m exphub", add_help=True)
+    ap = argparse.ArgumentParser(prog="python -m exphub.cli", add_help=True)
 
     try:
         _cfg = get_platform_config()
@@ -510,9 +511,15 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     ap.add_argument(
         "--mode",
-        default="all",
-        choices=["all", "workflow", "encode", "decode", "eval", "export", "doctor"],
-        help="pipeline stage",
+        required=True,
+        choices=["infer", "train"],
+        help="execution mode",
+    )
+    ap.add_argument(
+        "--step",
+        required=True,
+        choices=["prepare", "encode", "decode", "eval", "all"],
+        help="pipeline step",
     )
     ap.add_argument("--exphub", default=os.environ.get("EXPHUB", ""), help="ExpHub root (default: $EXPHUB or cwd)")
 
@@ -520,21 +527,16 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--sequence", required=True)
     ap.add_argument("--tag", required=True)
 
-    ap.add_argument("--w", type=int, default=832)
-    ap.add_argument("--h", type=int, default=480)
-    ap.add_argument("--fps", type=float, default=24.0)
-    ap.add_argument("--dur", type=str, default="3")
-    ap.add_argument("--start_sec", type=str, default="0")
-    ap.add_argument("--start_idx", type=int, default=-1)
+    ap.add_argument("--fps", type=int, required=True)
+    ap.add_argument("--dur", type=str, required=True)
+    ap.add_argument("--start", type=str, required=True)
 
-    ap.add_argument("--kf_gap", type=int, default=0, help="0 means auto")
     ap.add_argument("--keyframes_mode", default="symlink", choices=["symlink", "hardlink", "copy"], help="how to materialize segment/keyframes")
     ap.add_argument(
         "--segment_policy",
         default=FORMAL_SEGMENT_POLICY,
         help="segment policy for the current workflow; only 'state' is accepted",
     )
-    ap.add_argument("--base_idx", type=int, default=0)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
     ap.add_argument("--gpus", type=int, default=2)
 
@@ -551,21 +553,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="override infer backend model dir or model id",
     )
 
-    ap.add_argument("--datasets_cfg", default="", help="datasets.json path (default: <exphub>/config/datasets.json)")
-    ap.add_argument("--exp_root", default="", help="override experiments root (default: <exphub>/experiments/<dataset>/<sequence>)")
-    ap.add_argument("--export_root", default="", help="override export root (default: <exphub>/exports/<scope>/<focus>/<tag>)")
-    ap.add_argument("--export_scope", default="single", choices=["single", "dataset", "focus"])
-    ap.add_argument("--export_focus", default="ncd_scand", choices=["ncd_scand", "ncd", "scand"])
-    ap.add_argument("--export_target_fps", type=int, default=24)
-    ap.add_argument("--export_target_num_frames", type=int, default=73)
-    ap.add_argument("--export_target_width", type=int, default=832)
-    ap.add_argument("--export_target_height", type=int, default=480)
-    ap.add_argument("--export_harvest_sec", type=float, default=0.0)
-    ap.add_argument("--export_stride_sec", type=float, default=0.0)
-    ap.add_argument("--export_max_bags", type=int, default=0)
-    ap.add_argument("--export_max_bags_per_dataset", type=int, default=0)
-    ap.add_argument("--export_max_clips_per_bag", type=int, default=0)
-    ap.add_argument("--export_split_seed", type=int, default=13)
+    ap.add_argument("--exp_root", default="", help="override artifact root (default: <exphub>/artifacts/infer/<dataset>/<sequence>)")
 
     ap.add_argument(
         "--keep_level",
@@ -601,6 +589,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--no_viz", action="store_true")
 
     args = ap.parse_args(argv)
+    if args.mode == "train":
+        _die("train mode is not connected in this pass")
+    args.datasets_cfg = ""
+    args.kf_gap = 0
+    args.start_idx = -1
+    args.base_idx = 0
     global _CLI_LOG_LEVEL
     _CLI_LOG_LEVEL = str(args.log_level or "info").strip().lower()
     set_cli_log_level(_CLI_LOG_LEVEL)
@@ -621,13 +615,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     if _CLI_LOG_LEVEL != "quiet":
         _print_experiment_summary(
             mode=args.mode,
+            step=args.step,
             dataset=runtime.spec.dataset,
             sequence=runtime.spec.sequence,
             tag=runtime.spec.tag,
-            w=int(args.w),
-            h=int(args.h),
             fps_text=runtime.fps_arg,
             dur_text=str(args.dur),
+            start_text=str(args.start),
             gpus=int(args.gpus),
             keep_level=str(args.keep_level),
             exp_dir=runtime.paths.exp_dir,
@@ -635,10 +629,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     try:
         result = run_runtime(runtime)
-        mode_norm = str(args.mode or "").strip().lower()
-        if mode_norm == "export":
-            _print_export_report(result.result_root, result.step_times)
-        elif mode_norm != "doctor":
+        step_norm = str(args.step or "").strip().lower()
+        if step_norm != "prepare":
             _print_experiment_report(result.exp_dir, result.step_times)
     except (ConfigError, RunError, RuntimeError) as e:
         _die(str(e))

@@ -239,15 +239,26 @@ def _candidate_exp_roots(path_candidates):
 
 def _resolve_eval_exp_root(path_candidates):
     for candidate in _candidate_exp_roots(path_candidates):
-        if (candidate / "input" / "input_report.json").is_file():
+        if (candidate / "encode" / "segment_manifest.json").is_file() or (candidate / "input" / "input_report.json").is_file():
             return candidate
     return None
+
+
+def _segment_manifest_path(exp_root):
+    root = Path(exp_root).resolve()
+    for candidate in (
+        root / "encode" / "segment_manifest.json",
+        root / "input" / "input_report.json",
+    ):
+        if candidate.is_file():
+            return candidate.resolve()
+    return root / "encode" / "segment_manifest.json"
 
 
 def _segment_timestamp_map(exp_root):
     if exp_root is None:
         return {}
-    manifest_path = Path(exp_root).resolve() / "input" / "input_report.json"
+    manifest_path = _segment_manifest_path(exp_root)
     manifest_obj = read_json(manifest_path) if manifest_path.is_file() else {}
     if not isinstance(manifest_obj, dict):
         manifest_obj = {}
@@ -281,7 +292,7 @@ def _load_formal_keyframe_context(config, metrics_obj):
         return empty_context
 
     exp_root = Path(exp_root).resolve()
-    manifest_path = exp_root / "input" / "input_report.json"
+    manifest_path = _segment_manifest_path(exp_root)
     manifest_obj = read_json(manifest_path) if manifest_path.is_file() else {}
     if not isinstance(manifest_obj, dict):
         manifest_obj = {}

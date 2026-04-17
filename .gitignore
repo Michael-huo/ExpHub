@@ -20,6 +20,7 @@ __pycache__/
 # Experiments (禁止提交)
 
 experiments/
+artifacts/
 
 
 

@@ -490,7 +490,7 @@ def _run_formal_mainline(args):
     exp_dir = Path(args.exp_dir).resolve()
     input_report_path = ensure_file(args.input_report, "input report")
     out_path = Path(args.out_path).resolve()
-    frames_dir = (exp_dir / "input" / "frames").resolve()
+    frames_dir = Path(args.frames_dir).resolve() if str(args.frames_dir or "").strip() else (exp_dir / "input" / "frames").resolve()
     started = time.time()
 
     segment_inputs = load_input_text_inputs(input_report_path)
@@ -518,6 +518,7 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--input_report", required=True)
     parser.add_argument("--out_path", required=True)
+    parser.add_argument("--frames_dir", default="")
     parser.add_argument("--prompt_model_dir", default="")
     return parser
 

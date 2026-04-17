@@ -99,8 +99,26 @@ def _read_stage_report(path_obj, warnings):
     return payload
 
 
+def _segment_manifest_path(exp_dir):
+    exp = Path(exp_dir).resolve()
+    for candidate in (
+        exp / "encode" / "segment_manifest.json",
+        exp / "input" / "input_report.json",
+    ):
+        if candidate.is_file():
+            return candidate.resolve()
+    return exp / "encode" / "segment_manifest.json"
+
+
+def _prepare_frames_dir(exp_dir):
+    exp = Path(exp_dir).resolve()
+    if (exp / "prepare" / "frames").is_dir():
+        return exp / "prepare" / "frames"
+    return exp / "input" / "frames"
+
+
 def _build_compression_summary(exp_dir, segment_report, prompt_report, warnings):
-    segment_frames_dir = Path(exp_dir).resolve() / "input" / "frames"
+    segment_frames_dir = _prepare_frames_dir(exp_dir)
     ori_frames, ori_bytes = _dir_png_stats(segment_frames_dir)
 
     keyframes_frames = _pick_int(
@@ -118,7 +136,7 @@ def _build_compression_summary(exp_dir, segment_report, prompt_report, warnings)
         warnings.append(msg)
         log_warn(msg)
     if ori_frames <= 0:
-        msg = "input/frames unavailable for eval compression scan; ori_frames and ori_bytes set to null"
+        msg = "prepare/frames unavailable for eval compression scan; ori_frames and ori_bytes set to null"
         warnings.append(msg)
         log_warn(msg)
         ori_frames = None
@@ -198,7 +216,8 @@ def _build_stage_table(exp_dir, stage_reports, traj_metrics, inputs, eval_dir):
             "status": _stage_status("success" if stage_reports["input"] else "", "success" if stage_reports["encode"] else ""),
             "created_at": _stage_created_at(stage_reports["input"], stage_reports["encode"]),
             "artifacts": {
-                "input_report": _relative_path(exp_dir, Path(exp_dir) / "input" / "input_report.json"),
+                "segment_manifest": _relative_path(exp_dir, _segment_manifest_path(exp_dir)),
+                "prepare_result": _relative_path(exp_dir, Path(exp_dir) / "prepare" / "prepare_result.json"),
                 "encode_plan": _relative_path(exp_dir, Path(exp_dir) / "encode" / "encode_plan.json"),
                 "prompt_spans": _relative_path(exp_dir, Path(exp_dir) / "encode" / "prompt_spans.json"),
                 "encode_report": _relative_path(exp_dir, Path(exp_dir) / "encode" / "encode_report.json"),
@@ -251,7 +270,7 @@ def run_diagnostics_substage(args):
 
     warnings = []
     stage_reports = {
-        "input": _read_stage_report(exp_dir / "input" / "input_report.json", warnings),
+        "input": _read_stage_report(_segment_manifest_path(exp_dir), warnings),
         "encode": _read_stage_report(exp_dir / "encode" / "encode_report.json", warnings),
         "decode": _read_stage_report(Path(args.infer_report), warnings),
         "merge": _read_stage_report(Path(args.merge_report), warnings),
@@ -288,7 +307,8 @@ def run_diagnostics_substage(args):
         "shared_anchor_count": int(source_summary["shared_anchor_count"]),
         "workflow": "encode -> decode -> eval",
         "inputs": {
-            "input_report": _relative_path(exp_dir, exp_dir / "input" / "input_report.json"),
+            "segment_manifest": _relative_path(exp_dir, _segment_manifest_path(exp_dir)),
+            "prepare_result": _relative_path(exp_dir, exp_dir / "prepare" / "prepare_result.json"),
             "encode_report": _relative_path(exp_dir, exp_dir / "encode" / "encode_report.json"),
             "decode_report": _relative_path(exp_dir, Path(args.infer_report).resolve()),
             "decode_merge_report": _relative_path(exp_dir, Path(args.merge_report).resolve()),

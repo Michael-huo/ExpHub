@@ -29,7 +29,7 @@ class ExperimentPaths:
     def exp_root(self) -> Path:
         if self.exp_root_override is not None:
             return self.exp_root_override
-        return self.exphub_root / "experiments" / self.dataset / self.sequence
+        return self.exphub_root / "artifacts" / "infer" / self.dataset / self.sequence
 
     @property
     def exp_dir(self) -> Path:
@@ -37,7 +37,23 @@ class ExperimentPaths:
 
     @property
     def input_dir(self) -> Path:
-        return self.exp_dir / "input"
+        return self.prepare_dir
+
+    @property
+    def prepare_dir(self) -> Path:
+        return self.exp_dir / "prepare"
+
+    @property
+    def prepare_frames_dir(self) -> Path:
+        return self.prepare_dir / "frames"
+
+    @property
+    def prepare_result_path(self) -> Path:
+        return self.prepare_dir / "prepare_result.json"
+
+    @property
+    def segment_manifest_path(self) -> Path:
+        return self.encode_dir / "segment_manifest.json"
 
     @property
     def encode_dir(self) -> Path:
@@ -65,15 +81,19 @@ class ExperimentPaths:
 
     @property
     def exp_meta_path(self) -> Path:
-        return self.exp_dir / "exp_meta.json"
+        return self.run_meta_path
+
+    @property
+    def run_meta_path(self) -> Path:
+        return self.exp_dir / "run_meta.json"
 
     @property
     def input_report_path(self) -> Path:
-        return self.input_dir / "input_report.json"
+        return self.segment_manifest_path
 
     @property
     def input_frames_dir(self) -> Path:
-        return self.input_dir / "frames"
+        return self.prepare_frames_dir
 
     @property
     def encode_plan_path(self) -> Path:

@@ -272,6 +272,8 @@ def _resolve_input_paths(root_dir):
     frames_dir = ensure_dir(root / "frames", "slam input frames")
     manifest_candidates = [
         root / "input_report.json",
+        root / "prepare_result.json",
+        root.parent / "encode" / "segment_manifest.json",
         root.parent / "input" / "input_report.json",
     ]
     manifest_path = None
@@ -285,6 +287,22 @@ def _resolve_input_paths(root_dir):
     camera_obj = dict(manifest_obj.get("camera") or {})
     calib_source = list(camera_obj.get("calib") or [])
     timestamps_source = list(camera_obj.get("timestamps") or [])
+    if not calib_source:
+        intrinsics = dict(manifest_obj.get("normalized_intrinsics") or {})
+        if intrinsics:
+            calib_source = [
+                intrinsics.get("fx"),
+                intrinsics.get("fy"),
+                intrinsics.get("cx"),
+                intrinsics.get("cy"),
+            ] + list(intrinsics.get("dist") or [])
+    if not timestamps_source:
+        frame_index_map = dict(manifest_obj.get("frame_index_map") or {})
+        timestamps_source = list(
+            frame_index_map.get("prepared_to_rel_time_sec")
+            or frame_index_map.get("prepared_to_time_sec")
+            or []
+        )
     return frames_dir, calib_source, timestamps_source, manifest_path
 
 

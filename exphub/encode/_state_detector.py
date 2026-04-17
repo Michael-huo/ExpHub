@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
+from typing import Any
 
 from exphub.common.io import list_frames_sorted
 
@@ -191,3 +193,44 @@ def run_state_mainline(segment_dir, frames_dir, timestamps_path, kf_gap):
         "state_segments_payload": dict(policy_result.get("state_segments_payload") or {}),
         "state_report_payload": dict(policy_result.get("state_report_payload") or {}),
     }
+
+
+def _json_ready(value: Any):
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    return value
+
+
+def _build_arg_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-mainline", action="store_true")
+    parser.add_argument("--segment_dir", required=True)
+    parser.add_argument("--frames_dir", required=True)
+    parser.add_argument("--timestamps_path", required=True)
+    parser.add_argument("--kf_gap", type=int, required=True)
+    parser.add_argument("--out_path", required=True)
+    return parser
+
+
+def main(argv=None):
+    from exphub.common.io import write_json_atomic
+
+    args = _build_arg_parser().parse_args(argv)
+    if not args.run_mainline:
+        raise SystemExit("state detector helper requires --run-mainline")
+    result = run_state_mainline(
+        segment_dir=args.segment_dir,
+        frames_dir=args.frames_dir,
+        timestamps_path=args.timestamps_path,
+        kf_gap=int(args.kf_gap),
+    )
+    write_json_atomic(args.out_path, _json_ready(result), indent=2)
+    return result
+
+
+if __name__ == "__main__":
+    main()
