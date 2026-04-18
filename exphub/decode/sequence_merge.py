@@ -547,7 +547,7 @@ def run(runtime):
         "--segment_dir",
         str(runtime.paths.prepare_dir),
         "--segment_manifest",
-        str(runtime.paths.input_report_path),
+        str(runtime.paths.decode_manifest_path),
         "--runs_root",
         str(runtime.paths.decode_runs_dir),
         "--plan",

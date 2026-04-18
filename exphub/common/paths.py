@@ -56,6 +56,14 @@ class ExperimentPaths:
         return self.encode_dir / "segment_manifest.json"
 
     @property
+    def encode_legacy_manifest_path(self) -> Path:
+        return self.encode_dir / "legacy_segment_manifest.json"
+
+    @property
+    def decode_manifest_path(self) -> Path:
+        return self.encode_legacy_manifest_path
+
+    @property
     def encode_dir(self) -> Path:
         return self.exp_dir / "encode"
 

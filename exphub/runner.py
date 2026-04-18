@@ -15,7 +15,7 @@ from exphub.config import get_phase_python_config, load_datasets_cfg, resolve_da
 from exphub.meta import ExperimentSpec, STAGE_ORDER
 
 from .decode import pipeline_run as decode_pipeline
-from .encode import pipeline_run as encode_pipeline
+from .encode import encode as encode_pipeline
 from .eval import pipeline_run as eval_pipeline
 from .export import pipeline_run as export_pipeline
 from .prepare import prepare as prepare_pipeline
@@ -147,7 +147,7 @@ class PipelineRuntime:
                 "decode_dir": str(self.paths.decode_dir),
                 "eval_dir": str(self.paths.eval_dir),
                 "logs_dir": str(self.paths.logs_dir),
-                "segment_python": get_phase_python_config("segment"),
+                "semantic_openclip_python": get_phase_python_config("semantic_openclip"),
                 "videox_root": self.args.videox_root,
                 "droid_repo": self.args.droid_repo,
             },
@@ -323,7 +323,7 @@ def build_runtime(args) -> PipelineRuntime:
 
 def _validate_scripts(runtime: PipelineRuntime) -> None:
     required = [
-        (runtime.exphub_root / "exphub" / "encode" / "pipeline_run.py").resolve(),
+        (runtime.exphub_root / "exphub" / "encode" / "encode.py").resolve(),
         (runtime.exphub_root / "exphub" / "decode" / "pipeline_run.py").resolve(),
         (runtime.exphub_root / "exphub" / "eval" / "pipeline_run.py").resolve(),
         (runtime.exphub_root / "exphub" / "export" / "pipeline_run.py").resolve(),

@@ -32,7 +32,7 @@ REPORT_FILENAME = "decode_report.json"
 def run(runtime):
     decode_root = runtime.paths.decode_dir
     ensure_dir(runtime.paths.input_frames_dir, "input frames dir")
-    ensure_file(runtime.paths.input_report_path, "input report")
+    ensure_file(runtime.paths.decode_manifest_path, "decode manifest")
     ensure_file(runtime.paths.encode_plan_path, "encode plan")
     ensure_file(runtime.paths.prompt_spans_path, "prompt spans")
 
@@ -49,7 +49,7 @@ def run(runtime):
         "--frames_dir",
         str(runtime.paths.input_frames_dir),
         "--segment_manifest",
-        str(runtime.paths.input_report_path),
+        str(runtime.paths.decode_manifest_path),
         "--videox_root",
         str(runtime.args.videox_root),
         "--gpus",
@@ -350,7 +350,7 @@ def build_image_gen_report(exp_dir, infer_dir, runs_plan_obj, prompt_resolution,
         },
         "artifact_contract": {
             "formal_files": ["decode_plan.json", REPORT_FILENAME],
-            "formal_prompt_inputs": ["prepare/prepare_result.json", "prepare/frames/", "encode/segment_manifest.json", "encode/encode_plan.json", "encode/prompt_spans.json"],
+            "formal_prompt_inputs": ["prepare/prepare_result.json", "prepare/frames/", "encode/legacy_segment_manifest.json", "encode/encode_plan.json", "encode/prompt_spans.json"],
             "transitional_files": [],
         },
     }

@@ -273,6 +273,7 @@ def _resolve_input_paths(root_dir):
     manifest_candidates = [
         root / "input_report.json",
         root / "prepare_result.json",
+        root.parent / "encode" / "legacy_segment_manifest.json",
         root.parent / "encode" / "segment_manifest.json",
         root.parent / "input" / "input_report.json",
     ]

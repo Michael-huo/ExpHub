@@ -89,9 +89,16 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir / "encode",
         {
             "encode_plan.json",
+            "legacy_segment_manifest.json",
             "segment_manifest.json",
             "prompt_spans.json",
             "encode_report.json",
+            "motion_segments.json",
+            "semantic_anchors.json",
+            "generation_units.json",
+            "prompts.json",
+            "encode_result.json",
+            "encode_overview.png",
             "encode_segmentation_overview.png",
         },
     )
