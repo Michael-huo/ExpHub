@@ -35,11 +35,29 @@ def _collapse_ws(value):
 
 
 def _semantic_prompt(unit, semantic_anchors):
-    reason = str(_as_dict(unit.get("anchor_span")).get("end_reason", "") or "")
-    if reason == "semantic_gain":
-        return "visible scene content changes around the unit boundary; preserve object layout while adapting details."
-    if reason == "duration_fallback":
-        return "scene remains broadly continuous; maintain visual consistency across the legal duration boundary."
+    span = _as_dict(unit.get("anchor_span"))
+    start_reason = str(span.get("start_reason", "") or "")
+    end_reason = str(span.get("end_reason", "") or "")
+    motion_label = str(unit.get("motion_label", "mixed") or "mixed")
+    duration_sec = float(unit.get("duration_sec", 0.0) or 0.0)
+    if end_reason == "semantic_gain" or start_reason == "semantic_gain":
+        return _collapse_ws(
+            "scene content changes near the unit boundary; preserve object layout, road geometry, and viewpoint continuity during {}.".format(
+                motion_label.replace("_", " ")
+            )
+        )
+    if end_reason == "duration_fallback" or start_reason == "duration_fallback":
+        return _collapse_ws(
+            "scene content remains broadly continuous over {:.1f} seconds; maintain stable surroundings and consistent details.".format(
+                duration_sec
+            )
+        )
+    if motion_label in ("left_turn", "right_turn"):
+        return "scene content is continuous; preserve building edges, trees, and ground plane alignment through the turn."
+    if motion_label == "forward":
+        return "scene content is continuous; preserve depth cues, path geometry, and stable foreground-background layout."
+    if motion_label == "stop":
+        return "scene content is nearly static; preserve fine texture, lighting, and camera pose stability."
     return "scene content is continuous; preserve stable surroundings and viewpoint context."
 
 

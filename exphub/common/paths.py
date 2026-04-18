@@ -52,10 +52,6 @@ class ExperimentPaths:
         return self.prepare_dir / "prepare_result.json"
 
     @property
-    def segment_manifest_path(self) -> Path:
-        return self.encode_dir / "segment_manifest.json"
-
-    @property
     def encode_legacy_manifest_path(self) -> Path:
         return self.encode_dir / "legacy_segment_manifest.json"
 
@@ -96,10 +92,6 @@ class ExperimentPaths:
         return self.exp_dir / "run_meta.json"
 
     @property
-    def input_report_path(self) -> Path:
-        return self.segment_manifest_path
-
-    @property
     def input_frames_dir(self) -> Path:
         return self.prepare_frames_dir
 
@@ -114,10 +106,6 @@ class ExperimentPaths:
     @property
     def encode_report_path(self) -> Path:
         return self.encode_dir / "encode_report.json"
-
-    @property
-    def encode_segmentation_overview_path(self) -> Path:
-        return self.encode_dir / "encode_segmentation_overview.png"
 
     @property
     def decode_runs_dir(self) -> Path:

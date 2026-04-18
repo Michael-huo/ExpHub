@@ -11,8 +11,9 @@ from exphub.config import load_datasets_cfg, resolve_dataset
 from exphub.common.io import read_json_dict, remove_path
 from exphub.common.logging import log_info, log_prog, log_warn
 from exphub.meta import canon_num_str, sanitize_token
-from exphub.encode import pipeline_run as encode_pipeline
+from exphub.encode import encode as encode_pipeline
 from exphub.export import clips_build, dataset_write, report_build
+from exphub.prepare import prepare as prepare_pipeline
 
 
 FOCUS_DATASETS = {
@@ -186,7 +187,8 @@ def _make_encode_args(runtime, target, export_root, clip_plan, profile):
 
     cache_root = (Path(export_root).resolve() / "cache" / target["dataset"] / target["sequence"]).resolve()
     return SimpleNamespace(
-        mode="encode",
+        mode="infer",
+        step="encode",
         exphub=str(runtime.exphub_root),
         datasets_cfg=str(runtime.cfg_path),
         dataset=str(target["dataset"]),
@@ -196,7 +198,7 @@ def _make_encode_args(runtime, target, export_root, clip_plan, profile):
         h=int(profile["target_height"]),
         fps=float(profile["target_fps"]),
         dur=str(canon_num_str(profile["harvest_sec"])),
-        start_sec=str(clip_plan["start_sec"]),
+        start=str(canon_num_str(clip_plan["start_sec"])),
         start_idx=-1,
         kf_gap=0,
         keyframes_mode=str(runtime.args.keyframes_mode),
@@ -240,6 +242,7 @@ def _run_encode_for_clip(runtime, target, export_root, clip_plan, profile):
 
     encode_args = _make_encode_args(runtime, target, export_root, clip_plan, profile)
     encode_runtime = build_runtime(encode_args)
+    prepare_pipeline.run(encode_runtime)
     encode_pipeline.run(encode_runtime)
     return encode_runtime.paths.exp_dir.resolve()
 
@@ -335,7 +338,7 @@ def run(runtime):
             exp_dir = None
             try:
                 exp_dir = _run_encode_for_clip(runtime, target, export_root, clip_plan, profile)
-                segment_manifest_path = (exp_dir / "input" / "input_report.json").resolve()
+                segment_manifest_path = (exp_dir / "encode" / "legacy_segment_manifest.json").resolve()
                 prompt_manifest_path = (exp_dir / "encode" / "prompt_spans.json").resolve()
                 segment_manifest = read_json_dict(segment_manifest_path)
                 prompt_manifest = read_json_dict(prompt_manifest_path)

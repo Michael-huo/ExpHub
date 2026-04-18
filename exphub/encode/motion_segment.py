@@ -101,6 +101,46 @@ def _aggregate_features(rows):
     return {key: float(np.mean([float(row.get(key, 0.0)) for row in rows])) for key in keys}
 
 
+def _smooth_window_labels(windows):
+    items = [dict(item) for item in list(windows or [])]
+    if len(items) < 3:
+        return items
+
+    labels = [str(item.get("motion_label", "mixed") or "mixed") for item in items]
+    confidences = [float(_as_dict(item.get("scores")).get("confidence", 0.0) or 0.0) for item in items]
+
+    smoothed = list(labels)
+    for idx in range(1, len(items) - 1):
+        left = labels[idx - 1]
+        current = labels[idx]
+        right = labels[idx + 1]
+        if left == right and current != left and confidences[idx] < 0.78:
+            smoothed[idx] = left
+
+    for idx in range(1, len(items) - 1):
+        votes = {}
+        for j in (idx - 1, idx, idx + 1):
+            label = smoothed[j]
+            weight = confidences[j]
+            if label == "mixed":
+                weight *= 0.65
+            votes[label] = float(votes.get(label, 0.0) + weight)
+        best_label, best_score = max(votes.items(), key=lambda pair: (pair[1], pair[0]))
+        current_score = float(votes.get(smoothed[idx], 0.0))
+        if best_label != smoothed[idx] and best_score >= current_score + 0.22 and confidences[idx] < 0.84:
+            smoothed[idx] = best_label
+
+    for idx, label in enumerate(smoothed):
+        if label == labels[idx]:
+            continue
+        items[idx]["motion_label"] = str(label)
+        scores = dict(_as_dict(items[idx].get("scores")))
+        scores["confidence"] = float(min(0.86, max(float(scores.get("confidence", 0.0) or 0.0), 0.68)))
+        scores["stabilized_from"] = str(labels[idx])
+        items[idx]["scores"] = scores
+    return items
+
+
 def build_motion_segments(prepare_result, frames_dir, out_path=None):
     started = time.time()
     prepare = _as_dict(prepare_result)
@@ -152,6 +192,7 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
                 },
             }
         )
+    windows = _smooth_window_labels(windows)
 
     segments = []
     current = None

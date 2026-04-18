@@ -124,7 +124,6 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
                         "span_id": "span_{:04d}".format(int(len(units))),
                     },
                     "scene_label": "motion_segment_{:04d}".format(int(seg_index)),
-                    "risk_level": "",
                     "is_valid_for_decode": True,
                     "is_valid_for_export": True,
                     "source_segment_ids": [int(seg_index)],
