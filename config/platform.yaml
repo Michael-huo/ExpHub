@@ -8,6 +8,9 @@ environments:
     segment:
       python: "/home/hx/anaconda3/envs/segmentclip/bin/python"
       conda: "segmentclip"
+    semantic_openclip:
+      python: "/home/hx/anaconda3/envs/segmentclip/bin/python"
+      conda: "segmentclip"
     prompt:
       python: "/home/hx/anaconda3/envs/vlm_prompt/bin/python"
       conda: "vlm_prompt"

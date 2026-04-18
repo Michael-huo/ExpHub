@@ -102,7 +102,7 @@ def run(runtime):
     ensure_dir(runtime.paths.prepare_dir, "prepare dir")
     ensure_dir(runtime.paths.decode_dir, "decode dir")
     ensure_file(runtime.paths.prepare_result_path, "prepare result")
-    ensure_file(runtime.paths.input_report_path, "segment manifest")
+    ensure_file(runtime.paths.decode_manifest_path, "decode manifest")
     ensure_file(runtime.paths.encode_report_path, "encode report")
     ensure_file(runtime.paths.decode_plan_path, "decode plan")
     ensure_file(runtime.paths.decode_report_path, "decode report")

@@ -239,7 +239,11 @@ def _candidate_exp_roots(path_candidates):
 
 def _resolve_eval_exp_root(path_candidates):
     for candidate in _candidate_exp_roots(path_candidates):
-        if (candidate / "encode" / "segment_manifest.json").is_file() or (candidate / "input" / "input_report.json").is_file():
+        if (
+            (candidate / "encode" / "legacy_segment_manifest.json").is_file()
+            or (candidate / "encode" / "segment_manifest.json").is_file()
+            or (candidate / "input" / "input_report.json").is_file()
+        ):
             return candidate
     return None
 
@@ -247,12 +251,13 @@ def _resolve_eval_exp_root(path_candidates):
 def _segment_manifest_path(exp_root):
     root = Path(exp_root).resolve()
     for candidate in (
+        root / "encode" / "legacy_segment_manifest.json",
         root / "encode" / "segment_manifest.json",
         root / "input" / "input_report.json",
     ):
         if candidate.is_file():
             return candidate.resolve()
-    return root / "encode" / "segment_manifest.json"
+    return root / "encode" / "legacy_segment_manifest.json"
 
 
 def _segment_timestamp_map(exp_root):

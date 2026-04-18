@@ -15,9 +15,11 @@ from .cleanup import normalize_keep_level
 from .config import ConfigError, get_platform_config
 from .common.logging import set_cli_log_level
 from .meta import sanitize_token
-from .encode.boundaries_build import FORMAL_SEGMENT_POLICY, require_formal_segment_policy
 from .runner import build_runtime, run_runtime
 from .runner import RunError
+
+
+FORMAL_ENCODE_POLICY = "encode_pass1"
 
 
 _ANSI_RESET = "\033[0m"
@@ -534,8 +536,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--keyframes_mode", default="symlink", choices=["symlink", "hardlink", "copy"], help="how to materialize segment/keyframes")
     ap.add_argument(
         "--segment_policy",
-        default=FORMAL_SEGMENT_POLICY,
-        help="segment policy for the current workflow; only 'state' is accepted",
+        default=FORMAL_ENCODE_POLICY,
+        help="encode policy for the current workflow; default is encode_pass1",
     )
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
     ap.add_argument("--gpus", type=int, default=2)
@@ -599,10 +601,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     _CLI_LOG_LEVEL = str(args.log_level or "info").strip().lower()
     set_cli_log_level(_CLI_LOG_LEVEL)
     args.keep_level = normalize_keep_level(args.keep_level)
-    try:
-        args.segment_policy = require_formal_segment_policy(args.segment_policy)
-    except ValueError as exc:
-        _die(str(exc))
+    args.segment_policy = str(args.segment_policy or FORMAL_ENCODE_POLICY).strip() or FORMAL_ENCODE_POLICY
 
     args.dataset = sanitize_token(args.dataset)
     args.sequence = sanitize_token(args.sequence)

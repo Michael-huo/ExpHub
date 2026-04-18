@@ -102,12 +102,13 @@ def _read_stage_report(path_obj, warnings):
 def _segment_manifest_path(exp_dir):
     exp = Path(exp_dir).resolve()
     for candidate in (
+        exp / "encode" / "legacy_segment_manifest.json",
         exp / "encode" / "segment_manifest.json",
         exp / "input" / "input_report.json",
     ):
         if candidate.is_file():
             return candidate.resolve()
-    return exp / "encode" / "segment_manifest.json"
+    return exp / "encode" / "legacy_segment_manifest.json"
 
 
 def _prepare_frames_dir(exp_dir):
