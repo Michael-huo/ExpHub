@@ -40,8 +40,8 @@ def run(runtime):
     prepare_result = runtime.prepare_result()
     motion_segments_path = runtime.paths.encode_dir / "motion_segments.json"
     semantic_anchors_path = runtime.paths.encode_dir / "semantic_anchors.json"
-    generation_units_path = runtime.paths.encode_dir / "generation_units.json"
-    prompts_path = runtime.paths.encode_dir / "prompts.json"
+    generation_units_path = runtime.paths.encode_generation_units_path
+    prompts_path = runtime.paths.encode_prompts_path
 
     log_info("encode pass1 motion_segment start")
     motion_segments = build_motion_segments(
@@ -93,12 +93,11 @@ def run(runtime):
     for path, label in [
         (runtime.paths.encode_dir / "motion_segments.json", "motion segments"),
         (runtime.paths.encode_dir / "semantic_anchors.json", "semantic anchors"),
-        (runtime.paths.encode_dir / "generation_units.json", "generation units"),
-        (runtime.paths.encode_dir / "prompts.json", "prompts"),
-        (runtime.paths.encode_dir / "encode_result.json", "encode result"),
+        (runtime.paths.encode_generation_units_path, "generation units"),
+        (runtime.paths.encode_prompts_path, "prompts"),
+        (runtime.paths.encode_result_path, "encode result"),
         (runtime.paths.encode_dir / "encode_overview.png", "encode overview"),
         (runtime.paths.encode_legacy_manifest_path, "legacy segment manifest"),
-        (runtime.paths.decode_manifest_path, "decode manifest"),
         (runtime.paths.encode_plan_path, "transition encode plan"),
         (runtime.paths.prompt_spans_path, "transition prompt spans"),
         (runtime.paths.encode_report_path, "transition encode report"),

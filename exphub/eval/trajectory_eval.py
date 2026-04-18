@@ -240,10 +240,20 @@ def _candidate_exp_roots(path_candidates):
 def _resolve_eval_exp_root(path_candidates):
     for candidate in _candidate_exp_roots(path_candidates):
         if (
-            (candidate / "encode" / "legacy_segment_manifest.json").is_file()
+            (candidate / "prepare" / "prepare_result.json").is_file()
+            or (candidate / "encode" / "generation_units.json").is_file()
+            or (candidate / "encode" / "legacy_segment_manifest.json").is_file()
             or (candidate / "input" / "input_report.json").is_file()
         ):
             return candidate
+    return None
+
+
+def _prepare_result_path(exp_root):
+    root = Path(exp_root).resolve()
+    candidate = root / "prepare" / "prepare_result.json"
+    if candidate.is_file():
+        return candidate.resolve()
     return None
 
 
@@ -261,11 +271,21 @@ def _segment_manifest_path(exp_root):
 def _segment_timestamp_map(exp_root):
     if exp_root is None:
         return {}
-    manifest_path = _segment_manifest_path(exp_root)
-    manifest_obj = read_json(manifest_path) if manifest_path.is_file() else {}
-    if not isinstance(manifest_obj, dict):
-        manifest_obj = {}
-    timestamps = list((manifest_obj.get("camera") or {}).get("timestamps") or [])
+    prepare_path = _prepare_result_path(exp_root)
+    if prepare_path is not None:
+        prepare_obj = read_json(prepare_path) if prepare_path.is_file() else {}
+        frame_index_map = dict((prepare_obj or {}).get("frame_index_map") or {}) if isinstance(prepare_obj, dict) else {}
+        timestamps = list(
+            frame_index_map.get("prepared_to_rel_time_sec")
+            or frame_index_map.get("prepared_to_time_sec")
+            or []
+        )
+    else:
+        manifest_path = _segment_manifest_path(exp_root)
+        manifest_obj = read_json(manifest_path) if manifest_path.is_file() else {}
+        if not isinstance(manifest_obj, dict):
+            manifest_obj = {}
+        timestamps = list((manifest_obj.get("camera") or {}).get("timestamps") or [])
     out = {}
     for idx, value in enumerate(timestamps):
         try:
@@ -295,15 +315,21 @@ def _load_formal_keyframe_context(config, metrics_obj):
         return empty_context
 
     exp_root = Path(exp_root).resolve()
+    prepare_path = _prepare_result_path(exp_root)
     manifest_path = _segment_manifest_path(exp_root)
-    manifest_obj = read_json(manifest_path) if manifest_path.is_file() else {}
+    prepare_obj = read_json(prepare_path) if prepare_path is not None and prepare_path.is_file() else {}
+    if not isinstance(prepare_obj, dict):
+        prepare_obj = {}
+    manifest_obj = read_json(manifest_path) if not prepare_obj and manifest_path.is_file() else {}
     if not isinstance(manifest_obj, dict):
         manifest_obj = {}
 
     frame_indices = []
     seen = set()
     raw_indices = []
-    if isinstance(manifest_obj.get("keyframes"), dict):
+    if isinstance(prepare_obj.get("legal_grid"), dict):
+        raw_indices = list(prepare_obj["legal_grid"].get("legal_positions") or [])
+    elif isinstance(manifest_obj.get("keyframes"), dict):
         raw_indices = list(manifest_obj["keyframes"].get("indices") or [])
     for value in raw_indices:
         try:
@@ -327,7 +353,7 @@ def _load_formal_keyframe_context(config, metrics_obj):
 
     return {
         "exp_root": exp_root,
-        "manifest_path": str(manifest_path) if manifest_path.is_file() else "",
+        "manifest_path": str(prepare_path or manifest_path) if (prepare_path is not None or manifest_path.is_file()) else "",
         "frame_indices": list(frame_indices),
         "timestamps_by_frame": dict(timestamps_by_frame),
     }

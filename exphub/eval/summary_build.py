@@ -110,6 +110,20 @@ def _segment_manifest_path(exp_dir):
     return exp / "encode" / "legacy_segment_manifest.json"
 
 
+def _native_paths(exp_dir):
+    exp = Path(exp_dir).resolve()
+    return {
+        "prepare_result": exp / "prepare" / "prepare_result.json",
+        "generation_units": exp / "encode" / "generation_units.json",
+        "prompts": exp / "encode" / "prompts.json",
+        "encode_result": exp / "encode" / "encode_result.json",
+        "legacy_segment_manifest": exp / "encode" / "legacy_segment_manifest.json",
+        "encode_plan": exp / "encode" / "encode_plan.json",
+        "prompt_spans": exp / "encode" / "prompt_spans.json",
+        "encode_report": exp / "encode" / "encode_report.json",
+    }
+
+
 def _prepare_frames_dir(exp_dir):
     exp = Path(exp_dir).resolve()
     if (exp / "prepare" / "frames").is_dir():
@@ -117,22 +131,47 @@ def _prepare_frames_dir(exp_dir):
     return exp / "input" / "frames"
 
 
-def _build_compression_summary(exp_dir, segment_report, prompt_report, warnings):
+def _file_size_or_none(path_obj):
+    path = Path(path_obj).resolve()
+    if not path.is_file():
+        return None
+    try:
+        return int(path.stat().st_size)
+    except Exception:
+        return None
+
+
+def _build_compression_summary(exp_dir, prepare_result, prompts_path, fallback_segment_report, fallback_prompt_report, warnings):
     segment_frames_dir = _prepare_frames_dir(exp_dir)
     ori_frames, ori_bytes = _dir_png_stats(segment_frames_dir)
 
-    keyframes_frames = _pick_int(
-        segment_report,
-        [
-            ("keyframes", "count"),
-            ("outputs", "keyframes", "frame_count"),
-        ],
-    )
-    keyframes_bytes = _pick_int(segment_report, [("keyframes", "bytes_sum")])
-    prompt_bytes = _pick_int(prompt_report, [("outputs", "bytes_sum"), ("outputs", "prompt_bytes")])
+    legal_positions = [int(item) for item in list((prepare_result.get("legal_grid") or {}).get("legal_positions") or [])]
+    keyframes_frames = len(legal_positions) if legal_positions else None
+    keyframes_bytes = None
+    if legal_positions:
+        keyframes_bytes = 0
+        for idx in legal_positions:
+            frame_path = segment_frames_dir / "{:06d}.png".format(int(idx))
+            try:
+                keyframes_bytes += int(frame_path.stat().st_size)
+            except Exception:
+                pass
+    if keyframes_frames is None:
+        keyframes_frames = _pick_int(
+            fallback_segment_report,
+            [
+                ("keyframes", "count"),
+                ("outputs", "keyframes", "frame_count"),
+            ],
+        )
+    if keyframes_bytes is None:
+        keyframes_bytes = _pick_int(fallback_segment_report, [("keyframes", "bytes_sum")])
+    prompt_bytes = _file_size_or_none(prompts_path)
+    if prompt_bytes is None:
+        prompt_bytes = _pick_int(fallback_prompt_report, [("outputs", "bytes_sum"), ("outputs", "prompt_bytes")])
 
     if prompt_bytes is None:
-        msg = "missing prompt bytes_sum in prompt report; prompt_bytes set to null"
+        msg = "missing prompts artifact size; prompt_bytes set to null"
         warnings.append(msg)
         log_warn(msg)
     if ori_frames <= 0:
@@ -199,28 +238,38 @@ def _stage_created_at(*reports):
     return ""
 
 
-def _build_generation_unit_summary(infer_report, merge_report, merge_manifest):
+def _build_generation_unit_summary(infer_report, merge_report, merge_manifest, encode_result, generation_units):
     merge_summary = dict((merge_manifest or {}).get("summary") or {})
+    if not merge_summary:
+        merge_summary = dict((merge_report or {}).get("summary") or {})
+    units = list((generation_units or {}).get("units") or [])
+    encode_units = _pick_int(encode_result, [("num_generation_units",)])
     return {
         "planner": "generation_units",
-        "prompt_strategy": "prompt_spans",
-        "source_unit_count": int(merge_summary.get("source_unit_count", 0) or 0),
+        "prompt_strategy": str((infer_report or {}).get("prompt_strategy", "") or (encode_result or {}).get("prompt_mode", "") or "prompts"),
+        "source_unit_count": int(merge_summary.get("source_unit_count", 0) or encode_units or len(units) or 0),
         "source_span_count": int(merge_summary.get("source_span_count", 0) or 0),
-        "shared_anchor_count": int(merge_summary.get("shared_anchor_count", 0) or 0),
+        "shared_anchor_count": int(merge_summary.get("shared_anchor_count", 0) or _pick_int(generation_units, [("summary", "shared_anchor_count")]) or 0),
     }
 
 
 def _build_stage_table(exp_dir, stage_reports, traj_metrics, inputs, eval_dir):
+    paths = _native_paths(exp_dir)
     return {
         "encode": {
-            "status": _stage_status("success" if stage_reports["input"] else "", "success" if stage_reports["encode"] else ""),
-            "created_at": _stage_created_at(stage_reports["input"], stage_reports["encode"]),
+            "status": _stage_status("success" if stage_reports["prepare"] else "", "success" if stage_reports["encode_result"] else ""),
+            "created_at": _stage_created_at(stage_reports["prepare"], stage_reports["encode_result"]),
             "artifacts": {
-                "segment_manifest": _relative_path(exp_dir, _segment_manifest_path(exp_dir)),
-                "prepare_result": _relative_path(exp_dir, Path(exp_dir) / "prepare" / "prepare_result.json"),
-                "encode_plan": _relative_path(exp_dir, Path(exp_dir) / "encode" / "encode_plan.json"),
-                "prompt_spans": _relative_path(exp_dir, Path(exp_dir) / "encode" / "prompt_spans.json"),
-                "encode_report": _relative_path(exp_dir, Path(exp_dir) / "encode" / "encode_report.json"),
+                "prepare_result": _relative_path(exp_dir, paths["prepare_result"]),
+                "generation_units": _relative_path(exp_dir, paths["generation_units"]),
+                "prompts": _relative_path(exp_dir, paths["prompts"]),
+                "encode_result": _relative_path(exp_dir, paths["encode_result"]),
+            },
+            "transition_artifacts": {
+                "legacy_segment_manifest": _relative_path(exp_dir, paths["legacy_segment_manifest"]),
+                "encode_plan": _relative_path(exp_dir, paths["encode_plan"]),
+                "prompt_spans": _relative_path(exp_dir, paths["prompt_spans"]),
+                "encode_report": _relative_path(exp_dir, paths["encode_report"]),
             },
         },
         "decode": {
@@ -267,11 +316,16 @@ def run_diagnostics_substage(args):
     exp_dir = Path(args.exp_dir).resolve()
     eval_dir = Path(args.out_dir).resolve()
     eval_dir.mkdir(parents=True, exist_ok=True)
+    native_paths = _native_paths(exp_dir)
 
     warnings = []
     stage_reports = {
-        "input": _read_stage_report(_segment_manifest_path(exp_dir), warnings),
-        "encode": _read_stage_report(exp_dir / "encode" / "encode_report.json", warnings),
+        "prepare": _read_stage_report(Path(getattr(args, "prepare_result", "")) if str(getattr(args, "prepare_result", "") or "").strip() else native_paths["prepare_result"], warnings),
+        "generation_units": _read_stage_report(Path(getattr(args, "generation_units", "")) if str(getattr(args, "generation_units", "") or "").strip() else native_paths["generation_units"], warnings),
+        "prompts": _read_stage_report(Path(getattr(args, "prompts", "")) if str(getattr(args, "prompts", "") or "").strip() else native_paths["prompts"], warnings),
+        "encode_result": _read_stage_report(Path(getattr(args, "encode_result", "")) if str(getattr(args, "encode_result", "") or "").strip() else native_paths["encode_result"], warnings),
+        "legacy_segment_manifest": _read_stage_report(native_paths["legacy_segment_manifest"], warnings) if not native_paths["prepare_result"].is_file() else {},
+        "encode_report": _read_stage_report(native_paths["encode_report"], warnings) if not native_paths["encode_result"].is_file() else {},
         "decode": _read_stage_report(Path(args.infer_report), warnings),
         "merge": _read_stage_report(Path(args.merge_report), warnings),
         "slam": _read_stage_report(Path(args.slam_report), warnings),
@@ -287,13 +341,22 @@ def run_diagnostics_substage(args):
         warnings.append(msg)
         log_warn(msg)
 
-    compression_summary = _build_compression_summary(exp_dir, stage_reports["input"], stage_reports["encode"], warnings)
+    compression_summary = _build_compression_summary(
+        exp_dir,
+        stage_reports["prepare"],
+        Path(getattr(args, "prompts", "")) if str(getattr(args, "prompts", "") or "").strip() else native_paths["prompts"],
+        stage_reports["legacy_segment_manifest"],
+        stage_reports["encode_report"],
+        warnings,
+    )
     quality = _build_quality(traj_metrics, stage_reports["slam"])
     compression_snapshot = _build_compression_snapshot(compression_summary)
     source_summary = _build_generation_unit_summary(
         infer_report=stage_reports["decode"],
         merge_report=stage_reports["merge"],
         merge_manifest=merge_manifest,
+        encode_result=stage_reports["encode_result"],
+        generation_units=stage_reports["generation_units"],
     )
 
     final_report = {
@@ -301,21 +364,28 @@ def run_diagnostics_substage(args):
         "step": "eval",
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "planner": "generation_units",
-        "prompt_strategy": "prompt_spans",
+        "prompt_strategy": str(source_summary["prompt_strategy"]),
         "source_unit_count": int(source_summary["source_unit_count"]),
         "source_span_count": int(source_summary["source_span_count"]),
         "shared_anchor_count": int(source_summary["shared_anchor_count"]),
         "workflow": "encode -> decode -> eval",
         "inputs": {
-            "segment_manifest": _relative_path(exp_dir, _segment_manifest_path(exp_dir)),
             "prepare_result": _relative_path(exp_dir, exp_dir / "prepare" / "prepare_result.json"),
-            "encode_report": _relative_path(exp_dir, exp_dir / "encode" / "encode_report.json"),
+            "generation_units": _relative_path(exp_dir, native_paths["generation_units"]),
+            "prompts": _relative_path(exp_dir, native_paths["prompts"]),
+            "encode_result": _relative_path(exp_dir, native_paths["encode_result"]),
             "decode_report": _relative_path(exp_dir, Path(args.infer_report).resolve()),
             "decode_merge_report": _relative_path(exp_dir, Path(args.merge_report).resolve()),
             "slam_report": _relative_path(exp_dir, Path(args.slam_report).resolve()),
             "traj_metrics": _relative_path(exp_dir, Path(args.traj_metrics).resolve()),
             "summary": _relative_path(exp_dir, Path(args.summary).resolve()),
             "details": _relative_path(exp_dir, Path(args.details).resolve()),
+        },
+        "transition_artifacts": {
+            "legacy_segment_manifest": _relative_path(exp_dir, native_paths["legacy_segment_manifest"]),
+            "encode_plan": _relative_path(exp_dir, native_paths["encode_plan"]),
+            "prompt_spans": _relative_path(exp_dir, native_paths["prompt_spans"]),
+            "encode_report": _relative_path(exp_dir, native_paths["encode_report"]),
         },
         "stages": _build_stage_table(
             exp_dir,
@@ -381,6 +451,10 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--slam_report", required=True)
+    parser.add_argument("--prepare_result", default="")
+    parser.add_argument("--generation_units", default="")
+    parser.add_argument("--prompts", default="")
+    parser.add_argument("--encode_result", default="")
     parser.add_argument("--infer_report", required=True)
     parser.add_argument("--merge_report", required=True)
     parser.add_argument("--merge_manifest", required=True)

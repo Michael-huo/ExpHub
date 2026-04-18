@@ -267,18 +267,26 @@ def _show_image(image_chw):
     cv2.waitKey(1)
 
 
-def _resolve_input_paths(root_dir):
+def _resolve_input_paths(root_dir, prepare_result_path=""):
     root = Path(root_dir).resolve()
     frames_dir = ensure_dir(root / "frames", "slam input frames")
+    calib_file = root / "calib.txt"
+    timestamps_file = root / "timestamps.txt"
+    if calib_file.is_file() and timestamps_file.is_file():
+        source_path = root / "decode_merge_report.json"
+        return frames_dir, calib_file, timestamps_file, source_path if source_path.is_file() else timestamps_file
+
     manifest_candidates = [
-        root / "input_report.json",
         root / "prepare_result.json",
+        Path(prepare_result_path).resolve() if str(prepare_result_path or "").strip() else None,
+        root.parent / "prepare" / "prepare_result.json",
+        root / "input_report.json",
         root.parent / "encode" / "legacy_segment_manifest.json",
         root.parent / "input" / "input_report.json",
     ]
     manifest_path = None
     for candidate in manifest_candidates:
-        if Path(candidate).is_file():
+        if candidate is not None and Path(candidate).is_file():
             manifest_path = Path(candidate).resolve()
             break
     if manifest_path is None:
@@ -336,7 +344,10 @@ def _copy_if_exists(src_path, dst_path):
 def _run_track(exp_dir, track_name, input_root, args):
     import torch
 
-    frames_dir, calib_source, timestamps_source, manifest_path = _resolve_input_paths(input_root)
+    frames_dir, calib_source, timestamps_source, manifest_path = _resolve_input_paths(
+        input_root,
+        getattr(args, "prepare_result", ""),
+    )
     files = list_frames_sorted(frames_dir)
     if args.t0 > 0:
         files = files[args.t0 :]
@@ -484,9 +495,12 @@ def run_slam_substage(args):
         raise RuntimeError("unsupported slam seq: {}".format(seq))
 
     infer_report = dict(read_json_dict(Path(args.infer_report)) or {})
+    encode_result = dict(read_json_dict(Path(getattr(args, "encode_result", ""))) or {})
     merge_report = dict(read_json_dict(Path(args.merge_report)) or {})
     merge_manifest = dict(read_json_dict(Path(args.merge_manifest)) or {})
     merge_summary = dict(merge_manifest.get("summary") or {})
+    if not merge_summary:
+        merge_summary = dict(merge_report.get("summary") or {})
 
     track_specs = []
     if seq in ("ori", "both"):
@@ -514,8 +528,8 @@ def run_slam_substage(args):
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "slam_status": "success",
         "planner": "generation_units",
-        "prompt_strategy": "prompt_spans",
-        "source_unit_count": int(merge_summary.get("source_unit_count", 0) or 0),
+        "prompt_strategy": str(infer_report.get("prompt_strategy", "") or encode_result.get("prompt_mode", "") or "prompts"),
+        "source_unit_count": int(merge_summary.get("source_unit_count", 0) or encode_result.get("num_generation_units", 0) or 0),
         "source_span_count": int(merge_summary.get("source_span_count", 0) or 0),
         "shared_anchor_count": int(merge_summary.get("shared_anchor_count", 0) or 0),
         "requested_seq": str(seq),
@@ -527,6 +541,15 @@ def run_slam_substage(args):
             "infer_report": _relative_path(exp_dir, Path(args.infer_report).resolve()),
             "merge_report": _relative_path(exp_dir, Path(args.merge_report).resolve()),
             "merge_manifest": _relative_path(exp_dir, Path(args.merge_manifest).resolve()),
+            "prepare_result": _relative_path(exp_dir, Path(getattr(args, "prepare_result", "")).resolve())
+            if str(getattr(args, "prepare_result", "") or "").strip()
+            else "",
+            "generation_units": _relative_path(exp_dir, Path(getattr(args, "generation_units", "")).resolve())
+            if str(getattr(args, "generation_units", "") or "").strip()
+            else "",
+            "encode_result": _relative_path(exp_dir, Path(getattr(args, "encode_result", "")).resolve())
+            if str(getattr(args, "encode_result", "") or "").strip()
+            else "",
             "segment_dir": _relative_path(exp_dir, Path(args.segment_dir).resolve()),
             "merge_dir": _relative_path(exp_dir, Path(args.merge_dir).resolve()),
         },
@@ -560,6 +583,9 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--segment_dir", required=True)
+    parser.add_argument("--prepare_result", default="")
+    parser.add_argument("--generation_units", default="")
+    parser.add_argument("--encode_result", default="")
     parser.add_argument("--infer_dir", required=True)
     parser.add_argument("--infer_report", required=True)
     parser.add_argument("--merge_dir", required=True)

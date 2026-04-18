@@ -60,6 +60,18 @@ class ExperimentPaths:
         return self.encode_legacy_manifest_path
 
     @property
+    def encode_generation_units_path(self) -> Path:
+        return self.encode_dir / "generation_units.json"
+
+    @property
+    def encode_prompts_path(self) -> Path:
+        return self.encode_dir / "prompts.json"
+
+    @property
+    def encode_result_path(self) -> Path:
+        return self.encode_dir / "encode_result.json"
+
+    @property
     def encode_dir(self) -> Path:
         return self.exp_dir / "encode"
 
