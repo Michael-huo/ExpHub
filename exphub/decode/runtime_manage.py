@@ -161,15 +161,59 @@ def load_segment_manifest(path):
     return manifest
 
 
-def _load_generation_units(exp_root, segment_manifest):
-    segment_payload = _as_dict(segment_manifest)
-    artifact_path = str((Path(exp_root).resolve() / "encode" / "encode_plan.json").resolve())
-    payload = _load_manifest((Path(exp_root).resolve() / artifact_path).resolve(), "generation units")
+def _load_generation_units(exp_root, generation_units_path=None):
+    exp_dir = Path(exp_root).resolve()
+    native_path = Path(generation_units_path).resolve() if generation_units_path else exp_dir / "encode" / "generation_units.json"
+    fallback_path = exp_dir / "encode" / "encode_plan.json"
+    if native_path.is_file():
+        payload = _load_manifest(native_path, "generation units")
+        payload["_source_kind"] = "native"
+        payload["_source_name"] = "generation_units"
+    elif fallback_path.is_file():
+        payload = _load_manifest(fallback_path, "transition encode plan")
+        payload["_source_kind"] = "transition_fallback"
+        payload["_source_name"] = "encode_plan"
+    else:
+        ensure_file(native_path, "generation units")
+        payload = {}
     units = list(payload.get("units") or [])
     if not units:
         raise ValueError("generation units must contain units")
     if not payload.get("sequence_range"):
         payload["sequence_range"] = dict(payload.get("sequence_range") or {})
+    return payload
+
+
+def _load_prompts(exp_root, prompts_path=None):
+    exp_dir = Path(exp_root).resolve()
+    native_path = Path(prompts_path).resolve() if prompts_path else exp_dir / "encode" / "prompts.json"
+    fallback_path = exp_dir / "encode" / "prompt_spans.json"
+    if native_path.is_file():
+        payload = _load_manifest(native_path, "prompts")
+        units = list(payload.get("units") or [])
+        if not units:
+            raise ValueError("prompts must contain units")
+        payload["_source_kind"] = "native"
+        payload["_source_name"] = "prompts"
+        return payload
+    if fallback_path.is_file():
+        payload = _load_manifest(fallback_path, "transition prompt spans")
+        spans = list(payload.get("spans") or [])
+        if not spans:
+            raise ValueError("transition prompt spans must contain spans")
+        payload["_source_kind"] = "transition_fallback"
+        payload["_source_name"] = "prompt_spans"
+        return payload
+    ensure_file(native_path, "prompts")
+    return {}
+
+
+def _load_prepare_result(exp_root, prepare_result_path=None):
+    exp_dir = Path(exp_root).resolve()
+    path = Path(prepare_result_path).resolve() if prepare_result_path else exp_dir / "prepare" / "prepare_result.json"
+    payload = _load_manifest(path, "prepare result")
+    if _safe_int(payload.get("num_frames"), 0) <= 0:
+        raise ValueError("prepare result must contain num_frames")
     return payload
 
 
@@ -181,15 +225,60 @@ def _load_prompt_spans(exp_root):
     return payload
 
 
-def _load_prompt_span_map(prompt_spans_payload):
+def _native_prompt_item_to_span(unit, prompt_item, prompts_payload):
+    prompt = _as_dict(prompt_item)
+    prompt_ref = _as_dict(unit.get("prompt_ref"))
+    span_id = _collapse_ws(prompt_ref.get("span_id", "")) or _collapse_ws(unit.get("unit_id", ""))
+    return {
+        "span_id": str(span_id),
+        "scene_label": str(unit.get("scene_label", "") or ""),
+        "motion_label": str(unit.get("motion_label", prompt.get("motion_label", "")) or ""),
+        "anchor_start_idx": int(unit.get("anchor_start_idx", unit.get("start_idx", 0)) or 0),
+        "anchor_end_idx": int(unit.get("anchor_end_idx", unit.get("end_idx", 0)) or 0),
+        "unit_ids": [str(unit.get("unit_id", "") or "")],
+        "source_segment_ids": list(unit.get("source_segment_ids") or []),
+        "base_prompt": str(prompt.get("base_prompt", prompts_payload.get("base_prompt", "")) or ""),
+        "scene_prompt": str(prompt.get("semantic_prompt", "") or ""),
+        "scene_prompt_source": "encode.prompts.semantic_prompt",
+        "motion_prompt": str(prompt.get("motion_prompt", "") or ""),
+        "motion_prompt_source": "encode.prompts.motion_prompt",
+        "continuity_emphasis": "balanced",
+        "resolved_prompt": str(prompt.get("assembled_prompt", "") or ""),
+        "negative_prompt": str(prompt.get("negative_prompt", prompts_payload.get("negative_prompt", "")) or ""),
+        "prompt_mode": str(prompt.get("prompt_mode", prompts_payload.get("prompt_mode", "")) or ""),
+    }
+
+
+def _load_prompt_span_map(prompts_payload, generation_units_payload=None):
     span_map = {}
-    for raw_item in list(_as_dict(prompt_spans_payload).get("spans") or []):
-        item = _as_dict(raw_item)
-        span_id = _collapse_ws(item.get("span_id", ""))
-        if span_id:
-            span_map[span_id] = item
+    source_kind = str(_as_dict(prompts_payload).get("_source_kind", "") or "")
+    if source_kind == "native":
+        prompt_by_unit = {}
+        for raw_prompt in list(_as_dict(prompts_payload).get("units") or []):
+            prompt_item = _as_dict(raw_prompt)
+            unit_id = _collapse_ws(prompt_item.get("unit_id", ""))
+            if unit_id:
+                prompt_by_unit[unit_id] = prompt_item
+        for raw_unit in list(_as_dict(generation_units_payload).get("units") or []):
+            unit = _as_dict(raw_unit)
+            unit_id = _collapse_ws(unit.get("unit_id", ""))
+            if not unit_id:
+                continue
+            prompt_item = prompt_by_unit.get(unit_id)
+            if not prompt_item:
+                continue
+            span = _native_prompt_item_to_span(unit, prompt_item, _as_dict(prompts_payload))
+            span_id = _collapse_ws(span.get("span_id", ""))
+            if span_id:
+                span_map[span_id] = span
+    else:
+        for raw_item in list(_as_dict(prompts_payload).get("spans") or []):
+            item = _as_dict(raw_item)
+            span_id = _collapse_ws(item.get("span_id", ""))
+            if span_id:
+                span_map[span_id] = item
     if not span_map:
-        raise ValueError("prompt spans must contain at least one span_id")
+        raise ValueError("prompts must resolve at least one generation unit prompt")
     return span_map
 
 
@@ -237,19 +326,43 @@ def load_image_gen_runtime(path, default_prompt="", default_negative_prompt=""):
     }
 
 
-def build_image_gen_runtime(segment_manifest, infer_backend="wan_fun_5b_inp"):
+def build_image_gen_runtime(
+    segment_manifest=None,
+    infer_backend="wan_fun_5b_inp",
+    exp_dir=None,
+    generation_units_path=None,
+    prompts_path=None,
+    prepare_result_path=None,
+    encode_result_path=None,
+):
     segment_payload = _as_dict(segment_manifest)
-    exp_dir = Path(str(segment_payload.get("_path", "") or "")).resolve().parent.parent
-    generation_units_payload = _load_generation_units(exp_dir, segment_payload)
-    prompt_spans_payload = _load_prompt_spans(exp_dir)
-    prompt_span_map = _load_prompt_span_map(prompt_spans_payload)
+    if exp_dir is None:
+        exp_dir = Path(str(segment_payload.get("_path", "") or "")).resolve().parent.parent
+    exp_dir = Path(exp_dir).resolve()
+    prepare_result_payload = _load_prepare_result(exp_dir, prepare_result_path)
+    generation_units_payload = _load_generation_units(exp_dir, generation_units_path)
+    prompts_payload = _load_prompts(exp_dir, prompts_path)
+    prompt_span_map = _load_prompt_span_map(prompts_payload, generation_units_payload)
     units = list(generation_units_payload.get("units") or [])
+    source_kind = str(generation_units_payload.get("_source_kind", "") or "native")
+    prompt_source_kind = str(prompts_payload.get("_source_kind", "") or "native")
+    prompt_strategy = "prompts" if prompt_source_kind == "native" else "prompt_spans"
+    prompt_artifact = "encode/prompts.json" if prompt_source_kind == "native" else "encode/prompt_spans.json"
+    prompt_source_label = "prompts.assembled_prompt" if prompt_source_kind == "native" else "prompt_spans.resolved_prompt"
 
     sequence_range = _as_dict(generation_units_payload.get("sequence_range"))
     sequence_start_idx = _safe_int(sequence_range.get("start_idx"), 0)
     sequence_end_idx = _safe_int(sequence_range.get("end_idx"), None)
     if sequence_end_idx is None or int(sequence_end_idx) < int(sequence_start_idx):
         raise RuntimeError("generation units sequence range is invalid")
+    prepare_num_frames = _safe_int(prepare_result_payload.get("num_frames"), 0)
+    if prepare_num_frames and int(sequence_end_idx) >= int(prepare_num_frames):
+        raise RuntimeError(
+            "generation units exceed prepare frame count: sequence_end_idx={} num_frames={}".format(
+                int(sequence_end_idx),
+                int(prepare_num_frames),
+            )
+        )
 
     segments = []
     skipped_units = []
@@ -294,10 +407,10 @@ def build_image_gen_runtime(segment_manifest, infer_backend="wan_fun_5b_inp"):
                 decode_blocked = True
             continue
 
-        prompt_ref["artifact_path"] = _collapse_ws(prompt_ref.get("artifact_path", "")) or "encode/prompt_spans.json"
+        prompt_ref["artifact_path"] = prompt_artifact
         resolved_prompt = str(prompt_span.get("resolved_prompt", "") or "")
         if not _collapse_ws(resolved_prompt):
-            raise RuntimeError("prompt span {} missing resolved_prompt".format(span_id))
+            raise RuntimeError("prompt {} missing resolved prompt".format(span_id))
 
         num_frames = int(anchor_end_idx) - int(anchor_start_idx) + 1
         segments.append(
@@ -332,10 +445,10 @@ def build_image_gen_runtime(segment_manifest, infer_backend="wan_fun_5b_inp"):
                 "risk_level": str(unit.get("risk_level", "") or ""),
                 "is_valid_for_decode": True,
                 "is_valid_for_export": bool(unit.get("is_valid_for_export", False)),
-                "prompt_source": "prompt_spans.resolved_prompt",
-                "base_prompt": str(prompt_span.get("base_prompt", prompt_spans_payload.get("base_prompt", "")) or ""),
+                "prompt_source": prompt_source_label,
+                "base_prompt": str(prompt_span.get("base_prompt", prompts_payload.get("base_prompt", "")) or ""),
                 "resolved_prompt": resolved_prompt,
-                "negative_prompt": str(prompt_span.get("negative_prompt", prompt_spans_payload.get("negative_prompt", "")) or ""),
+                "negative_prompt": str(prompt_span.get("negative_prompt", prompts_payload.get("negative_prompt", "")) or ""),
                 "scene_prompt": str(prompt_span.get("scene_prompt", "") or ""),
                 "motion_prompt": str(prompt_span.get("motion_prompt", "") or ""),
                 "scene_prompt_source": str(prompt_span.get("scene_prompt_source", "") or ""),
@@ -372,17 +485,23 @@ def build_image_gen_runtime(segment_manifest, infer_backend="wan_fun_5b_inp"):
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "source": "decode.image_gen.runtime",
         "planner": "generation_units",
-        "prompt_strategy": "prompt_spans",
+        "prompt_strategy": prompt_strategy,
         "schedule_source": "segment.generation_units",
-        "base_prompt": str(prompt_spans_payload.get("base_prompt", "") or ""),
-        "negative_prompt": str(prompt_spans_payload.get("negative_prompt", "") or ""),
+        "base_prompt": str(prompts_payload.get("base_prompt", "") or ""),
+        "negative_prompt": str(prompts_payload.get("negative_prompt", "") or ""),
         "execution_backend": str(infer_backend),
         "segments": segments,
         "skipped_units": skipped_units,
         "source_files": {
-            "input_report": _relative_path(exp_dir, segment_payload["_path"]),
-            "encode_plan": _relative_path(exp_dir, generation_units_payload["_path"]),
-            "prompt_spans": _relative_path(exp_dir, prompt_spans_payload["_path"]),
+            "prepare_result": _relative_path(exp_dir, prepare_result_payload["_path"]),
+            "generation_units": _relative_path(exp_dir, generation_units_payload["_path"]),
+            "prompts": _relative_path(exp_dir, prompts_payload["_path"]),
+            "encode_result": _relative_path(exp_dir, Path(encode_result_path).resolve())
+            if encode_result_path and Path(encode_result_path).is_file()
+            else "",
+            "legacy_segment_manifest": _relative_path(exp_dir, segment_payload["_path"])
+            if segment_payload.get("_path")
+            else "",
         },
         "summary": {
             "segment_count": int(len(segments)),
@@ -395,6 +514,9 @@ def build_image_gen_runtime(segment_manifest, infer_backend="wan_fun_5b_inp"):
             "shared_anchor_count": int(shared_anchor_count),
             "sequence_start_idx": int(sequence_start_idx),
             "sequence_end_idx": int(sequence_end_idx),
+            "generation_units_source": str(source_kind),
+            "prompts_source": str(prompt_source_kind),
+            "prepare_num_frames": int(prepare_num_frames),
         },
     }
 

@@ -111,6 +111,99 @@ def _load_input_report(input_dir, segment_manifest=None):
     return payload, report_path
 
 
+def _load_prepare_result(input_dir, prepare_result=None, fallback_manifest=None):
+    if prepare_result:
+        prepare_path = Path(prepare_result).resolve()
+    else:
+        prepare_path = Path(input_dir).resolve() / "prepare_result.json"
+    if prepare_path.is_file():
+        payload = json.loads(prepare_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise RuntimeError("invalid prepare result payload: {}".format(prepare_path))
+        return payload, prepare_path, "prepare_result"
+    payload, report_path = _load_input_report(input_dir, fallback_manifest)
+    return payload, report_path, "legacy_segment_manifest"
+
+
+def _camera_from_prepare(prepare_result):
+    payload = dict(prepare_result or {})
+    frame_index_map = dict(payload.get("frame_index_map") or {})
+    timestamps = _float_list(
+        frame_index_map.get("prepared_to_rel_time_sec")
+        or frame_index_map.get("prepared_to_time_sec")
+        or []
+    )
+    intrinsics = dict(payload.get("normalized_intrinsics") or {})
+    calib = []
+    if intrinsics:
+        calib = [
+            intrinsics.get("fx"),
+            intrinsics.get("fy"),
+            intrinsics.get("cx"),
+            intrinsics.get("cy"),
+        ] + list(intrinsics.get("dist") or [])
+    return timestamps, _float_list(calib)
+
+
+def _load_generation_units(path_obj):
+    path = Path(path_obj).resolve() if path_obj else None
+    if path is None or not path.is_file():
+        return {}, None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("invalid generation units payload: {}".format(path))
+    return payload, path
+
+
+def _validate_plan_against_generation_units(plan_obj, generation_units):
+    units = [dict(item) for item in list((generation_units or {}).get("units") or []) if isinstance(item, dict)]
+    if not units:
+        return
+    valid_units = [item for item in units if bool(item.get("is_valid_for_decode", False))]
+    segments = list((plan_obj or {}).get("segments") or [])
+    if not segments:
+        return
+    expected_by_id = {
+        str(item.get("unit_id", "") or ""): item
+        for item in valid_units
+        if str(item.get("unit_id", "") or "").strip()
+    }
+    prev_end = None
+    for idx, raw_segment in enumerate(segments):
+        item = dict(raw_segment or {})
+        unit_id = str(item.get("source_unit_id", "") or "").strip()
+        if not unit_id:
+            continue
+        unit = expected_by_id.get(unit_id)
+        if not unit:
+            raise RuntimeError("sequence merge plan references unknown generation unit: {}".format(unit_id))
+        unit_start = _safe_int(unit.get("anchor_start_idx", unit.get("start_idx")), None)
+        unit_end = _safe_int(unit.get("anchor_end_idx", unit.get("end_idx")), None)
+        seg_start = _safe_int(item.get("aligned_start_idx", item.get("start_idx")), None)
+        seg_end = _safe_int(item.get("aligned_end_idx", item.get("end_idx")), None)
+        if unit_start is None or unit_end is None or seg_start is None or seg_end is None:
+            raise RuntimeError("sequence merge cannot compare generation unit range: {}".format(unit_id))
+        if int(unit_start) != int(seg_start) or int(unit_end) != int(seg_end):
+            raise RuntimeError(
+                "sequence merge plan range differs from generation unit {}: plan={}..{} unit={}..{}".format(
+                    unit_id,
+                    int(seg_start),
+                    int(seg_end),
+                    int(unit_start),
+                    int(unit_end),
+                )
+            )
+        if prev_end is not None and int(seg_start) != int(prev_end):
+            raise RuntimeError(
+                "generation unit order lost shared endpoint before {}: prev_end={} current_start={}".format(
+                    unit_id,
+                    int(prev_end),
+                    int(seg_start),
+                )
+            )
+        prev_end = int(seg_end)
+
+
 def _float_list(values):
     out = []
     for item in list(values or []):
@@ -241,6 +334,8 @@ def _run_formal_mainline(args):
 
     plan_obj = _load_runs_plan(plan_path)
     _guard_safe_out_dir(out_dir, exp_dir, runs_root)
+    generation_units, generation_units_path = _load_generation_units(getattr(args, "generation_units", ""))
+    _validate_plan_against_generation_units(plan_obj, generation_units)
 
     for stale_path in (
         out_dir / "frames",
@@ -255,10 +350,16 @@ def _run_formal_mainline(args):
     out_frames.mkdir(parents=True, exist_ok=True)
 
     segments = list(plan_obj.get("segments") or [])
-    input_report, input_report_path = _load_input_report(input_dir, getattr(args, "segment_manifest", ""))
-    camera_meta = dict(input_report.get("camera") or {})
-    source_timestamp_values = _float_list(camera_meta.get("timestamps"))
-    source_calib_values = _float_list(camera_meta.get("calib"))
+    prepare_result, prepare_source_path, prepare_source_kind = _load_prepare_result(
+        input_dir,
+        getattr(args, "prepare_result", ""),
+        getattr(args, "segment_manifest", ""),
+    )
+    source_timestamp_values, source_calib_values = _camera_from_prepare(prepare_result)
+    if not source_timestamp_values or not source_calib_values:
+        camera_meta = dict(prepare_result.get("camera") or {})
+        source_timestamp_values = source_timestamp_values or _float_list(camera_meta.get("timestamps"))
+        source_calib_values = source_calib_values or _float_list(camera_meta.get("calib"))
     if not source_timestamp_values:
         max_source_idx = max((int(item.get("actual_saved_end_idx", 0) or 0) for item in segments), default=-1)
         if max_source_idx >= 0:
@@ -279,8 +380,8 @@ def _run_formal_mainline(args):
     source_span_ids = set()
     if not source_timestamp_values:
         raise RuntimeError(
-            "input report missing camera timestamps and unable to synthesize timestamps: {}".format(
-                input_report_path,
+            "prepare result missing timestamps and unable to synthesize timestamps: {}".format(
+                prepare_source_path,
             )
         )
 
@@ -420,7 +521,7 @@ def _run_formal_mainline(args):
     calib_path = (out_dir / "calib.txt").resolve()
     timestamps_path = (out_dir / "timestamps.txt").resolve()
     if not source_calib_values:
-        raise RuntimeError("input report missing camera calib: {}".format(input_report_path))
+        raise RuntimeError("prepare result missing camera calib: {}".format(prepare_source_path))
     write_text_atomic(calib_path, _format_calib_lines(source_calib_values))
 
     if int(expected_merged_frame_count) != int(merged_frame_count):
@@ -455,8 +556,11 @@ def _run_formal_mainline(args):
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "inputs": {
             "planner": "generation_units",
-            "prompt_strategy": "prompt_spans",
+            "prompt_strategy": str(plan_obj.get("prompt_strategy", "") or "prompts"),
             "input_dir": _relative_path(exp_dir, input_dir),
+            "prepare_result": _relative_path(exp_dir, prepare_source_path),
+            "prepare_source_kind": str(prepare_source_kind),
+            "generation_units": _relative_path(exp_dir, generation_units_path) if generation_units_path else "",
             "runs_root": _relative_path(exp_dir, runs_root),
             "runs_plan": _relative_path(exp_dir, plan_path),
             "upstream_contract": "decode.image_gen/decode_plan.json",
@@ -528,6 +632,8 @@ def _run_formal_mainline(args):
 def run(runtime):
     ensure_dir(runtime.paths.input_dir, "input dir")
     ensure_dir(runtime.paths.decode_runs_dir, "image gen runs dir")
+    ensure_file(runtime.paths.prepare_result_path, "prepare result")
+    ensure_file(runtime.paths.encode_generation_units_path, "generation units")
     ensure_file(runtime.paths.decode_plan_path, "decode plan")
 
     for path in (
@@ -546,6 +652,10 @@ def run(runtime):
         str(runtime.paths.exp_dir),
         "--segment_dir",
         str(runtime.paths.prepare_dir),
+        "--prepare_result",
+        str(runtime.paths.prepare_result_path),
+        "--generation_units",
+        str(runtime.paths.encode_generation_units_path),
         "--segment_manifest",
         str(runtime.paths.decode_manifest_path),
         "--runs_root",
@@ -576,6 +686,8 @@ def _build_arg_parser():
     parser.add_argument("--run-formal-mainline", action="store_true")
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--segment_dir", required=True)
+    parser.add_argument("--prepare_result", default="")
+    parser.add_argument("--generation_units", default="")
     parser.add_argument("--segment_manifest", default="")
     parser.add_argument("--runs_root", required=True)
     parser.add_argument("--plan", required=True)

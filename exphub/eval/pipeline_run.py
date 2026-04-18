@@ -22,6 +22,9 @@ def _build_slam_args(args):
         exp_dir=args.exp_dir,
         out_dir=str(Path(args.out_dir).resolve()),
         segment_dir=args.segment_dir,
+        prepare_result=args.prepare_result,
+        generation_units=args.generation_units,
+        encode_result=args.encode_result,
         infer_dir=args.infer_dir,
         infer_report=args.infer_report,
         merge_dir=args.merge_dir,
@@ -77,6 +80,10 @@ def _build_diagnostics_args(args, slam_report_path, metrics_result):
         exp_dir=args.exp_dir,
         out_dir=args.out_dir,
         slam_report=str(slam_report_path),
+        prepare_result=str(args.prepare_result),
+        generation_units=str(args.generation_units),
+        prompts=str(args.prompts),
+        encode_result=str(args.encode_result),
         infer_report=str(args.infer_report),
         merge_report=str(args.merge_report),
         merge_manifest=str(args.merge_manifest),
@@ -102,12 +109,12 @@ def run(runtime):
     ensure_dir(runtime.paths.prepare_dir, "prepare dir")
     ensure_dir(runtime.paths.decode_dir, "decode dir")
     ensure_file(runtime.paths.prepare_result_path, "prepare result")
-    ensure_file(runtime.paths.decode_manifest_path, "decode manifest")
-    ensure_file(runtime.paths.encode_report_path, "encode report")
+    ensure_file(runtime.paths.encode_generation_units_path, "generation units")
+    ensure_file(runtime.paths.encode_prompts_path, "prompts")
+    ensure_file(runtime.paths.encode_result_path, "encode result")
     ensure_file(runtime.paths.decode_plan_path, "decode plan")
     ensure_file(runtime.paths.decode_report_path, "decode report")
     ensure_file(runtime.paths.decode_merge_report_path, "decode merge report")
-    ensure_file(runtime.paths.prompt_spans_path, "prompt spans")
 
     runtime.remove_in_exp(runtime.paths.eval_dir)
     runtime.paths.eval_dir.mkdir(parents=True, exist_ok=True)
@@ -121,6 +128,14 @@ def run(runtime):
         str(runtime.paths.eval_dir),
         "--segment_dir",
         str(runtime.paths.prepare_dir),
+        "--prepare_result",
+        str(runtime.paths.prepare_result_path),
+        "--generation_units",
+        str(runtime.paths.encode_generation_units_path),
+        "--prompts",
+        str(runtime.paths.encode_prompts_path),
+        "--encode_result",
+        str(runtime.paths.encode_result_path),
         "--infer_dir",
         str(runtime.paths.decode_dir),
         "--infer_report",
@@ -181,6 +196,10 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--segment_dir", required=True)
+    parser.add_argument("--prepare_result", required=True)
+    parser.add_argument("--generation_units", required=True)
+    parser.add_argument("--prompts", required=True)
+    parser.add_argument("--encode_result", required=True)
     parser.add_argument("--infer_dir", required=True)
     parser.add_argument("--infer_report", required=True)
     parser.add_argument("--merge_dir", required=True)
