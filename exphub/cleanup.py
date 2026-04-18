@@ -90,7 +90,6 @@ def _cleanup_min(exp_dir: Path) -> None:
         {
             "encode_plan.json",
             "legacy_segment_manifest.json",
-            "segment_manifest.json",
             "prompt_spans.json",
             "encode_report.json",
             "motion_segments.json",
@@ -99,7 +98,6 @@ def _cleanup_min(exp_dir: Path) -> None:
             "prompts.json",
             "encode_result.json",
             "encode_overview.png",
-            "encode_segmentation_overview.png",
         },
     )
     _prune_dir_keep_names(

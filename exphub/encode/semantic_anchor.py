@@ -17,6 +17,22 @@ def _as_dict(value):
     return value if isinstance(value, dict) else {}
 
 
+def _abs_time_at(prepare_result, idx):
+    values = list(_as_dict(prepare_result.get("frame_index_map")).get("prepared_to_abs_time_sec") or [])
+    if int(idx) < 0 or int(idx) >= len(values):
+        raise RuntimeError("prepare_result frame_index_map missing abs time for frame {}".format(int(idx)))
+    return float(values[int(idx)])
+
+
+def _anchor_item(prepare_result, frame_idx, score, reason):
+    return {
+        "frame_idx": int(frame_idx),
+        "abs_time_sec": _abs_time_at(prepare_result, int(frame_idx)),
+        "score": float(score),
+        "reason": str(reason),
+    }
+
+
 def _normalize_embeddings(embeddings):
     if embeddings.size == 0:
         return embeddings
@@ -87,7 +103,7 @@ def _legal_between(legal_positions, start_idx, end_idx):
     return [idx for idx in legal_positions if int(start_idx) <= int(idx) <= int(end_idx)]
 
 
-def _add_duration_fallback(anchor_map, candidates, max_delta):
+def _add_duration_fallback(anchor_map, candidates, max_delta, prepare_result):
     ordered = sorted(int(idx) for idx in anchor_map.keys())
     changed = True
     while changed:
@@ -102,11 +118,12 @@ def _add_duration_fallback(anchor_map, candidates, max_delta):
                     "duration_fallback cannot split anchor span: left={} right={} max_delta={}".format(left, right, max_delta)
                 )
             chosen = max(viable)
-            anchor_map[int(chosen)] = {
-                "frame_idx": int(chosen),
-                "score": float(anchor_map.get(int(chosen), {}).get("score", 0.0)),
-                "reason": "duration_fallback",
-            }
+            anchor_map[int(chosen)] = _anchor_item(
+                prepare_result=prepare_result,
+                frame_idx=int(chosen),
+                score=float(anchor_map.get(int(chosen), {}).get("score", 0.0)),
+                reason="duration_fallback",
+            )
             changed = True
             break
 
@@ -149,8 +166,8 @@ def build_semantic_anchors(
         if candidates[0] != seg_start or candidates[-1] != seg_end:
             raise RuntimeError("motion segment boundaries must be legal: {}".format(seg_id))
         anchor_map = {
-            int(seg_start): {"frame_idx": int(seg_start), "score": 0.0, "reason": "segment_boundary"},
-            int(seg_end): {"frame_idx": int(seg_end), "score": 0.0, "reason": "segment_boundary"},
+            int(seg_start): _anchor_item(prepare, int(seg_start), 0.0, "segment_boundary"),
+            int(seg_end): _anchor_item(prepare, int(seg_end), 0.0, "segment_boundary"),
         }
 
         details = []
@@ -163,6 +180,7 @@ def build_semantic_anchors(
             left_gap, right_gap, score = _semantic_gap(normalized, left_pos, pos, right_pos)
             row = {
                 "frame_idx": int(idx),
+                "abs_time_sec": _abs_time_at(prepare, int(idx)),
                 "left_gap": float(left_gap),
                 "right_gap": float(right_gap),
                 "score": float(score),
@@ -173,19 +191,26 @@ def build_semantic_anchors(
 
         threshold = 0.18
         if scores:
-            threshold = max(0.08, float(np.mean(scores)) + float(np.std(scores)) * 0.75)
+            arr = np.asarray(scores, dtype=np.float32)
+            median = float(np.median(arr))
+            mad = float(np.median(np.abs(arr - median)))
+            percentile = float(np.percentile(arr, 75))
+            threshold = max(0.07, min(max(percentile, median + mad * 1.5), 0.42))
         semantic_rows = [row for row in details if float(row["score"]) >= threshold]
         semantic_rows.sort(key=lambda row: float(row["score"]), reverse=True)
         max_semantic = max(0, int(max_anchors_per_segment) - 2)
-        for row in semantic_rows[:max_semantic]:
+        min_semantic_spacing = max(1, int(legal_grid.get("grid_step", 1) or 1))
+        chosen_semantic = []
+        for row in semantic_rows:
+            if len(chosen_semantic) >= max_semantic:
+                break
             frame_idx = int(row["frame_idx"])
-            anchor_map[frame_idx] = {
-                "frame_idx": int(frame_idx),
-                "score": float(row["score"]),
-                "reason": "semantic_gain",
-            }
+            if any(abs(frame_idx - int(prev["frame_idx"])) < min_semantic_spacing for prev in chosen_semantic):
+                continue
+            chosen_semantic.append(row)
+            anchor_map[frame_idx] = _anchor_item(prepare, frame_idx, float(row["score"]), "semantic_gain")
 
-        _add_duration_fallback(anchor_map, candidates, max_delta=max_delta)
+        _add_duration_fallback(anchor_map, candidates, max_delta=max_delta, prepare_result=prepare)
 
         fallback_indices = {idx for idx, item in anchor_map.items() if item.get("reason") == "duration_fallback"}
         boundary_indices = {seg_start, seg_end}

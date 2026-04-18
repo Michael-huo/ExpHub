@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -93,7 +91,6 @@ def _build_legacy_manifest(exp_dir, prepare_result, frames_dir, motion_segments,
                 "seg_id": str(item.get("seg_id", "") or "seg_{:04d}".format(int(idx))),
                 "state_label": "motion_{}".format(str(item.get("motion_label", "mixed") or "mixed")),
                 "motion_label": str(item.get("motion_label", "mixed") or "mixed"),
-                "risk_level": "",
                 "start_frame": int(start_idx),
                 "end_frame": int(end_idx),
                 "start_time": float(times[start_idx]) if start_idx < len(times) else 0.0,
@@ -319,7 +316,6 @@ def _build_encode_result(motion_segments, semantic_anchors, generation_units, pr
         "prompt_mode": "base+motion+semantic",
         "legacy_manifest_path": "encode/legacy_segment_manifest.json",
         "transition_artifacts": [
-            "encode/segment_manifest.json",
             "encode/encode_plan.json",
             "encode/prompt_spans.json",
             "encode/encode_report.json",
@@ -360,11 +356,8 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
         xs = [int(item.get("frame_idx", 0) or 0) for item in gap_rows]
         ys = [float(item.get("score", 0.0) or 0.0) for item in gap_rows]
         ax_semantic.plot(xs, ys, color="#444444", linewidth=1.2, label="semantic gap")
-    reason_colors = {
-        "segment_boundary": "#333333",
-        "semantic_gain": "#e377c2",
-        "duration_fallback": "#ff7f0e",
-    }
+    reason_colors = {"segment_boundary": "#333333", "semantic_gain": "#e377c2", "duration_fallback": "#ff7f0e"}
+    reason_markers = {"segment_boundary": "|", "semantic_gain": "o", "duration_fallback": "s"}
     seen_reasons = set()
     for group in list(_as_dict(semantic_anchors).get("segments") or []):
         for item in list(_as_dict(group).get("anchor_items") or []):
@@ -375,7 +368,14 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
             label = reason if reason not in seen_reasons else None
             seen_reasons.add(reason)
             ax_semantic.axvline(idx, color=reason_colors.get(reason, "#17becf"), alpha=0.45, linewidth=1)
-            ax_semantic.scatter([idx], [score], color=reason_colors.get(reason, "#17becf"), s=25, label=label)
+            ax_semantic.scatter(
+                [idx],
+                [score],
+                color=reason_colors.get(reason, "#17becf"),
+                marker=reason_markers.get(reason, "o"),
+                s=45 if reason != "segment_boundary" else 70,
+                label=label,
+            )
     ax_semantic.set_ylabel("Anchor score")
     ax_semantic.set_title("Semantic anchors")
     if seen_reasons:
@@ -384,7 +384,13 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
     for unit_idx, unit in enumerate(list(_as_dict(generation_units).get("units") or [])):
         start = int(unit.get("start_idx", 0) or 0)
         end = int(unit.get("end_idx", start) or start)
-        label = "{} {}-{} len={}".format(str(unit.get("motion_label", "") or ""), start, end, int(unit.get("length", 0) or 0))
+        label = "{}\n{}-{} len={}\n{}".format(
+            str(unit.get("unit_id", "") or ""),
+            start,
+            end,
+            int(unit.get("length", 0) or 0),
+            str(unit.get("motion_label", "") or ""),
+        )
         max_idx = max(max_idx, end)
         color = "#17becf" if unit_idx % 2 == 0 else "#bcbd22"
         ax_units.axvspan(start, end, color=color, alpha=0.35)
@@ -431,10 +437,8 @@ def export_encode_outputs(
     write_json_atomic(encode_dir / "prompts.json", prompts, indent=2)
     write_json_atomic(encode_dir / "encode_result.json", encode_result, indent=2)
     write_json_atomic(runtime.paths.encode_legacy_manifest_path, legacy_manifest, indent=2)
-    write_json_atomic(runtime.paths.segment_manifest_path, legacy_manifest, indent=2)
     write_json_atomic(runtime.paths.encode_plan_path, encode_plan, indent=2)
     write_json_atomic(runtime.paths.prompt_spans_path, prompt_spans, indent=2)
     write_json_atomic(runtime.paths.encode_report_path, encode_report, indent=2)
     write_encode_overview(encode_dir / "encode_overview.png", motion_segments, semantic_anchors, generation_units)
-    shutil.copy2(str(encode_dir / "encode_overview.png"), str(runtime.paths.encode_segmentation_overview_path))
     return encode_dir / "encode_result.json"
