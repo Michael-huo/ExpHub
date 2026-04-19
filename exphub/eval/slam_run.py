@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import re
-import shutil
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +13,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic
+from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, write_json_atomic
 from exphub.common.logging import log_info, log_prog, log_warn
 
 try:
@@ -42,6 +42,12 @@ class StreamConfig:
     divisible: int = 8
 
 
+def _get_arg(config, name, default=None):
+    if isinstance(config, dict):
+        return config.get(name, default)
+    return getattr(config, name, default)
+
+
 def _read_text(path_obj):
     return Path(path_obj).read_text(encoding="utf-8")
 
@@ -59,10 +65,7 @@ def _parse_frame_index(name):
 def _load_calib(calib_source):
     import numpy as np
 
-    if isinstance(calib_source, (list, tuple)):
-        arr = np.asarray(list(calib_source), dtype=np.float64).reshape(-1)
-    else:
-        arr = np.loadtxt(str(calib_source), delimiter=" ")
+    arr = np.loadtxt(str(calib_source), delimiter=" ")
     arr = np.asarray(arr, dtype=np.float64).reshape(-1)
     if arr.size < 4:
         raise ValueError("calib must have >=4 numbers: {}".format(calib_source))
@@ -72,16 +75,6 @@ def _load_calib(calib_source):
 
 
 def _load_timestamps_list(ts_source):
-    if isinstance(ts_source, (list, tuple)):
-        out = []
-        for item in list(ts_source):
-            try:
-                out.append(float(item))
-            except Exception:
-                continue
-        return out
-    if ts_source is None:
-        return []
     out = []
     for line in _read_text(ts_source).splitlines():
         text = str(line).strip()
@@ -129,8 +122,8 @@ def _make_intrinsics_tensor_demo(cfg, w0, h0, w1_pre, h1_pre):
     import torch
 
     intrinsics = torch.as_tensor([cfg.fx, cfg.fy, cfg.cx, cfg.cy], dtype=torch.float32)
-    intrinsics[0::2] *= (float(w1_pre) / float(w0))
-    intrinsics[1::2] *= (float(h1_pre) / float(h0))
+    intrinsics[0::2] *= float(w1_pre) / float(w0)
+    intrinsics[1::2] *= float(h1_pre) / float(h0)
     return intrinsics
 
 
@@ -138,8 +131,8 @@ def _make_intrinsics_tensor_correct(cfg, w0, h0, w1, h1):
     import torch
 
     intrinsics = torch.as_tensor([cfg.fx, cfg.fy, cfg.cx, cfg.cy], dtype=torch.float32)
-    intrinsics[0::2] *= (float(w1) / float(w0))
-    intrinsics[1::2] *= (float(h1) / float(h0))
+    intrinsics[0::2] *= float(w1) / float(w0)
+    intrinsics[1::2] *= float(h1) / float(h0)
     return intrinsics
 
 
@@ -267,53 +260,6 @@ def _show_image(image_chw):
     cv2.waitKey(1)
 
 
-def _resolve_input_paths(root_dir, prepare_result_path=""):
-    root = Path(root_dir).resolve()
-    frames_dir = ensure_dir(root / "frames", "slam input frames")
-    calib_file = root / "calib.txt"
-    timestamps_file = root / "timestamps.txt"
-    if calib_file.is_file() and timestamps_file.is_file():
-        source_path = root / "decode_merge_report.json"
-        return frames_dir, calib_file, timestamps_file, source_path if source_path.is_file() else timestamps_file
-
-    manifest_candidates = [
-        root / "prepare_result.json",
-        Path(prepare_result_path).resolve() if str(prepare_result_path or "").strip() else None,
-        root.parent / "prepare" / "prepare_result.json",
-        root / "input_report.json",
-        root.parent / "encode" / "legacy_segment_manifest.json",
-        root.parent / "input" / "input_report.json",
-    ]
-    manifest_path = None
-    for candidate in manifest_candidates:
-        if candidate is not None and Path(candidate).is_file():
-            manifest_path = Path(candidate).resolve()
-            break
-    if manifest_path is None:
-        raise RuntimeError("missing required slam input report: {}".format(manifest_candidates[0].resolve()))
-    manifest_obj = dict(read_json_dict(manifest_path) or {})
-    camera_obj = dict(manifest_obj.get("camera") or {})
-    calib_source = list(camera_obj.get("calib") or [])
-    timestamps_source = list(camera_obj.get("timestamps") or [])
-    if not calib_source:
-        intrinsics = dict(manifest_obj.get("normalized_intrinsics") or {})
-        if intrinsics:
-            calib_source = [
-                intrinsics.get("fx"),
-                intrinsics.get("fy"),
-                intrinsics.get("cx"),
-                intrinsics.get("cy"),
-            ] + list(intrinsics.get("dist") or [])
-    if not timestamps_source:
-        frame_index_map = dict(manifest_obj.get("frame_index_map") or {})
-        timestamps_source = list(
-            frame_index_map.get("prepared_to_rel_time_sec")
-            or frame_index_map.get("prepared_to_time_sec")
-            or []
-        )
-    return frames_dir, calib_source, timestamps_source, manifest_path
-
-
 def _setup_droid_import(droid_repo):
     repo = Path(droid_repo).resolve()
     if not repo.is_dir():
@@ -331,23 +277,20 @@ def _relative_path(base_dir, target_path):
         return str(target)
 
 
-def _copy_if_exists(src_path, dst_path):
-    src = Path(src_path).resolve()
-    if not src.is_file():
-        return ""
-    dst = Path(dst_path).resolve()
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(src), str(dst))
-    return str(dst)
+def _track_args(config):
+    args = argparse.Namespace(**dict(config))
+    args.stereo = False
+    return args
 
 
-def _run_track(exp_dir, track_name, input_root, args):
+def _run_track(exp_dir, track_name, frames_dir, args):
     import torch
 
-    frames_dir, calib_source, timestamps_source, manifest_path = _resolve_input_paths(
-        input_root,
-        getattr(args, "prepare_result", ""),
-    )
+    started = time.time()
+    frames_dir = ensure_dir(frames_dir, "{} frames dir".format(track_name))
+    calib_path = ensure_file(args.decode_calib, "decode calib")
+    timestamps_path = ensure_file(args.decode_timestamps, "decode timestamps")
+
     files = list_frames_sorted(frames_dir)
     if args.t0 > 0:
         files = files[args.t0 :]
@@ -358,8 +301,8 @@ def _run_track(exp_dir, track_name, input_root, args):
     if not files:
         raise RuntimeError("no frames available for slam track {}: {}".format(track_name, frames_dir))
 
-    fx, fy, cx, cy, dist = _load_calib(calib_source)
-    timestamps = _load_timestamps_list(timestamps_source)
+    fx, fy, cx, cy, dist = _load_calib(calib_path)
+    timestamps = _load_timestamps_list(timestamps_path)
 
     _setup_droid_import(args.droid_repo)
     from droid import Droid  # noqa
@@ -370,26 +313,6 @@ def _run_track(exp_dir, track_name, input_root, args):
 
     track_dir = Path(args.out_dir).resolve() / str(track_name)
     track_dir.mkdir(parents=True, exist_ok=True)
-
-    run_meta = {
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "track": str(track_name),
-        "input_root": str(Path(input_root).resolve()),
-        "frames_dir": str(frames_dir),
-        "calib": f"{manifest_path}#camera.calib",
-        "timestamps": f"{manifest_path}#camera.timestamps",
-        "slam_out_dir": str(track_dir),
-        "droid_repo": str(Path(args.droid_repo).resolve()),
-        "weights": str(weights_path.resolve()),
-        "t0": int(args.t0),
-        "stride": int(args.stride),
-        "max_frames": int(args.max_frames),
-        "fx_fy_cx_cy": [fx, fy, cx, cy],
-        "dist_len": int(dist.size) if dist is not None else 0,
-        "undistort_mode": str(args.undistort_mode),
-        "resize_interp": str(args.resize_interp),
-        "intr_scale_mode": str(args.intr_scale_mode),
-    }
 
     torch.multiprocessing.set_start_method("spawn", force=True)
     stream_cfg = StreamConfig(
@@ -434,59 +357,66 @@ def _run_track(exp_dir, track_name, input_root, args):
     try:
         traj_est = droid.terminate(stream_for_terminate())
     except ValueError as exc:
-        # DROID can fail to build any backend proximity edges on very short clips.
-        # In that case we still have a valid tracked keyframe trajectory, so fall
-        # back to the trajectory filler without swallowing unrelated errors.
         if "not enough values to unpack" not in str(exc):
             raise
         log_warn("slam backend produced no proximity factors; using trajectory filler only")
         camera_trajectory = droid.traj_filler(stream_for_terminate())
         traj_est = camera_trajectory.inv().data.cpu().numpy()
         termination_mode = "traj_filler_only"
+
     tum_path = (track_dir / "traj_est.tum").resolve()
     npz_path = (track_dir / "traj_est.npz").resolve()
     _save_trajectory(traj_est, timestamps_used, tum_path=tum_path, npz_path=npz_path)
 
-    run_meta.update(
-        {
-            "frames_processed": int(len(timestamps_used)),
-            "timestamp_first": float(timestamps_used[0]) if timestamps_used else None,
-            "timestamp_last": float(timestamps_used[-1]) if timestamps_used else None,
-            "tum_path": str(tum_path),
-            "npz_path": str(npz_path),
-            "termination_mode": termination_mode,
-        }
-    )
+    run_meta = {
+        "version": 1,
+        "source": "eval.slam_run.track.v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "track": str(track_name),
+        "frames_dir": _relative_path(exp_dir, frames_dir),
+        "num_frames": int(len(files)),
+        "frames_processed": int(len(timestamps_used)),
+        "calib_source": _relative_path(exp_dir, calib_path),
+        "timestamps_source": _relative_path(exp_dir, timestamps_path),
+        "trajectory_path": _relative_path(exp_dir, tum_path),
+        "npz_path": _relative_path(exp_dir, npz_path),
+        "runtime_sec": float(time.time() - started),
+        "termination_mode": termination_mode,
+        "droid_repo": str(Path(args.droid_repo).resolve()),
+        "weights": str(weights_path.resolve()),
+        "timestamp_first": float(timestamps_used[0]) if timestamps_used else None,
+        "timestamp_last": float(timestamps_used[-1]) if timestamps_used else None,
+    }
     run_meta_path = (track_dir / "run_meta.json").resolve()
     write_json_atomic(run_meta_path, run_meta, indent=2)
     log_prog("slam summary: track={} frames_processed={}".format(track_name, int(len(timestamps_used))))
 
     return {
-        "track": str(track_name),
-        "input_root": _relative_path(exp_dir, input_root),
         "frames_dir": _relative_path(exp_dir, frames_dir),
-        "traj_path": _relative_path(exp_dir, tum_path),
+        "num_frames": int(len(files)),
+        "frames_processed": int(len(timestamps_used)),
+        "calib_source": _relative_path(exp_dir, calib_path),
+        "timestamps_source": _relative_path(exp_dir, timestamps_path),
+        "trajectory_path": _relative_path(exp_dir, tum_path),
         "npz_path": _relative_path(exp_dir, npz_path),
         "run_meta_path": _relative_path(exp_dir, run_meta_path),
-        "frames_processed": int(len(timestamps_used)),
+        "runtime_sec": float(run_meta["runtime_sec"]),
         "status": "success",
         "termination_mode": termination_mode,
     }
 
 
-def _write_slam_report(report_path, report_obj):
-    payload = dict(report_obj or {})
-    payload["report_path"] = str(Path(report_path).resolve())
-    write_json_atomic(report_path, payload, indent=2)
-    return Path(report_path).resolve()
-
-
-def run_slam_substage(args):
+def run_slam(config):
+    args = _track_args(config)
     exp_dir = Path(args.exp_dir).resolve()
     out_dir = Path(args.out_dir).resolve()
-    if out_dir.exists():
-        shutil.rmtree(str(out_dir), ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    prepare_result_path = ensure_file(args.prepare_result, "prepare result")
+    generation_units_path = ensure_file(args.generation_units, "generation units")
+    encode_result_path = ensure_file(args.encode_result, "encode result")
+    decode_report_path = ensure_file(args.decode_report, "decode report")
+    decode_merge_report_path = ensure_file(args.decode_merge_report, "decode merge report")
 
     seq = str(args.seq or "both").strip().lower()
     if seq == "auto":
@@ -494,81 +424,39 @@ def run_slam_substage(args):
     if seq not in ("ori", "gen", "both"):
         raise RuntimeError("unsupported slam seq: {}".format(seq))
 
-    infer_report = dict(read_json_dict(Path(args.infer_report)) or {})
-    encode_result = dict(read_json_dict(Path(getattr(args, "encode_result", ""))) or {})
-    merge_report = dict(read_json_dict(Path(args.merge_report)) or {})
-    merge_manifest = dict(read_json_dict(Path(args.merge_manifest)) or {})
-    merge_summary = dict(merge_manifest.get("summary") or {})
-    if not merge_summary:
-        merge_summary = dict(merge_report.get("summary") or {})
-
-    track_specs = []
+    tracks = {}
     if seq in ("ori", "both"):
-        track_specs.append(("ori", Path(args.segment_dir).resolve()))
+        tracks["ori"] = _run_track(exp_dir, "ori", args.prepare_frames_dir, args)
     if seq in ("gen", "both"):
-        track_specs.append(("gen", Path(args.merge_dir).resolve()))
+        tracks["gen"] = _run_track(exp_dir, "gen", args.decode_frames_dir, args)
 
-    track_reports = {}
-    for track_name, input_root in track_specs:
-        track_reports[track_name] = _run_track(exp_dir, track_name, input_root, args)
-
-    primary_track = "gen" if "gen" in track_reports else "ori"
-    primary_src = (out_dir / primary_track / "traj_est.tum").resolve()
-    primary_dst = (out_dir / "traj_est.txt").resolve()
-    primary_path = _copy_if_exists(primary_src, primary_dst)
-
-    reference_path = ""
-    if "ori" in track_reports:
-        reference_path = str((out_dir / "ori" / "traj_est.tum").resolve())
-
+    inputs = {
+        "prepare_result": _relative_path(exp_dir, prepare_result_path),
+        "prepare_frames_dir": _relative_path(exp_dir, Path(args.prepare_frames_dir).resolve()),
+        "generation_units": _relative_path(exp_dir, generation_units_path),
+        "encode_result": _relative_path(exp_dir, encode_result_path),
+        "decode_frames_dir": _relative_path(exp_dir, Path(args.decode_frames_dir).resolve()),
+        "decode_calib": _relative_path(exp_dir, Path(args.decode_calib).resolve()),
+        "decode_timestamps": _relative_path(exp_dir, Path(args.decode_timestamps).resolve()),
+        "decode_report": _relative_path(exp_dir, decode_report_path),
+        "decode_merge_report": _relative_path(exp_dir, decode_merge_report_path),
+    }
     report = {
-        "report_schema_version": "eval_slam_report.v1",
-        "step": "eval",
-        "substage": "slam",
+        "version": 1,
+        "source": "eval.slam_run.v1",
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "slam_status": "success",
-        "planner": "generation_units",
-        "prompt_strategy": str(infer_report.get("prompt_strategy", "") or encode_result.get("prompt_mode", "") or "prompts"),
-        "source_unit_count": int(merge_summary.get("source_unit_count", 0) or encode_result.get("num_generation_units", 0) or 0),
-        "source_span_count": int(merge_summary.get("source_span_count", 0) or 0),
-        "shared_anchor_count": int(merge_summary.get("shared_anchor_count", 0) or 0),
+        "status": "success",
         "requested_seq": str(seq),
-        "primary_track": str(primary_track),
-        "primary_trajectory_path": _relative_path(exp_dir, primary_path) if primary_path else "",
-        "reference_track": "ori" if "ori" in track_reports else "",
-        "reference_trajectory_path": _relative_path(exp_dir, reference_path) if reference_path else "",
-        "inputs": {
-            "infer_report": _relative_path(exp_dir, Path(args.infer_report).resolve()),
-            "merge_report": _relative_path(exp_dir, Path(args.merge_report).resolve()),
-            "merge_manifest": _relative_path(exp_dir, Path(args.merge_manifest).resolve()),
-            "prepare_result": _relative_path(exp_dir, Path(getattr(args, "prepare_result", "")).resolve())
-            if str(getattr(args, "prepare_result", "") or "").strip()
-            else "",
-            "generation_units": _relative_path(exp_dir, Path(getattr(args, "generation_units", "")).resolve())
-            if str(getattr(args, "generation_units", "") or "").strip()
-            else "",
-            "encode_result": _relative_path(exp_dir, Path(getattr(args, "encode_result", "")).resolve())
-            if str(getattr(args, "encode_result", "") or "").strip()
-            else "",
-            "segment_dir": _relative_path(exp_dir, Path(args.segment_dir).resolve()),
-            "merge_dir": _relative_path(exp_dir, Path(args.merge_dir).resolve()),
-        },
-        "tracks": track_reports,
-        "artifact_contract": {
-            "formal_files": [
-                "eval_slam_report.json",
-                "traj_est.txt",
-            ],
-            "formal_track_files": [
-                "<track>/traj_est.tum",
-                "<track>/traj_est.npz",
-                "<track>/run_meta.json",
-            ],
-            "track_dirs": sorted(track_reports.keys()),
-        },
+        "input_source_kind": "native",
+        "native_inputs": list(inputs.values()),
+        "fallback_used": False,
+        "inputs": inputs,
+        "ori": dict(tracks.get("ori") or {}),
+        "gen": dict(tracks.get("gen") or {}),
         "warnings": [],
     }
-    report_path = _write_slam_report(out_dir / "eval_slam_report.json", report)
+    report_path = out_dir / "eval_slam_report.json"
+    write_json_atomic(report_path, report, indent=2)
     log_info("eval slam report: {}".format(report_path))
     return {
         "report_path": report_path,
@@ -579,19 +467,19 @@ def run_slam_substage(args):
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-formal-mainline", action="store_true")
+    parser.add_argument("--run-native-slam", action="store_true")
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
-    parser.add_argument("--segment_dir", required=True)
-    parser.add_argument("--prepare_result", default="")
-    parser.add_argument("--generation_units", default="")
-    parser.add_argument("--encode_result", default="")
-    parser.add_argument("--infer_dir", required=True)
-    parser.add_argument("--infer_report", required=True)
-    parser.add_argument("--merge_dir", required=True)
-    parser.add_argument("--merge_report", required=True)
-    parser.add_argument("--merge_manifest", required=True)
-    parser.add_argument("--seq", default="both")
+    parser.add_argument("--prepare_result", required=True)
+    parser.add_argument("--prepare_frames_dir", required=True)
+    parser.add_argument("--generation_units", required=True)
+    parser.add_argument("--encode_result", required=True)
+    parser.add_argument("--decode_frames_dir", required=True)
+    parser.add_argument("--decode_calib", required=True)
+    parser.add_argument("--decode_timestamps", required=True)
+    parser.add_argument("--decode_report", required=True)
+    parser.add_argument("--decode_merge_report", required=True)
+    parser.add_argument("--seq", default="both", choices=["auto", "ori", "gen", "both"])
     parser.add_argument("--droid_repo", required=True)
     parser.add_argument("--weights", required=True)
     parser.add_argument("--t0", default=0, type=int)
@@ -622,10 +510,9 @@ def _build_arg_parser():
 
 def main(argv=None):
     args = _build_arg_parser().parse_args(argv)
-    if not args.run_formal_mainline:
-        raise SystemExit("eval slam helper requires --run-formal-mainline")
-    args.stereo = False
-    run_slam_substage(args)
+    if not args.run_native_slam:
+        raise SystemExit("eval slam helper requires --run-native-slam")
+    run_slam(vars(args))
 
 
 if __name__ == "__main__":
