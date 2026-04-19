@@ -1,3 +1,3 @@
-from exphub.decode.pipeline_run import run
+from exphub.decode.decode import run
 
 __all__ = ["run"]

@@ -14,7 +14,7 @@ from exphub.common.subprocess import RunError, RunnerConfig, StepRunner, detect_
 from exphub.config import get_phase_python_config, load_datasets_cfg, resolve_dataset
 from exphub.meta import ExperimentSpec, STAGE_ORDER
 
-from .decode import pipeline_run as decode_pipeline
+from .decode import decode as decode_pipeline
 from .encode import encode as encode_pipeline
 from .eval import pipeline_run as eval_pipeline
 from .export import pipeline_run as export_pipeline
@@ -327,7 +327,7 @@ def build_runtime(args) -> PipelineRuntime:
 def _validate_scripts(runtime: PipelineRuntime) -> None:
     required = [
         (runtime.exphub_root / "exphub" / "encode" / "encode.py").resolve(),
-        (runtime.exphub_root / "exphub" / "decode" / "pipeline_run.py").resolve(),
+        (runtime.exphub_root / "exphub" / "decode" / "decode.py").resolve(),
         (runtime.exphub_root / "exphub" / "eval" / "pipeline_run.py").resolve(),
         (runtime.exphub_root / "exphub" / "export" / "pipeline_run.py").resolve(),
     ]

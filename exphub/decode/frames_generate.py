@@ -3,106 +3,46 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
-import sys
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Dict, List
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-from exphub.common.io import ensure_dir, ensure_file, write_json_atomic
+from exphub.common.io import ensure_dir, list_frames_sorted, read_json_dict, write_json_atomic
 from exphub.common.logging import log_info, log_prog
-from .plans_build import (
-    ImageGenRequest,
-    build_execution_plan,
-    build_image_gen_runtime,
-    build_prompt_resolution,
-    merge_prompt_resolution_into_runs_plan,
-    write_backend_runtime_files,
-)
-from .runtime_manage import create_backend
 
 
 REPORT_FILENAME = "decode_report.json"
 
 
-def run(runtime):
-    decode_root = runtime.paths.decode_dir
-    ensure_dir(runtime.paths.input_frames_dir, "input frames dir")
-    ensure_file(runtime.paths.prepare_result_path, "prepare result")
-    ensure_file(runtime.paths.encode_generation_units_path, "generation units")
-    ensure_file(runtime.paths.encode_prompts_path, "prompts")
-    ensure_file(runtime.paths.encode_result_path, "encode result")
-
-    runtime.paths.exp_dir.mkdir(parents=True, exist_ok=True)
-    runtime.remove_in_exp(decode_root)
-
-    infer_phase = runtime.infer_phase_name()
-    cmd = [
-        "-m",
-        "exphub.decode.frames_generate",
-        "--run-formal-mainline",
-        "--exp_dir",
-        str(runtime.paths.exp_dir),
-        "--frames_dir",
-        str(runtime.paths.input_frames_dir),
-        "--prepare_result",
-        str(runtime.paths.prepare_result_path),
-        "--generation_units",
-        str(runtime.paths.encode_generation_units_path),
-        "--prompts",
-        str(runtime.paths.encode_prompts_path),
-        "--encode_result",
-        str(runtime.paths.encode_result_path),
-        "--legacy_segment_manifest",
-        str(runtime.paths.decode_manifest_path),
-        "--videox_root",
-        str(runtime.args.videox_root),
-        "--gpus",
-        str(runtime.args.gpus),
-        "--fps",
-        runtime.fps_arg,
-        "--kf_gap",
-        str(runtime.spec.kf_gap),
-        "--seed_base",
-        str(runtime.args.seed_base),
-        "--infer_backend",
-        str(runtime.args.infer_backend),
-        "--infer_model_dir",
-        str(runtime.args.infer_model_dir),
-        "--backend_python_phase",
-        str(infer_phase),
-    ]
-    if runtime.args.infer_extra:
-        cmd.extend(["--infer_extra", str(runtime.args.infer_extra)])
-
-    runtime.step_runner.run_env_python(
-        cmd,
-        phase_name=infer_phase,
-        log_name="infer.log",
-        cwd=runtime.exphub_root,
-    )
-
-    ensure_dir(runtime.paths.decode_runs_dir, "image gen runs dir")
-    ensure_file(runtime.paths.decode_plan_path, "decode plan")
-    ensure_file(runtime.paths.decode_report_path, "decode report")
-    return runtime.paths.decode_report_path
+@dataclass
+class WanTaskRequest(object):
+    frames_dir: Path
+    exp_dir: Path
+    prompt_file_path: Path
+    execution_plan_path: Path
+    runs_parent: Path
+    fps: int
+    kf_gap: int
+    base_idx: int
+    num_segments: int
+    seed_base: int
+    gpus: int
+    schedule_source: str
+    execution_backend: str
+    execution_segments: List[Dict[str, object]] = field(default_factory=list)
+    infer_extra: List[str] = field(default_factory=list)
 
 
-def _mean(values):
-    if not values:
-        return 0.0
-    return float(sum(values)) / float(len(values))
-
-
-def _list_frame_count(frames_dir):
-    count = 0
-    for item in Path(frames_dir).resolve().iterdir():
-        if item.is_file():
-            count += 1
-    return int(count)
+def _relative_path(base_dir, target_path):
+    base = Path(base_dir).resolve()
+    target = Path(target_path).resolve()
+    try:
+        return str(target.relative_to(base))
+    except Exception:
+        return str(target)
 
 
 def _normalize_extra(extra_args):
@@ -115,454 +55,367 @@ def _normalize_extra(extra_args):
     return extra
 
 
-def _validate_execution_segments(frames_avail, execution_segments):
-    if frames_avail <= 0:
-        raise RuntimeError("segment has no frames")
-    for idx, item in enumerate(list(execution_segments or [])):
-        start_idx = int(item.get("start_idx", 0) or 0)
-        end_idx = int(item.get("end_idx", 0) or 0)
-        if start_idx < 0 or end_idx < start_idx:
-            raise RuntimeError("invalid execution segment range at index {}".format(idx))
-        if end_idx >= int(frames_avail):
-            raise RuntimeError(
-                "execution segment {} exceeds frames_dir range: end_idx={} frames_avail={}".format(
-                    idx,
-                    int(end_idx),
-                    int(frames_avail),
-                )
-            )
-
-
-def _sha1_bytes(payload_bytes):
-    import hashlib
-
-    return hashlib.sha1(payload_bytes).hexdigest()
-
-
-def _relative_path(base_dir, target_path):
-    base = Path(base_dir).resolve()
-    target = Path(target_path).resolve()
-    try:
-        return str(target.relative_to(base))
-    except Exception:
-        return str(target)
-
-
-def _segment_summary(plan_segments):
-    aligned_frames = []
-    actual_frames = []
-    prompt_sources = {}
-    start_idx = None
-    end_idx = None
-    for item in list(plan_segments or []):
-        if not isinstance(item, dict):
-            continue
-        aligned_num_frames = int(item.get("aligned_num_frames", item.get("num_frames", 0)) or 0)
-        if aligned_num_frames > 0:
-            aligned_frames.append(aligned_num_frames)
-        actual_saved_frames = int(item.get("actual_saved_frames", 0) or 0)
-        if actual_saved_frames > 0:
-            actual_frames.append(actual_saved_frames)
-        prompt_source = str(item.get("prompt_source", "") or "").strip()
-        if prompt_source:
-            prompt_sources[prompt_source] = int(prompt_sources.get(prompt_source, 0)) + 1
-        try:
-            item_start = int(item.get("aligned_start_idx", item.get("start_idx")))
-            item_end = int(item.get("aligned_end_idx", item.get("end_idx")))
-        except Exception:
-            continue
-        start_idx = item_start if start_idx is None else min(start_idx, item_start)
-        end_idx = item_end if end_idx is None else max(end_idx, item_end)
-    return {
-        "segment_count": int(len(list(plan_segments or []))),
-        "start_idx": start_idx,
-        "end_idx": end_idx,
-        "aligned_num_frames_min": min(aligned_frames) if aligned_frames else None,
-        "aligned_num_frames_max": max(aligned_frames) if aligned_frames else None,
-        "aligned_num_frames_sum": int(sum(aligned_frames)) if aligned_frames else 0,
-        "actual_saved_frames_sum": int(sum(actual_frames)) if actual_frames else 0,
-        "prompt_source_counts": prompt_sources,
-        "segment_preview": [
+def _task_payload(tasks_payload, backend_name):
+    tasks = list(tasks_payload.get("tasks") or [])
+    segments = []
+    for idx, task in enumerate(tasks):
+        start_idx = int(task["start_idx"])
+        end_idx = int(task["end_idx"])
+        length = int(task["length"])
+        segments.append(
             {
-                "seg": item.get("seg"),
-                "segment_id": item.get("segment_id"),
-                "raw_start_idx": item.get("raw_start_idx"),
-                "raw_end_idx": item.get("raw_end_idx"),
-                "aligned_start_idx": item.get("aligned_start_idx", item.get("start_idx")),
-                "aligned_end_idx": item.get("aligned_end_idx", item.get("end_idx")),
-                "aligned_num_frames": item.get("aligned_num_frames", item.get("num_frames")),
-                "actual_saved_frames": item.get("actual_saved_frames"),
-                "prompt_source": item.get("prompt_source"),
-                "state_segment_id": item.get("state_segment_id"),
-                "state_label": item.get("state_label"),
+                "seg": int(idx),
+                "segment_id": int(idx),
+                "unit_id": str(task["unit_id"]),
+                "source_unit_id": str(task["unit_id"]),
+                "source_span_id": str(dict(task.get("source_prompt_ref") or {}).get("span_id", "")),
+                "source_prompt_ref": dict(task.get("source_prompt_ref") or {}),
+                "run_id": "run_{:03d}".format(idx),
+                "run_name": str(task["run_name"]),
+                "schedule_source": "decode.native_tasks",
+                "execution_backend": str(backend_name),
+                "start_idx": int(start_idx),
+                "end_idx": int(end_idx),
+                "raw_start_idx": int(start_idx),
+                "raw_end_idx": int(end_idx),
+                "desired_start_idx": int(start_idx),
+                "desired_end_idx": int(end_idx),
+                "desired_num_frames": int(length),
+                "aligned_start_idx": int(start_idx),
+                "aligned_end_idx": int(end_idx),
+                "aligned_num_frames": int(length),
+                "deploy_start_idx": int(start_idx),
+                "deploy_end_idx": int(end_idx),
+                "raw_gap": int(end_idx - start_idx),
+                "deploy_gap": int(end_idx - start_idx),
+                "num_frames": int(length),
+                "target_num_frames": int(length),
+                "align_reason": str(task.get("align_reason", "generation_unit_shared_anchor") or "generation_unit_shared_anchor"),
+                "is_valid_for_decode": True,
+                "is_valid_for_export": bool(task.get("is_valid_for_export", False)),
+                "state_label": str(task.get("scene_label", "") or ""),
+                "motion_label": str(task.get("motion_label", "") or ""),
+                "prompt_source": str(task.get("prompt_source", "prompts.assembled_prompt") or "prompts.assembled_prompt"),
+                "base_prompt": str(task.get("base_prompt", "") or ""),
+                "resolved_prompt": str(task["prompt"]),
+                "negative_prompt": str(task.get("negative_prompt", "") or ""),
+                "prompt": str(task["prompt"]),
+                "prompt_hash8": str(task.get("prompt_hash8", "") or ""),
+                "num_inference_steps": task.get("num_inference_steps"),
+                "guidance_scale": task.get("guidance_scale"),
             }
-            for item in list(plan_segments or [])[:5]
-            if isinstance(item, dict)
-        ],
+        )
+    base_prompt = str(tasks[0].get("base_prompt", "") or tasks[0].get("prompt", "")) if tasks else ""
+    negative_prompt = str(tasks[0].get("negative_prompt", "") or "") if tasks else ""
+    return {
+        "version": 1,
+        "schema": "decode_tasks_runtime.v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "planner": "generation_units",
+        "prompt_strategy": "prompts",
+        "source": "decode.native_tasks",
+        "base_prompt": base_prompt,
+        "negative_prompt": negative_prompt,
+        "execution_backend": str(backend_name),
+        "schedule_source": "decode.native_tasks",
+        "source_inputs": dict(tasks_payload.get("source_inputs") or {}),
+        "segments": segments,
+        "tasks": tasks,
+        "summary": dict(tasks_payload.get("summary") or {}),
     }
 
 
-def _load_run_actuals(run_dir):
-    run_root = Path(run_dir).resolve()
-    params_path = ensure_file(run_root / "params.json", "image gen run params")
-    params_obj = json.loads(params_path.read_text(encoding="utf-8"))
-    if not isinstance(params_obj, dict):
-        raise RuntimeError("invalid image gen run params: {}".format(params_path))
+def _execution_segments(tasks_payload, backend_name):
+    return list(_task_payload(tasks_payload, backend_name).get("segments") or [])
 
-    frames_dir = ensure_dir(run_root / "frames", "image gen run frames")
-    saved_frame_count = _list_frame_count(frames_dir)
-    if saved_frame_count <= 0:
-        raise RuntimeError("image gen run produced zero saved frames: {}".format(run_root))
 
-    video_length_run = int(params_obj.get("video_length_run", 0) or 0)
-    if video_length_run <= 0:
-        raise RuntimeError("image gen run params missing video_length_run: {}".format(params_path))
-    if video_length_run != saved_frame_count:
+def _write_backend_task_payload(decode_dir, tasks_payload, backend_name):
+    payload = _task_payload(tasks_payload, backend_name)
+    path = Path(decode_dir).resolve() / "decode_tasks_runtime.json"
+    write_json_atomic(path, payload, indent=2)
+    return path, payload
+
+
+def _validate_run_output(task, run_dir):
+    run_root = ensure_dir(run_dir, "decode unit run dir")
+    params_path = run_root / "params.json"
+    if not params_path.is_file():
+        raise RuntimeError("WAN backend did not write params.json for {}".format(task["unit_id"]))
+    frames_dir = ensure_dir(run_root / "frames", "decode unit frames dir")
+    frames = list_frames_sorted(frames_dir)
+    if not frames:
+        raise RuntimeError("WAN backend produced zero frames for {}".format(task["unit_id"]))
+    params = read_json_dict(params_path)
+    expected = int(params.get("video_length_run", task["length"]) or 0)
+    if expected != len(frames):
         raise RuntimeError(
-            "image gen run frame count mismatch: run_dir={} params.video_length_run={} saved_frames={}".format(
-                run_root,
-                int(video_length_run),
-                int(saved_frame_count),
+            "decode unit frame count mismatch for {}: params.video_length_run={} files={}".format(
+                task["unit_id"],
+                expected,
+                len(frames),
             )
         )
-
+    if int(params.get("start_idx", task["start_idx"]) or 0) != int(task["start_idx"]):
+        raise RuntimeError("decode unit {} params start_idx mismatch".format(task["unit_id"]))
+    if int(params.get("end_idx", task["end_idx"]) or 0) != int(task["end_idx"]):
+        raise RuntimeError("decode unit {} params end_idx mismatch".format(task["unit_id"]))
     return {
         "params_path": params_path,
         "frames_dir": frames_dir,
-        "saved_frame_count": int(saved_frame_count),
-        "start_idx": int(params_obj.get("start_idx", 0) or 0),
-        "end_idx": int(params_obj.get("end_idx", 0) or 0),
+        "num_frames": int(len(frames)),
+        "params": params,
     }
 
 
-def _augment_runs_plan_with_saved_frames(infer_dir, plan_obj):
-    infer_root = Path(infer_dir).resolve()
-    plan = dict(plan_obj or {})
-    segments = list(plan.get("segments") or [])
-    if not segments:
-        raise RuntimeError("runs plan contains zero segments")
-
-    for idx, raw_item in enumerate(segments):
-        if not isinstance(raw_item, dict):
-            raise RuntimeError("invalid runs plan segment at index {}: not an object".format(idx))
-        aligned_start_idx = raw_item.get("aligned_start_idx")
-        aligned_end_idx = raw_item.get("aligned_end_idx")
-        aligned_num_frames = raw_item.get("aligned_num_frames")
-        if aligned_start_idx is None or aligned_end_idx is None or aligned_num_frames is None:
-            raise RuntimeError("runs plan missing aligned contract fields at segment {}".format(idx))
-
-        run_name = str(raw_item.get("run_name", "") or "").strip()
-        if not run_name:
-            raise RuntimeError("runs plan missing run_name at segment {}".format(idx))
-        actual = _load_run_actuals(infer_root / "runs" / run_name)
-        if int(actual["saved_frame_count"]) != int(aligned_num_frames):
-            raise RuntimeError(
-                "aligned/actual frame count mismatch for run {}: aligned_num_frames={} actual_saved_frames={}".format(
-                    run_name,
-                    int(aligned_num_frames),
-                    int(actual["saved_frame_count"]),
-                )
-            )
-        if int(actual["start_idx"]) != int(aligned_start_idx) or int(actual["end_idx"]) != int(aligned_end_idx):
-            raise RuntimeError(
-                "aligned/params range mismatch for run {}: aligned={}..{} params={}..{}".format(
-                    run_name,
-                    int(aligned_start_idx),
-                    int(aligned_end_idx),
-                    int(actual["start_idx"]),
-                    int(actual["end_idx"]),
-                )
-            )
-        raw_item["actual_saved_frames"] = int(actual["saved_frame_count"])
-        raw_item["actual_saved_start_idx"] = int(aligned_start_idx)
-        raw_item["actual_saved_end_idx"] = int(aligned_end_idx)
-        raw_item["run_params_path"] = _relative_path(infer_root.parent, actual["params_path"])
-        raw_item["run_frames_dir"] = _relative_path(infer_root.parent, actual["frames_dir"])
-
-    plan["segments"] = segments
-    return plan
-
-
-def build_image_gen_report(exp_dir, infer_dir, runs_plan_obj, prompt_resolution, backend_meta, backend_result, runtime_summary):
-    infer_dir = Path(infer_dir).resolve()
-    exp_dir = Path(exp_dir).resolve()
-    runs_plan_path = (infer_dir / "decode_plan.json").resolve()
-    runs_plan_bytes = runs_plan_path.read_bytes()
-    plan_segments = list((runs_plan_obj or {}).get("segments", []) or [])
-
-    source_files = dict((prompt_resolution or {}).get("prompt_resolution", {}).get("source_files", {}) or {})
+def _build_decode_plan(exp_dir, tasks_payload, report, fps, kf_gap, seed_base):
+    exp_root = Path(exp_dir).resolve()
+    per_unit = {str(item.get("unit_id", "")): dict(item) for item in list(report.get("units") or [])}
+    segments = []
+    for idx, task in enumerate(list(tasks_payload.get("tasks") or [])):
+        status = per_unit.get(str(task["unit_id"]), {})
+        start_idx = int(task["start_idx"])
+        end_idx = int(task["end_idx"])
+        length = int(task["length"])
+        segments.append(
+            {
+                "seg": int(idx),
+                "segment_id": int(idx),
+                "schedule_source": "decode.native_tasks",
+                "execution_backend": str(report.get("backend_name", "")),
+                "start_idx": int(start_idx),
+                "end_idx": int(end_idx),
+                "raw_start_idx": int(start_idx),
+                "raw_end_idx": int(end_idx),
+                "desired_start_idx": int(start_idx),
+                "desired_end_idx": int(end_idx),
+                "desired_num_frames": int(length),
+                "aligned_start_idx": int(start_idx),
+                "aligned_end_idx": int(end_idx),
+                "aligned_num_frames": int(length),
+                "actual_saved_start_idx": int(start_idx),
+                "actual_saved_end_idx": int(end_idx),
+                "actual_saved_frames": int(status.get("num_frames", length) or length),
+                "deploy_start_idx": int(start_idx),
+                "deploy_end_idx": int(end_idx),
+                "raw_gap": int(end_idx - start_idx),
+                "deploy_gap": int(end_idx - start_idx),
+                "num_frames": int(length),
+                "run_id": "run_{:03d}".format(idx),
+                "run_name": str(task["run_name"]),
+                "source_unit_id": str(task["unit_id"]),
+                "source_span_id": str(dict(task.get("source_prompt_ref") or {}).get("span_id", "")),
+                "source_prompt_ref": dict(task.get("source_prompt_ref") or {}),
+                "target_num_frames": int(length),
+                "seed": int(task["seed"]),
+                "prompt": str(task["prompt"]),
+                "negative_prompt": str(task.get("negative_prompt", "") or ""),
+                "prompt_hash8": str(task.get("prompt_hash8", "") or ""),
+                "prompt_source": str(task.get("prompt_source", "") or ""),
+                "base_prompt": str(task.get("base_prompt", "") or ""),
+                "resolved_prompt": str(task["prompt"]),
+                "state_label": str(task.get("scene_label", "") or ""),
+                "motion_label": str(task.get("motion_label", "") or ""),
+                "align_reason": str(task.get("align_reason", "") or ""),
+                "is_valid_for_decode": True,
+                "is_valid_for_export": bool(task.get("is_valid_for_export", False)),
+                "run_params_path": _relative_path(exp_root, status.get("params_path", "")),
+                "run_frames_dir": _relative_path(exp_root, status.get("frames_dir", "")),
+            }
+        )
     return {
-        "report_schema_version": "image_gen_report.v1",
-        "step": "decode",
-        "substage": "image_gen",
-        "created_at": str((runtime_summary or {}).get("created_at", "") or ""),
-        "image_gen_status": "success",
+        "version": 1,
+        "schema": "decode_plan.eval_compat.v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
         "planner": "generation_units",
-        "prompt_strategy": str((runtime_summary or {}).get("prompt_strategy", "") or "prompts"),
-        "infer_backend": str((runtime_summary or {}).get("execution_backend", "") or ""),
-        "gpus": int((runtime_summary or {}).get("gpus", 0) or 0),
-        "fps": int((runtime_summary or {}).get("fps", 0) or 0),
-        "kf_gap": int((runtime_summary or {}).get("kf_gap", 0) or 0),
-        "frames_avail": int((runtime_summary or {}).get("frames_avail", 0) or 0),
-        "segments": int((runtime_summary or {}).get("segments", 0) or 0),
-        "used_frames": int((runtime_summary or {}).get("used_frames", 0) or 0),
-        "used_start_idx": int((runtime_summary or {}).get("used_start_idx", 0) or 0),
-        "used_end_idx": int((runtime_summary or {}).get("used_end_idx", 0) or 0),
-        "schedule_source": str((runtime_summary or {}).get("schedule_source", "") or ""),
-        "mean_deploy_gap": (runtime_summary or {}).get("mean_deploy_gap"),
-        "runs_plan_path": str(runs_plan_path),
-        "runs_plan_size": int(len(runs_plan_bytes)),
-        "runs_plan_sha1": _sha1_bytes(runs_plan_bytes),
-        "state_prompt_enabled": bool((runtime_summary or {}).get("state_prompt_enabled", False)),
-        "state_prompt_segment_count": int((runtime_summary or {}).get("state_prompt_segment_count", 0) or 0),
-        "matched_execution_segment_count": int((runtime_summary or {}).get("matched_execution_segment_count", 0) or 0),
-        "image_gen_runtime_version": int((runtime_summary or {}).get("image_gen_runtime_version", 0) or 0),
-        "image_gen_runtime_schema": str((runtime_summary or {}).get("image_gen_runtime_schema", "") or ""),
-        "image_gen_runtime_source": str((runtime_summary or {}).get("image_gen_runtime_source", "") or ""),
-        "prompt_source_counts": dict((runtime_summary or {}).get("prompt_source_counts", {}) or {}),
-        "state_label_counts": dict((runtime_summary or {}).get("state_label_counts", {}) or {}),
-        "outputs": {
-            "bytes_sum": 0,
-            "report_bytes_sum": 0,
-            "runs_plan_bytes_sum": int(len(runs_plan_bytes)),
-            "report_file_count": 1,
-            "runs_plan_file_count": 1,
-        },
-        "backend_meta": dict(backend_meta or {}),
-        "backend_result": dict(backend_result or {}),
-        "backend_summary": {
-            "infer_backend": str((backend_meta or {}).get("infer_backend", "") or ""),
-            "backend_entry_type": str((backend_meta or {}).get("backend_entry_type", "") or ""),
-            "backend_python_phase": str((backend_meta or {}).get("backend_python_phase", "") or ""),
-            "videox_root": str((backend_meta or {}).get("videox_root", "") or ""),
-            "model_dir": str((backend_meta or {}).get("model_dir", "") or ""),
-            "model_id": str((backend_meta or {}).get("model_id", "") or ""),
-            "config_path": str((backend_meta or {}).get("config_path", "") or ""),
-        },
-        "prompt_resolution_summary": {
-            "state_prompt_enabled": bool((runtime_summary or {}).get("state_prompt_enabled", False)),
-            "state_prompt_segment_count": int((runtime_summary or {}).get("state_prompt_segment_count", 0) or 0),
-            "matched_execution_segment_count": int((runtime_summary or {}).get("matched_execution_segment_count", 0) or 0),
-            "prompt_source_counts": dict((runtime_summary or {}).get("prompt_source_counts", {}) or {}),
-            "state_label_counts": dict((runtime_summary or {}).get("state_label_counts", {}) or {}),
-            "warnings": list((prompt_resolution or {}).get("warnings", []) or []),
-        },
-        "prompt_resolution": dict((prompt_resolution or {}).get("prompt_resolution", {}) or {}),
-        "execution_segments_summary": _segment_summary(plan_segments),
-        "skipped_units": list((runs_plan_obj or {}).get("skipped_units", []) or []),
-        "source_files": {
-            "decode_plan": _relative_path(exp_dir, runs_plan_path),
-            "prepare_result": str(source_files.get("prepare_result", "") or ""),
-            "generation_units": str(source_files.get("generation_units", "") or ""),
-            "prompts": str(source_files.get("prompts", "") or ""),
-            "encode_result": str(source_files.get("encode_result", "") or ""),
-            "legacy_segment_manifest": str(source_files.get("legacy_segment_manifest", "") or ""),
-        },
-        "artifact_contract": {
-            "formal_files": ["decode_plan.json", REPORT_FILENAME],
-            "formal_prompt_inputs": ["prepare/prepare_result.json", "prepare/frames/", "encode/generation_units.json", "encode/prompts.json", "encode/encode_result.json"],
-            "transitional_files": ["encode/legacy_segment_manifest.json", "encode/encode_plan.json", "encode/prompt_spans.json", "encode/encode_report.json"],
-        },
+        "prompt_strategy": "prompts",
+        "compatibility_only": True,
+        "derived_from": "decode.native_tasks",
+        "runs_parent": str((exp_root / "decode").resolve()),
+        "runs_root": str((exp_root / "decode" / "runs").resolve()),
+        "exp_name": "runs",
+        "task": "generation_unit",
+        "fps": int(fps),
+        "dataset_fps": int(fps),
+        "kf_gap": int(kf_gap),
+        "base_idx": int(segments[0]["start_idx"]) if segments else 0,
+        "num_segments": int(len(segments)),
+        "seed_base": int(seed_base),
+        "schedule_source": "decode.native_tasks",
+        "execution_backend": str(report.get("backend_name", "")),
+        "source_inputs": dict(tasks_payload.get("source_inputs") or {}),
+        "segments": segments,
     }
 
 
-def write_image_gen_report(infer_dir, report):
-    infer_dir = Path(infer_dir).resolve()
-    report_path = infer_dir / REPORT_FILENAME
-    report_obj = dict(report or {})
-    report_obj["report_path"] = str(report_path)
-    last_size = None
-    for _ in range(3):
-        write_json_atomic(report_path, report_obj, indent=2)
-        report_bytes = report_path.read_bytes()
-        report_size = int(len(report_bytes))
-        outputs = dict(report_obj.get("outputs", {}) or {})
-        outputs["report_bytes_sum"] = report_size
-        outputs["bytes_sum"] = int(int(outputs.get("report_bytes_sum", 0) or 0) + int(outputs.get("runs_plan_bytes_sum", 0) or 0))
-        report_obj["outputs"] = outputs
-        report_obj["report_size"] = report_size
-        if report_size == last_size:
-            break
-        last_size = report_size
-    write_json_atomic(report_path, report_obj, indent=2)
-    return report_path
+def generate_tasks(runtime, tasks_payload):
+    decode_dir = runtime.paths.decode_dir
+    runs_dir = runtime.paths.decode_runs_dir
+    runs_dir.mkdir(parents=True, exist_ok=True)
 
+    backend_name = str(runtime.args.infer_backend or "wan_fun_5b_inp").strip().lower()
+    if backend_name != "wan_fun_5b_inp":
+        raise RuntimeError("decode backend supports only wan_fun_5b_inp: {}".format(backend_name))
 
-def _run_formal_mainline(args):
-    frames_dir = ensure_dir(args.frames_dir, "input frames dir")
-    exp_dir = Path(args.exp_dir).resolve()
-    infer_dir = (exp_dir / "decode").resolve()
-    infer_dir.mkdir(parents=True, exist_ok=True)
-
-    frames_avail = _list_frame_count(frames_dir)
-    image_gen_runtime = build_image_gen_runtime(
-        segment_manifest=None,
-        infer_backend=str(args.infer_backend),
-        exp_dir=exp_dir,
-        generation_units_path=str(args.generation_units),
-        prompts_path=str(args.prompts),
-        prepare_result_path=str(args.prepare_result),
-        encode_result_path=str(args.encode_result),
-    )
-    execution_plan = build_execution_plan(image_gen_runtime)
-    execution_segments = list(execution_plan.get("segments") or [])
+    payload_path, task_runtime_payload = _write_backend_task_payload(decode_dir, tasks_payload, backend_name)
+    execution_segments = _execution_segments(tasks_payload, backend_name)
     if not execution_segments:
-        raise RuntimeError("image gen runtime resolved to zero execution segments")
-    _validate_execution_segments(frames_avail, execution_segments)
-    prompt_resolution = build_prompt_resolution(image_gen_runtime, execution_segments, exp_dir=exp_dir)
+        raise RuntimeError("decode task builder produced zero executable tasks")
 
-    runtime_payload_path, execution_plan_path = write_backend_runtime_files(infer_dir, image_gen_runtime, execution_plan)
-    gpus = int(args.gpus)
-    fps = int(float(args.fps))
-    kf_gap = int(args.kf_gap)
-    used_start_idx = min([int(seg["start_idx"]) for seg in execution_segments])
-    used_end_idx = max([int(seg["end_idx"]) for seg in execution_segments])
-    used_frames = int(sum([int(seg.get("aligned_num_frames", seg.get("num_frames", 0)) or 0) for seg in execution_segments]))
-    mean_deploy_gap = float(_mean([int(seg.get("aligned_num_frames", seg.get("num_frames", 0)) or 0) for seg in execution_segments]))
+    from ._wan_fun_5b_inp import WanFun5BInpBackend
 
-    request = ImageGenRequest(
-        frames_dir=frames_dir,
-        exp_dir=exp_dir,
-        prompt_file_path=runtime_payload_path,
-        execution_plan_path=execution_plan_path,
-        runs_parent=infer_dir,
-        fps=int(fps),
-        kf_gap=int(kf_gap),
-        base_idx=int(used_start_idx),
-        num_segments=int(len(execution_segments)),
-        seed_base=int(args.seed_base),
-        gpus=int(gpus),
-        schedule_source=str(execution_plan.get("schedule_source", "") or ""),
-        execution_backend=str(execution_plan.get("execution_backend", "") or ""),
-        execution_segments=list(execution_segments),
-        infer_extra=_normalize_extra(args.infer_extra),
-    )
-
-    backend = create_backend(
-        backend_name=str(args.infer_backend),
-        videox_root=str(args.videox_root),
-        model_ref=str(args.infer_model_dir or ""),
-        backend_python_phase=str(args.backend_python_phase or "infer"),
+    backend = WanFun5BInpBackend(
+        videox_root=str(runtime.args.videox_root),
+        model_ref=str(runtime.args.infer_model_dir or ""),
+        backend_python_phase=str(runtime.infer_phase_name()),
     )
     backend.load()
     backend_meta = dict(backend.meta() or {})
+    request = WanTaskRequest(
+        frames_dir=runtime.paths.prepare_frames_dir,
+        exp_dir=runtime.paths.exp_dir,
+        prompt_file_path=payload_path,
+        execution_plan_path=payload_path,
+        runs_parent=runtime.paths.decode_dir,
+        fps=int(float(runtime.fps_arg)),
+        kf_gap=int(runtime.spec.kf_gap),
+        base_idx=int(execution_segments[0]["start_idx"]),
+        num_segments=int(len(execution_segments)),
+        seed_base=int(runtime.args.seed_base),
+        gpus=int(runtime.args.gpus),
+        schedule_source="decode.native_tasks",
+        execution_backend=backend_name,
+        execution_segments=execution_segments,
+        infer_extra=_normalize_extra(runtime.args.infer_extra),
+    )
 
     log_prog(
-        "image gen config: backend={} segments={} fps={} gpus={}".format(
-            backend_meta.get("infer_backend", args.infer_backend),
-            int(len(execution_segments)),
-            int(fps),
-            int(gpus),
+        "decode generate: backend={} tasks={} fps={} gpus={}".format(
+            backend_name,
+            len(execution_segments),
+            int(request.fps),
+            int(request.gpus),
         )
     )
-    log_info(
-        "image gen detail: schedule_source={} used_frames={}".format(
-            str(execution_plan.get("schedule_source", "") or "segment.generation_units"),
-            int(used_frames),
+    started = time.time()
+    backend_result = dict(backend.run(request) or {})
+    elapsed = float(time.time() - started)
+
+    unit_reports = []
+    for task in list(tasks_payload.get("tasks") or []):
+        run_dir = Path(task["output_dir"]).resolve()
+        actual = _validate_run_output(task, run_dir)
+        unit_reports.append(
+            {
+                "unit_id": str(task["unit_id"]),
+                "status": "success",
+                "start_idx": int(task["start_idx"]),
+                "end_idx": int(task["end_idx"]),
+                "length": int(task["length"]),
+                "seed": int(task["seed"]),
+                "output_dir": _relative_path(runtime.paths.exp_dir, run_dir),
+                "frames_dir": _relative_path(runtime.paths.exp_dir, actual["frames_dir"]),
+                "params_path": _relative_path(runtime.paths.exp_dir, actual["params_path"]),
+                "num_frames": int(actual["num_frames"]),
+                "prompt_hash8": str(task.get("prompt_hash8", "") or ""),
+            }
         )
-    )
 
-    t0 = time.time()
-    try:
-        backend_result = dict(backend.run(request) or {})
-    finally:
-        for temp_path in [runtime_payload_path, execution_plan_path]:
-            try:
-                if Path(temp_path).is_file():
-                    Path(temp_path).unlink()
-            except Exception:
-                pass
-    dt = float(time.time() - t0)
-
-    runs_plan_path = infer_dir / "decode_plan.json"
-    if runs_plan_path.is_file():
-        plan_obj = json.loads(runs_plan_path.read_text(encoding="utf-8"))
-    else:
-        plan_obj = dict(execution_plan)
-    if not isinstance(plan_obj, dict):
-        raise RuntimeError("invalid decode_plan.json: {}".format(runs_plan_path))
-    plan_obj["planner"] = "generation_units"
-    plan_obj["prompt_strategy"] = str(image_gen_runtime.get("prompt_strategy", "") or "prompts")
-    plan_obj["schedule_source"] = str(execution_plan.get("schedule_source", "") or plan_obj.get("schedule_source", "") or "")
-    plan_obj["skipped_units"] = list(image_gen_runtime.get("skipped_units") or [])
-    plan_obj = merge_prompt_resolution_into_runs_plan(plan_obj, prompt_resolution.get("segment_resolutions", []))
-    plan_obj = _augment_runs_plan_with_saved_frames(infer_dir, plan_obj)
-    plan_obj["planner"] = "generation_units"
-    plan_obj["prompt_strategy"] = str(image_gen_runtime.get("prompt_strategy", "") or "prompts")
-    plan_obj["schedule_source"] = str(execution_plan.get("schedule_source", "") or plan_obj.get("schedule_source", "") or "")
-    plan_obj["image_gen_runtime_version"] = int(prompt_resolution.get("image_gen_runtime_version", 1) or 1)
-    plan_obj["image_gen_runtime_schema"] = str(prompt_resolution.get("image_gen_runtime_schema", "") or "image_gen_runtime.v1")
-    plan_obj["image_gen_runtime_source"] = str(prompt_resolution.get("image_gen_runtime_source", "") or "decode.image_gen.runtime")
-    plan_obj["prompt_source_counts"] = dict(prompt_resolution.get("prompt_source_counts", {}) or {})
-    plan_obj["state_label_counts"] = dict(prompt_resolution.get("state_label_counts", {}) or {})
-    write_json_atomic(runs_plan_path, plan_obj, indent=2)
-
-    runtime_summary = {
+    report = {
+        "schema": "decode_report.v1",
+        "stage": "decode",
+        "substage": "frames_generate",
+        "status": "success",
+        "run_id": str(runtime.spec.exp_name),
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "gpus": int(gpus),
-        "fps": int(fps),
-        "kf_gap": int(kf_gap),
-        "frames_avail": int(frames_avail),
-        "segments": int(len(list(plan_obj.get("segments", []) or []))),
-        "used_frames": int(used_frames),
-        "used_start_idx": int(used_start_idx),
-        "used_end_idx": int(used_end_idx),
-        "schedule_source": str(execution_plan.get("schedule_source", "") or ""),
-        "execution_backend": str(execution_plan.get("execution_backend", "") or ""),
-        "prompt_strategy": str(image_gen_runtime.get("prompt_strategy", "") or "prompts"),
-        "mean_deploy_gap": float(mean_deploy_gap),
-        "state_prompt_enabled": bool(prompt_resolution.get("state_prompt_enabled", False)),
-        "state_prompt_segment_count": int(prompt_resolution.get("state_prompt_segment_count", 0) or 0),
-        "matched_execution_segment_count": int(prompt_resolution.get("matched_execution_segment_count", 0) or 0),
-        "image_gen_runtime_version": int(prompt_resolution.get("image_gen_runtime_version", 1) or 1),
-        "image_gen_runtime_schema": str(prompt_resolution.get("image_gen_runtime_schema", "") or "image_gen_runtime.v1"),
-        "image_gen_runtime_source": str(prompt_resolution.get("image_gen_runtime_source", "") or "decode.image_gen.runtime"),
-        "prompt_source_counts": dict(prompt_resolution.get("prompt_source_counts", {}) or {}),
-        "state_label_counts": dict(prompt_resolution.get("state_label_counts", {}) or {}),
+        "planner": "generation_units",
+        "prompt_strategy": "prompts",
+        "backend_name": backend_name,
+        "backend_meta": backend_meta,
+        "backend_result": backend_result,
+        "num_tasks": int(len(unit_reports)),
+        "source_inputs": dict(tasks_payload.get("source_inputs") or {}),
+        "task_summary": dict(tasks_payload.get("summary") or {}),
+        "units": unit_reports,
+        "outputs": {
+            "runs_dir": _relative_path(runtime.paths.exp_dir, runs_dir),
+            "report": "decode/{}".format(REPORT_FILENAME),
+        },
+        "total_runtime_sec": float(elapsed),
     }
-    image_gen_report = build_image_gen_report(
-        exp_dir=exp_dir,
-        infer_dir=infer_dir,
-        runs_plan_obj=plan_obj,
-        prompt_resolution=prompt_resolution,
-        backend_meta=backend_meta,
-        backend_result=backend_result,
-        runtime_summary=runtime_summary,
-    )
-    report_path = write_image_gen_report(infer_dir, image_gen_report)
+    report_path = runtime.paths.decode_report_path
+    write_json_atomic(report_path, report, indent=2)
 
-    log_info("image gen finished: {:.2f}s".format(dt))
-    log_info("report written: {}".format(report_path))
-    return report_path
+    decode_plan = _build_decode_plan(
+        runtime.paths.exp_dir,
+        tasks_payload,
+        report,
+        fps=int(float(runtime.fps_arg)),
+        kf_gap=int(runtime.spec.kf_gap),
+        seed_base=int(runtime.args.seed_base),
+    )
+    write_json_atomic(runtime.paths.decode_plan_path, decode_plan, indent=2)
+    log_info("decode generate report: {}".format(report_path))
+    return report
+
+
+def _runtime_from_args(args):
+    exp_dir = Path(args.exp_dir).resolve()
+    paths = SimpleNamespace(
+        exp_dir=exp_dir,
+        prepare_frames_dir=Path(args.prepare_frames_dir).resolve(),
+        decode_dir=(exp_dir / "decode").resolve(),
+        decode_runs_dir=(exp_dir / "decode" / "runs").resolve(),
+        decode_report_path=(exp_dir / "decode" / "decode_report.json").resolve(),
+        decode_plan_path=(exp_dir / "decode" / "decode_plan.json").resolve(),
+    )
+    spec = SimpleNamespace(
+        exp_name=str(args.run_id),
+        kf_gap=int(args.kf_gap),
+    )
+    runtime_args = SimpleNamespace(
+        infer_backend=str(args.infer_backend),
+        videox_root=str(args.videox_root),
+        infer_model_dir=str(args.infer_model_dir or ""),
+        seed_base=int(args.seed_base),
+        gpus=int(args.gpus),
+        infer_extra=str(args.infer_extra or ""),
+    )
+    return SimpleNamespace(
+        paths=paths,
+        spec=spec,
+        args=runtime_args,
+        fps_arg=str(args.fps),
+        infer_phase_name=lambda: str(args.backend_python_phase or "infer_fun_5b"),
+    )
 
 
 def _build_arg_parser():
-    parser = argparse.ArgumentParser(description="ExpHub decode.image_gen mainline.")
-    parser.add_argument("--run-formal-mainline", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--exp_dir", required=True, help="ExpHub experiment dir")
-    parser.add_argument("--frames_dir", required=True, help="segment frames dir")
-    parser.add_argument("--prepare_result", required=True, help="prepare_result.json path")
-    parser.add_argument("--generation_units", required=True, help="generation_units.json path")
-    parser.add_argument("--prompts", required=True, help="prompts.json path")
-    parser.add_argument("--encode_result", required=True, help="encode_result.json path")
-    parser.add_argument("--legacy_segment_manifest", default="", help="transition-only fallback segment manifest path")
-    parser.add_argument("--videox_root", required=True, help="VideoX-Fun repo root")
+    parser = argparse.ArgumentParser(description="ExpHub native decode frame generation.")
+    parser.add_argument("--run-native-tasks", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--exp_dir", required=True)
+    parser.add_argument("--prepare_frames_dir", required=True)
+    parser.add_argument("--tasks", required=True)
+    parser.add_argument("--run_id", required=True)
+    parser.add_argument("--videox_root", required=True)
     parser.add_argument("--gpus", type=int, default=1)
     parser.add_argument("--fps", type=float, required=True)
     parser.add_argument("--kf_gap", type=int, required=True)
     parser.add_argument("--seed_base", type=int, default=43)
     parser.add_argument("--infer_backend", default="wan_fun_5b_inp", choices=["wan_fun_5b_inp"])
     parser.add_argument("--infer_model_dir", default="")
-    parser.add_argument("--backend_python_phase", default="infer")
+    parser.add_argument("--backend_python_phase", default="infer_fun_5b")
     parser.add_argument("--infer_extra", default="")
     return parser
 
 
 def main(argv=None):
     args = _build_arg_parser().parse_args(argv)
-    if not args.run_formal_mainline:
-        raise SystemExit("[ERR] use --run-formal-mainline")
-    _run_formal_mainline(args)
+    if not args.run_native_tasks:
+        raise SystemExit("[ERR] use --run-native-tasks")
+    tasks_payload = read_json_dict(args.tasks)
+    if not tasks_payload:
+        raise RuntimeError("invalid decode tasks payload: {}".format(args.tasks))
+    generate_tasks(_runtime_from_args(args), tasks_payload)
 
 
 if __name__ == "__main__":
