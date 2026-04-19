@@ -16,7 +16,7 @@ from exphub.meta import ExperimentSpec, STAGE_ORDER
 
 from .decode import decode as decode_pipeline
 from .encode import encode as encode_pipeline
-from .eval import pipeline_run as eval_pipeline
+from .eval import eval as eval_pipeline
 from .export import pipeline_run as export_pipeline
 from .prepare import prepare as prepare_pipeline
 
@@ -328,7 +328,7 @@ def _validate_scripts(runtime: PipelineRuntime) -> None:
     required = [
         (runtime.exphub_root / "exphub" / "encode" / "encode.py").resolve(),
         (runtime.exphub_root / "exphub" / "decode" / "decode.py").resolve(),
-        (runtime.exphub_root / "exphub" / "eval" / "pipeline_run.py").resolve(),
+        (runtime.exphub_root / "exphub" / "eval" / "eval.py").resolve(),
         (runtime.exphub_root / "exphub" / "export" / "pipeline_run.py").resolve(),
     ]
     for path in required:

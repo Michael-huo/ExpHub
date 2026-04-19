@@ -1,3 +1,6 @@
-from exphub.eval.pipeline_run import run
+def run(runtime):
+    from exphub.eval.eval import run as _run
+
+    return _run(runtime)
 
 __all__ = ["run"]

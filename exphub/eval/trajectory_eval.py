@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from exphub.common.logging import log_info
-from .report_build import append_warning, read_json
+from exphub.common.io import read_json_dict, write_json_atomic
+from exphub.common.logging import log_info, log_warn
 
 
 _STAT_KEYS = ["rmse", "mean", "median", "std", "min", "max"]
@@ -21,14 +21,24 @@ _TEXT_COLOR = "#1f2a35"
 _REF_COLOR = "#1f4e79"
 _EST_COLOR = "#c56a2d"
 _REF_BG_COLOR = "#b8c3cf"
-_KEYFRAME_MARKER_EDGE = "#6e7c86"
-_KEYFRAME_MARKER_SIZE = 22
+_BOUNDARY_EDGE = "#2f5d50"
+_BOUNDARY_FACE = "#f7fbf8"
 
 
 def _get_arg(config, name, default=None):
     if isinstance(config, dict):
         return config.get(name, default)
     return getattr(config, name, default)
+
+
+def _append_warning(metrics_obj, message):
+    text = str(message or "").strip()
+    if not text:
+        return
+    warnings_list = metrics_obj.setdefault("warnings", [])
+    if text not in warnings_list:
+        warnings_list.append(text)
+    log_warn(text)
 
 
 def _empty_stats():
@@ -51,18 +61,121 @@ def _stats_dict(stats_obj):
     return out
 
 
-def _base_metrics(config):
+def _relative_path(base_dir, target_path):
+    base = Path(base_dir).resolve()
+    target = Path(target_path).resolve()
+    try:
+        return str(target.relative_to(base))
+    except Exception:
+        return str(target)
+
+
+def _as_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _load_generation_unit_context(exp_dir, prepare_result_path, generation_units_path):
+    prepare_result = read_json_dict(prepare_result_path)
+    generation_units = read_json_dict(generation_units_path)
+    units = list(_as_dict(generation_units).get("units") or [])
+
+    boundaries = []
+    seen = set()
+    for unit in units:
+        for key in ("start_idx", "end_idx"):
+            try:
+                value = int(_as_dict(unit).get(key))
+            except Exception:
+                continue
+            if value < 0 or value in seen:
+                continue
+            seen.add(value)
+            boundaries.append(value)
+    boundaries.sort()
+
+    frame_index_map = _as_dict(prepare_result.get("frame_index_map"))
+    rel_timestamps = list(frame_index_map.get("prepared_to_rel_time_sec") or [])
+    abs_timestamps = list(frame_index_map.get("prepared_to_abs_time_sec") or [])
+    if rel_timestamps:
+        timestamps = rel_timestamps
+        boundary_time_source_kind = "prepared_to_rel_time_sec"
+        t0 = 0.0
+    elif abs_timestamps:
+        timestamps = abs_timestamps
+        boundary_time_source_kind = "prepared_to_abs_time_sec_zeroed"
+        try:
+            t0 = float(abs_timestamps[0])
+        except Exception:
+            t0 = 0.0
+    else:
+        timestamps = []
+        boundary_time_source_kind = "missing"
+        t0 = 0.0
+
+    timestamps_by_frame = {}
+    for frame_idx in boundaries:
+        if 0 <= frame_idx < len(timestamps):
+            try:
+                timestamps_by_frame[int(frame_idx)] = float(timestamps[frame_idx]) - float(t0)
+            except Exception:
+                continue
+
+    labels = []
+    for unit in units:
+        item = _as_dict(unit)
+        try:
+            start_idx = int(item.get("start_idx"))
+            end_idx = int(item.get("end_idx"))
+        except Exception:
+            continue
+        labels.append(
+            {
+                "unit_id": str(item.get("unit_id", "") or ""),
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "motion_label": str(item.get("motion_label", "") or ""),
+            }
+        )
+
+    legal_positions = []
+    for value in list(_as_dict(prepare_result.get("legal_grid")).get("legal_positions") or []):
+        try:
+            legal_positions.append(int(value))
+        except Exception:
+            continue
+
     return {
+        "source": _relative_path(exp_dir, generation_units_path),
+        "unit_count": int(len(units)),
+        "unit_boundaries": boundaries,
+        "timestamps_by_frame": timestamps_by_frame,
+        "boundary_time_source_kind": boundary_time_source_kind,
+        "unit_labels": labels,
+        "legal_positions": legal_positions,
+    }
+
+
+def _base_metrics(config):
+    exp_dir = Path(_get_arg(config, "exp_dir", Path(_get_arg(config, "out_dir")).parent)).resolve()
+    unit_context = _load_generation_unit_context(
+        exp_dir,
+        Path(_get_arg(config, "prepare_result")).resolve(),
+        Path(_get_arg(config, "generation_units")).resolve(),
+    )
+    return {
+        "version": 1,
+        "source": "eval.trajectory_eval.v1",
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "eval_status": "failed",
         "warnings": [],
         "reference_name": str(_get_arg(config, "reference_name", "ori")),
         "estimate_name": str(_get_arg(config, "estimate_name", "gen")),
-        "reference_path": str(Path(_get_arg(config, "reference")).resolve()),
-        "estimate_path": str(Path(_get_arg(config, "estimate")).resolve()),
+        "reference_path": _relative_path(exp_dir, Path(_get_arg(config, "reference")).resolve()),
+        "estimate_path": _relative_path(exp_dir, Path(_get_arg(config, "estimate")).resolve()),
         "reference_pose_count": 0,
         "estimate_pose_count": 0,
         "matched_pose_count": 0,
+        "num_matches": 0,
         "alignment_mode": str(_get_arg(config, "alignment_mode", "se3")),
         "rpe_delta": float(_get_arg(config, "delta", 1.0)),
         "rpe_delta_unit": str(_get_arg(config, "delta_unit", "frames")),
@@ -70,6 +183,15 @@ def _base_metrics(config):
         "sync_t_offset_sec": float(_get_arg(config, "t_offset", 0.0)),
         "ori_path_length_m": None,
         "gen_path_length_m": None,
+        "ape_rmse_m": None,
+        "rpe_trans_rmse_m": None,
+        "rpe_rot_rmse_deg": None,
+        "unit_boundaries": list(unit_context["unit_boundaries"]),
+        "unit_boundary_count": int(len(unit_context["unit_boundaries"])),
+        "unit_count": int(unit_context["unit_count"]),
+        "boundary_source": str(unit_context["source"]),
+        "boundary_time_source_kind": str(unit_context["boundary_time_source_kind"]),
+        "plot_path": "eval/eval_traj_xy.png",
         "metric_units": {
             "ape_trans": "m",
             "rpe_trans": "m",
@@ -78,7 +200,22 @@ def _base_metrics(config):
         "ape_trans": _empty_stats(),
         "rpe_trans": _empty_stats(),
         "rpe_rot": _empty_stats(),
+        "_unit_context": unit_context,
+        "_exp_dir": str(exp_dir),
     }
+
+
+def _public_metrics(metrics_obj):
+    payload = dict(metrics_obj or {})
+    payload.pop("_unit_context", None)
+    payload.pop("_exp_dir", None)
+    return payload
+
+
+def _write_report(out_dir, metrics_obj):
+    path = Path(out_dir).resolve() / "eval_traj_report.json"
+    write_json_atomic(path, _public_metrics(metrics_obj), indent=2)
+    return path
 
 
 def _alignment_flags(alignment_mode):
@@ -100,8 +237,8 @@ def _load_evo_modules():
     from evo.core import units
     from evo.main_ape import ape as evo_ape
     from evo.main_rpe import rpe as evo_rpe
-    file_interface = importlib.import_module("evo." + "too" + "ls.file_interface")
 
+    file_interface = importlib.import_module("evo." + "too" + "ls.file_interface")
     return file_interface, metrics, sync, units, evo_ape, evo_rpe
 
 
@@ -211,238 +348,9 @@ def _metrics_box_text(metrics_obj):
         _stat_line("APE RMSE", metrics_obj["ape_trans"].get("rmse"), "m"),
         _stat_line("RPE trans RMSE", metrics_obj["rpe_trans"].get("rmse"), "m"),
         "Matched: {}".format(int(metrics_obj.get("matched_pose_count") or 0)),
+        "Unit boundaries: {}".format(int(metrics_obj.get("unit_boundary_count") or 0)),
     ]
     return "\n".join(lines)
-
-
-def _candidate_exp_roots(path_candidates):
-    seen = set()
-    out = []
-    for raw_path in list(path_candidates or []):
-        if raw_path is None:
-            continue
-        text = str(raw_path).strip()
-        if not text:
-            continue
-        try:
-            path_obj = Path(text).resolve()
-        except Exception:
-            continue
-        for candidate in [path_obj] + list(path_obj.parents):
-            key = str(candidate)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(candidate)
-    return out
-
-
-def _resolve_eval_exp_root(path_candidates):
-    for candidate in _candidate_exp_roots(path_candidates):
-        if (
-            (candidate / "prepare" / "prepare_result.json").is_file()
-            or (candidate / "encode" / "generation_units.json").is_file()
-            or (candidate / "encode" / "legacy_segment_manifest.json").is_file()
-            or (candidate / "input" / "input_report.json").is_file()
-        ):
-            return candidate
-    return None
-
-
-def _prepare_result_path(exp_root):
-    root = Path(exp_root).resolve()
-    candidate = root / "prepare" / "prepare_result.json"
-    if candidate.is_file():
-        return candidate.resolve()
-    return None
-
-
-def _segment_manifest_path(exp_root):
-    root = Path(exp_root).resolve()
-    for candidate in (
-        root / "encode" / "legacy_segment_manifest.json",
-        root / "input" / "input_report.json",
-    ):
-        if candidate.is_file():
-            return candidate.resolve()
-    return root / "encode" / "legacy_segment_manifest.json"
-
-
-def _segment_timestamp_map(exp_root):
-    if exp_root is None:
-        return {}
-    prepare_path = _prepare_result_path(exp_root)
-    if prepare_path is not None:
-        prepare_obj = read_json(prepare_path) if prepare_path.is_file() else {}
-        frame_index_map = dict((prepare_obj or {}).get("frame_index_map") or {}) if isinstance(prepare_obj, dict) else {}
-        timestamps = list(
-            frame_index_map.get("prepared_to_rel_time_sec")
-            or frame_index_map.get("prepared_to_time_sec")
-            or []
-        )
-    else:
-        manifest_path = _segment_manifest_path(exp_root)
-        manifest_obj = read_json(manifest_path) if manifest_path.is_file() else {}
-        if not isinstance(manifest_obj, dict):
-            manifest_obj = {}
-        timestamps = list((manifest_obj.get("camera") or {}).get("timestamps") or [])
-    out = {}
-    for idx, value in enumerate(timestamps):
-        try:
-            out[int(idx)] = float(value)
-        except Exception:
-            continue
-    return out
-
-
-def _load_formal_keyframe_context(config, metrics_obj):
-    exp_root = _resolve_eval_exp_root(
-        [
-            _get_arg(config, "exp_dir", None),
-            _get_arg(config, "out_dir", None),
-            _get_arg(config, "reference", None),
-            _get_arg(config, "estimate", None),
-        ]
-    )
-    empty_context = {
-        "exp_root": None,
-        "manifest_path": "",
-        "frame_indices": [],
-        "timestamps_by_frame": {},
-    }
-    if exp_root is None:
-        append_warning(metrics_obj, "eval plot keyframes unavailable: missing input formal artifacts")
-        return empty_context
-
-    exp_root = Path(exp_root).resolve()
-    prepare_path = _prepare_result_path(exp_root)
-    manifest_path = _segment_manifest_path(exp_root)
-    prepare_obj = read_json(prepare_path) if prepare_path is not None and prepare_path.is_file() else {}
-    if not isinstance(prepare_obj, dict):
-        prepare_obj = {}
-    manifest_obj = read_json(manifest_path) if not prepare_obj and manifest_path.is_file() else {}
-    if not isinstance(manifest_obj, dict):
-        manifest_obj = {}
-
-    frame_indices = []
-    seen = set()
-    raw_indices = []
-    if isinstance(prepare_obj.get("legal_grid"), dict):
-        raw_indices = list(prepare_obj["legal_grid"].get("legal_positions") or [])
-    elif isinstance(manifest_obj.get("keyframes"), dict):
-        raw_indices = list(manifest_obj["keyframes"].get("indices") or [])
-    for value in raw_indices:
-        try:
-            frame_idx = int(value)
-        except Exception:
-            continue
-        if frame_idx < 0 or frame_idx in seen:
-            continue
-        seen.add(frame_idx)
-        frame_indices.append(frame_idx)
-    frame_indices.sort()
-    if not frame_indices:
-        append_warning(metrics_obj, "eval plot keyframes unavailable: empty keyframe indices in formal input artifacts")
-        return empty_context
-
-    timestamps_by_frame = {}
-    fallback = _segment_timestamp_map(exp_root)
-    for frame_idx in frame_indices:
-        if frame_idx in fallback:
-            timestamps_by_frame[frame_idx] = float(fallback[frame_idx])
-
-    return {
-        "exp_root": exp_root,
-        "manifest_path": str(prepare_path or manifest_path) if (prepare_path is not None or manifest_path.is_file()) else "",
-        "frame_indices": list(frame_indices),
-        "timestamps_by_frame": dict(timestamps_by_frame),
-    }
-
-
-def _finite_timestamps(values):
-    arr = np.asarray(values, dtype=np.float64).reshape(-1)
-    if arr.size <= 0:
-        return np.asarray([], dtype=np.float64)
-    return arr[np.isfinite(arr)]
-
-
-def _timestamp_match_tolerance(sample_timestamps):
-    finite = _finite_timestamps(sample_timestamps)
-    if finite.shape[0] < 2:
-        return 1e-4
-    diffs = np.diff(finite)
-    diffs = diffs[diffs > 0.0]
-    if diffs.size <= 0:
-        return 1e-4
-    return max(1e-4, float(np.median(diffs)) * 0.45)
-
-
-def _nearest_timestamp_indices(sample_timestamps, target_timestamps, tolerance):
-    if tolerance is None or tolerance < 0.0:
-        return []
-    sample_arr = np.asarray(sample_timestamps, dtype=np.float64).reshape(-1)
-    if sample_arr.size <= 0:
-        return []
-    out = []
-    seen = set()
-    for target in list(target_timestamps or []):
-        try:
-            ts_value = float(target)
-        except Exception:
-            continue
-        if not np.isfinite(ts_value):
-            continue
-        pos = int(np.searchsorted(sample_arr, ts_value))
-        candidates = []
-        if pos < sample_arr.shape[0]:
-            candidates.append(pos)
-        if pos > 0:
-            candidates.append(pos - 1)
-        best_idx = None
-        best_diff = None
-        for idx in candidates:
-            diff = abs(float(sample_arr[idx]) - ts_value)
-            if best_diff is None or diff < best_diff:
-                best_idx = int(idx)
-                best_diff = float(diff)
-        if best_idx is None or best_diff is None or best_diff > tolerance:
-            continue
-        if best_idx in seen:
-            continue
-        seen.add(best_idx)
-        out.append(best_idx)
-    out.sort()
-    return out
-
-
-def _keyframe_timestamps(keyframe_context):
-    if not isinstance(keyframe_context, dict):
-        return []
-    timestamps_map = dict(keyframe_context.get("timestamps_by_frame") or {})
-    out = []
-    for frame_idx in list(keyframe_context.get("frame_indices") or []):
-        if frame_idx not in timestamps_map:
-            continue
-        try:
-            value = float(timestamps_map[frame_idx])
-        except Exception:
-            continue
-        if np.isfinite(value):
-            out.append(value)
-    return out
-
-
-def _traj_keyframe_sample_indices(ref_timestamps, keyframe_context, sample_count):
-    if sample_count <= 0:
-        return []
-    tolerance = _timestamp_match_tolerance(ref_timestamps)
-    sample_indices = _nearest_timestamp_indices(ref_timestamps, _keyframe_timestamps(keyframe_context), tolerance)
-    out = []
-    for idx in sample_indices:
-        if idx <= 0 or idx >= int(sample_count) - 1:
-            continue
-        out.append(int(idx))
-    return out
 
 
 def _normalized_points(points_xy):
@@ -579,7 +487,86 @@ def _project_traj_to_view_plane(ref_xyz, est_xyz):
     }
 
 
-def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_label, metrics_obj, keyframe_sample_indices=None):
+def _finite_timestamps(values):
+    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    if arr.size <= 0:
+        return np.asarray([], dtype=np.float64)
+    return arr[np.isfinite(arr)]
+
+
+def _timestamp_match_tolerance(sample_timestamps):
+    finite = _finite_timestamps(sample_timestamps)
+    if finite.shape[0] < 2:
+        return 1e-4
+    diffs = np.diff(finite)
+    diffs = diffs[diffs > 0.0]
+    if diffs.size <= 0:
+        return 1e-4
+    return max(1e-4, float(np.median(diffs)) * 0.45)
+
+
+def _nearest_timestamp_indices(sample_timestamps, target_timestamps, tolerance):
+    if tolerance is None or tolerance < 0.0:
+        return []
+    sample_arr = np.asarray(sample_timestamps, dtype=np.float64).reshape(-1)
+    if sample_arr.size <= 0:
+        return []
+    out = []
+    seen = set()
+    for target in list(target_timestamps or []):
+        try:
+            ts_value = float(target)
+        except Exception:
+            continue
+        if not np.isfinite(ts_value):
+            continue
+        pos = int(np.searchsorted(sample_arr, ts_value))
+        candidates = []
+        if pos < sample_arr.shape[0]:
+            candidates.append(pos)
+        if pos > 0:
+            candidates.append(pos - 1)
+        best_idx = None
+        best_diff = None
+        for idx in candidates:
+            diff = abs(float(sample_arr[idx]) - ts_value)
+            if best_diff is None or diff < best_diff:
+                best_idx = int(idx)
+                best_diff = float(diff)
+        if best_idx is None or best_diff is None or best_diff > tolerance:
+            continue
+        if best_idx in seen:
+            continue
+        seen.add(best_idx)
+        out.append(best_idx)
+    out.sort()
+    return out
+
+
+def _boundary_timestamps(unit_context):
+    timestamps_map = dict(unit_context.get("timestamps_by_frame") or {})
+    out = []
+    for frame_idx in list(unit_context.get("unit_boundaries") or []):
+        if frame_idx not in timestamps_map:
+            continue
+        try:
+            value = float(timestamps_map[frame_idx])
+        except Exception:
+            continue
+        if np.isfinite(value):
+            out.append(value)
+    return out
+
+
+def _boundary_sample_indices(ref_timestamps, unit_context, sample_count):
+    if sample_count <= 0:
+        return []
+    tolerance = _timestamp_match_tolerance(ref_timestamps)
+    sample_indices = _nearest_timestamp_indices(ref_timestamps, _boundary_timestamps(unit_context), tolerance)
+    return [int(idx) for idx in sample_indices if 0 <= int(idx) < int(sample_count)]
+
+
+def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_label, metrics_obj, boundary_sample_indices=None):
     from matplotlib.collections import LineCollection
     from matplotlib.colors import Normalize
     from matplotlib.lines import Line2D
@@ -591,7 +578,7 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
     ref_xy = projection["ref_xy"]
     est_xy = projection["est_xy"]
     if ref_xy.shape[0] <= 0 or est_xy.shape[0] <= 0:
-        append_warning(metrics_obj, "trajectory plot unavailable: insufficient aligned positions")
+        _append_warning(metrics_obj, "trajectory plot unavailable: insufficient aligned positions")
         return
     all_xy = np.vstack([ref_xy, est_xy])
     corners = _corner_candidates(all_xy)
@@ -642,22 +629,23 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
     if not est_line_drawn:
         ax.plot(est_xy[:, 0], est_xy[:, 1], color=_EST_COLOR, linewidth=2.2, alpha=0.96, zorder=3)
 
-    show_keyframe_legend = False
-    if keyframe_sample_indices:
-        valid_indices = [int(idx) for idx in keyframe_sample_indices if 0 <= int(idx) < ref_xy.shape[0]]
+    show_boundary_legend = False
+    if boundary_sample_indices:
+        valid_indices = [int(idx) for idx in boundary_sample_indices if 0 <= int(idx) < ref_xy.shape[0]]
         if valid_indices:
-            keyframe_xy = ref_xy[valid_indices]
+            boundary_xy = ref_xy[valid_indices]
             ax.scatter(
-                keyframe_xy[:, 0],
-                keyframe_xy[:, 1],
-                s=_KEYFRAME_MARKER_SIZE,
-                facecolors="white",
-                edgecolors=_KEYFRAME_MARKER_EDGE,
-                linewidths=0.8,
-                alpha=0.92,
+                boundary_xy[:, 0],
+                boundary_xy[:, 1],
+                s=42,
+                marker="s",
+                facecolors=_BOUNDARY_FACE,
+                edgecolors=_BOUNDARY_EDGE,
+                linewidths=1.0,
+                alpha=0.96,
                 zorder=4,
             )
-            show_keyframe_legend = True
+            show_boundary_legend = True
 
     marker_size = 40
     ax.scatter(ref_xy[0, 0], ref_xy[0, 1], color=_REF_COLOR, s=marker_size, marker="o", edgecolors="white", linewidths=0.9, zorder=5)
@@ -682,18 +670,18 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
             label="{} (APE-colored)".format(est_label) if colorbar is not None else est_label,
         ),
     ]
-    if show_keyframe_legend:
+    if show_boundary_legend:
         legend_handles.append(
             Line2D(
                 [0],
                 [0],
                 linestyle="None",
-                marker="o",
-                markerfacecolor="white",
-                markeredgecolor=_KEYFRAME_MARKER_EDGE,
-                markeredgewidth=0.8,
-                markersize=5.0,
-                label="keyframes",
+                marker="s",
+                markerfacecolor=_BOUNDARY_FACE,
+                markeredgecolor=_BOUNDARY_EDGE,
+                markeredgewidth=1.0,
+                markersize=5.5,
+                label="generation unit boundaries",
             )
         )
     ax.legend(
@@ -710,18 +698,19 @@ def _plot_traj_xy(plt, out_path, ref_traj, est_traj, ape_result, ref_label, est_
     plt.close(fig)
 
 
-def _save_traj_plot(out_dir, ref_traj, est_traj, ape_result, metrics_obj, keyframe_context):
+def _save_traj_plot(out_dir, ref_traj, est_traj, ape_result, metrics_obj):
     if ref_traj is None or est_traj is None:
         return None
     ref_xyz = np.asarray(getattr(ref_traj, "positions_xyz", None), dtype=np.float64)
     est_xyz = np.asarray(getattr(est_traj, "positions_xyz", None), dtype=np.float64)
     if ref_xyz.ndim != 2 or est_xyz.ndim != 2 or ref_xyz.shape[0] <= 0 or est_xyz.shape[0] <= 0:
-        append_warning(metrics_obj, "trajectory plot unavailable: insufficient aligned positions")
+        _append_warning(metrics_obj, "trajectory plot unavailable: insufficient aligned positions")
         return None
 
     plt = _setup_matplotlib()
     plot_path = Path(out_dir).resolve() / "eval_traj_xy.png"
     ref_timestamps = np.asarray(getattr(ref_traj, "timestamps", []), dtype=np.float64).reshape(-1)
+    unit_context = dict(metrics_obj.get("_unit_context") or {})
     _plot_traj_xy(
         plt,
         plot_path,
@@ -731,44 +720,57 @@ def _save_traj_plot(out_dir, ref_traj, est_traj, ape_result, metrics_obj, keyfra
         "{} (reference)".format(metrics_obj.get("reference_name")),
         "{} (estimate)".format(metrics_obj.get("estimate_name")),
         metrics_obj,
-        keyframe_sample_indices=_traj_keyframe_sample_indices(ref_timestamps, keyframe_context, ref_timestamps.shape[0]),
+        boundary_sample_indices=_boundary_sample_indices(ref_timestamps, unit_context, ref_timestamps.shape[0]),
     )
     return plot_path
 
 
-def run_traj_eval(config):
+def _resolve_metric_path(exp_dir, path_text):
+    path_obj = Path(path_text)
+    if path_obj.is_absolute():
+        return path_obj.resolve()
+    return (Path(exp_dir).resolve() / path_obj).resolve()
+
+
+def run_trajectory_eval(config):
     metrics_obj = _base_metrics(config)
     out_dir = Path(_get_arg(config, "out_dir")).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    exp_dir = Path(metrics_obj["_exp_dir"]).resolve()
 
-    ref_path = Path(metrics_obj["reference_path"]).resolve()
-    est_path = Path(metrics_obj["estimate_path"]).resolve()
+    ref_path = _resolve_metric_path(exp_dir, metrics_obj["reference_path"])
+    est_path = _resolve_metric_path(exp_dir, metrics_obj["estimate_path"])
     if not ref_path.is_file():
-        append_warning(metrics_obj, "missing reference trajectory: {}".format(ref_path))
-        return {"metrics": metrics_obj, "overview": {}, "records": []}
+        _append_warning(metrics_obj, "missing reference trajectory: {}".format(ref_path))
+        _write_report(out_dir, metrics_obj)
+        return {"metrics": _public_metrics(metrics_obj), "overview": {}, "records": []}
     if not est_path.is_file():
-        append_warning(metrics_obj, "missing estimate trajectory: {}".format(est_path))
-        return {"metrics": metrics_obj, "overview": {}, "records": []}
+        _append_warning(metrics_obj, "missing estimate trajectory: {}".format(est_path))
+        _write_report(out_dir, metrics_obj)
+        return {"metrics": _public_metrics(metrics_obj), "overview": {}, "records": []}
 
     try:
         file_interface, evo_metrics, evo_sync, evo_units, evo_ape, evo_rpe = _load_evo_modules()
     except Exception as exc:
-        append_warning(metrics_obj, "evo unavailable for trajectory eval: {}".format(exc))
-        return {"metrics": metrics_obj, "overview": {}, "records": []}
+        _append_warning(metrics_obj, "evo unavailable for trajectory eval: {}".format(exc))
+        _write_report(out_dir, metrics_obj)
+        return {"metrics": _public_metrics(metrics_obj), "overview": {}, "records": []}
 
     try:
         log_info("eval load trajectories")
         traj_ref = file_interface.read_tum_trajectory_file(str(ref_path))
         traj_est = file_interface.read_tum_trajectory_file(str(est_path))
     except Exception as exc:
-        append_warning(metrics_obj, "failed to load trajectories: {}".format(exc))
-        return {"metrics": metrics_obj, "overview": {}, "records": []}
+        _append_warning(metrics_obj, "failed to load trajectories: {}".format(exc))
+        _write_report(out_dir, metrics_obj)
+        return {"metrics": _public_metrics(metrics_obj), "overview": {}, "records": []}
 
     metrics_obj["reference_pose_count"] = int(getattr(traj_ref, "num_poses", 0))
     metrics_obj["estimate_pose_count"] = int(getattr(traj_est, "num_poses", 0))
     if metrics_obj["reference_pose_count"] <= 0 or metrics_obj["estimate_pose_count"] <= 0:
-        append_warning(metrics_obj, "trajectory pose count is zero after loading")
-        return {"metrics": metrics_obj, "overview": {}, "records": []}
+        _append_warning(metrics_obj, "trajectory pose count is zero after loading")
+        _write_report(out_dir, metrics_obj)
+        return {"metrics": _public_metrics(metrics_obj), "overview": {}, "records": []}
 
     try:
         log_info("eval synchronize trajectories")
@@ -781,13 +783,16 @@ def run_traj_eval(config):
             snd_name=str(metrics_obj["estimate_name"]),
         )
     except Exception as exc:
-        append_warning(metrics_obj, "trajectory synchronization failed: {}".format(exc))
-        return {"metrics": metrics_obj, "overview": {}, "records": []}
+        _append_warning(metrics_obj, "trajectory synchronization failed: {}".format(exc))
+        _write_report(out_dir, metrics_obj)
+        return {"metrics": _public_metrics(metrics_obj), "overview": {}, "records": []}
 
     metrics_obj["matched_pose_count"] = int(getattr(sync_ref, "num_poses", 0))
+    metrics_obj["num_matches"] = int(metrics_obj["matched_pose_count"])
     if metrics_obj["matched_pose_count"] <= 0:
-        append_warning(metrics_obj, "no matched poses after synchronization")
-        return {"metrics": metrics_obj, "overview": {}, "records": []}
+        _append_warning(metrics_obj, "no matched poses after synchronization")
+        _write_report(out_dir, metrics_obj)
+        return {"metrics": _public_metrics(metrics_obj), "overview": {}, "records": []}
 
     align, correct_scale, align_origin = _alignment_flags(metrics_obj["alignment_mode"])
     try:
@@ -802,9 +807,11 @@ def run_traj_eval(config):
             est_name=str(metrics_obj["estimate_name"]),
         )
         metrics_obj["ape_trans"] = _stats_dict(ape_result.stats)
+        metrics_obj["ape_rmse_m"] = metrics_obj["ape_trans"].get("rmse")
     except Exception as exc:
-        append_warning(metrics_obj, "failed to compute APE translation: {}".format(exc))
-        return {"metrics": metrics_obj, "overview": {}, "records": []}
+        _append_warning(metrics_obj, "failed to compute APE translation: {}".format(exc))
+        _write_report(out_dir, metrics_obj)
+        return {"metrics": _public_metrics(metrics_obj), "overview": {}, "records": []}
 
     trajectories = getattr(ape_result, "trajectories", {}) or {}
     aligned_ref = trajectories.get(str(metrics_obj["reference_name"])) or sync_ref
@@ -830,8 +837,9 @@ def run_traj_eval(config):
                 est_name=str(metrics_obj["estimate_name"]),
             )
             metrics_obj["rpe_trans"] = _stats_dict(rpe_trans_result.stats)
+            metrics_obj["rpe_trans_rmse_m"] = metrics_obj["rpe_trans"].get("rmse")
         except Exception as exc:
-            append_warning(metrics_obj, "failed to compute RPE translation: {}".format(exc))
+            _append_warning(metrics_obj, "failed to compute RPE translation: {}".format(exc))
         try:
             delta_unit = getattr(evo_units.Unit, str(metrics_obj["rpe_delta_unit"]))
             rpe_rot_result = evo_rpe(
@@ -847,27 +855,54 @@ def run_traj_eval(config):
                 est_name=str(metrics_obj["estimate_name"]),
             )
             metrics_obj["rpe_rot"] = _stats_dict(rpe_rot_result.stats)
+            metrics_obj["rpe_rot_rmse_deg"] = metrics_obj["rpe_rot"].get("rmse")
         except Exception as exc:
-            append_warning(metrics_obj, "failed to compute RPE rotation: {}".format(exc))
+            _append_warning(metrics_obj, "failed to compute RPE rotation: {}".format(exc))
     else:
-        append_warning(metrics_obj, "matched pose count < 2; skip RPE")
+        _append_warning(metrics_obj, "matched pose count < 2; skip RPE")
 
     metrics_obj["eval_status"] = "success" if metrics_obj["ape_trans"].get("rmse") is not None else "partial"
     traj_plot = None
     if not bool(_get_arg(config, "skip_plots", False)):
-        keyframe_context = _load_formal_keyframe_context(config, metrics_obj)
-        traj_plot = _save_traj_plot(out_dir, aligned_ref, aligned_est, ape_result, metrics_obj, keyframe_context)
+        traj_plot = _save_traj_plot(out_dir, aligned_ref, aligned_est, ape_result, metrics_obj)
+        if traj_plot is not None:
+            metrics_obj["plot_path"] = _relative_path(exp_dir, traj_plot)
 
     overview = {
         "ape_curve": _curve_payload(ape_result),
         "rpe_trans_curve": _curve_payload(rpe_trans_result),
         "rpe_rot_curve": _curve_payload(rpe_rot_result),
     }
+    records = _traj_detail_records(aligned_ref, aligned_est, ape_result)
+    report_path = _write_report(out_dir, metrics_obj)
+    log_info("eval trajectory report: {}".format(report_path))
     return {
-        "metrics": metrics_obj,
+        "metrics": _public_metrics(metrics_obj),
         "overview": overview,
-        "records": _traj_detail_records(aligned_ref, aligned_est, ape_result),
+        "records": records,
         "artifacts": {
             "traj_xy_plot": str(traj_plot) if traj_plot is not None else "",
         },
     }
+
+
+def main(argv=None):
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-native-trajectory", action="store_true")
+    parser.add_argument("--exp_dir", required=True)
+    parser.add_argument("--out_dir", required=True)
+    parser.add_argument("--prepare_result", required=True)
+    parser.add_argument("--generation_units", required=True)
+    parser.add_argument("--reference", required=True)
+    parser.add_argument("--estimate", required=True)
+    parser.add_argument("--skip_plots", action="store_true")
+    args = parser.parse_args(argv)
+    if not args.run_native_trajectory:
+        raise SystemExit("eval trajectory helper requires --run-native-trajectory")
+    run_trajectory_eval(vars(args))
+
+
+if __name__ == "__main__":
+    main()

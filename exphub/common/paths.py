@@ -56,10 +56,6 @@ class ExperimentPaths:
         return self.encode_dir / "legacy_segment_manifest.json"
 
     @property
-    def decode_manifest_path(self) -> Path:
-        return self.encode_legacy_manifest_path
-
-    @property
     def encode_generation_units_path(self) -> Path:
         return self.encode_dir / "generation_units.json"
 
@@ -164,10 +160,6 @@ class ExperimentPaths:
         return self.eval_dir / "eval_compression_report.json"
 
     @property
-    def eval_report_path(self) -> Path:
-        return self.eval_dir / "eval_report.json"
-
-    @property
     def eval_summary_path(self) -> Path:
         return self.eval_dir / "eval_summary.txt"
 
@@ -182,10 +174,6 @@ class ExperimentPaths:
     @property
     def eval_metrics_overview_path(self) -> Path:
         return self.eval_dir / "eval_metrics_overview.png"
-
-    @property
-    def eval_slam_primary_traj_path(self) -> Path:
-        return self.eval_dir / "traj_est.txt"
 
     @property
     def export_report_path(self) -> Path:

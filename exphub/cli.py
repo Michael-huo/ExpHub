@@ -287,59 +287,28 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
     total_time = sum(float(x) for x in step_times.values())
 
     eval_dir = exp_dir / "eval"
-    eval_report = _read_json_dict(eval_dir / "eval_report.json")
-    traj_metrics = dict(eval_report.get("traj_eval") or {}) if isinstance(eval_report.get("traj_eval"), dict) else {}
-    if not traj_metrics:
-        traj_metrics = _read_json_dict(eval_dir / "eval_traj_report.json")
+    traj_metrics = _read_json_dict(eval_dir / "eval_traj_report.json")
     infer_details = _parse_infer_log_details(exp_dir / "logs" / "infer.log")
 
-    compression_obj = {}
-    if isinstance(eval_report.get("compression"), dict):
-        compression_obj = dict(eval_report.get("compression") or {})
     compression_snapshot = _read_json_dict(eval_dir / "eval_compression_report.json")
 
-    ori_bytes = _pick_first_int(
-        compression_obj,
-        [["ori_bytes"]],
-    )
-    if ori_bytes is None:
-        ori_bytes = _pick_first_int(compression_snapshot, [["orig_size"]])
+    ori_bytes = _pick_first_int(compression_snapshot, [["orig_size_bytes"], ["orig_size"]])
 
-    keyframes_bytes = _pick_first_int(
-        compression_obj,
-        [["keyframes_bytes"]],
-    )
+    comp_size = _pick_first_int(compression_snapshot, [["comp_size_bytes"], ["comp_size"]])
 
-    prompt_bytes = _pick_first_int(
-        compression_obj,
-        [["prompt_bytes"]],
-    )
+    ratio_bytes = _pick_first_float(compression_snapshot, [["ratio"]])
 
-    comp_size = None  # type: Optional[int]
-    if keyframes_bytes is not None and prompt_bytes is not None:
-        comp_size = int(keyframes_bytes + prompt_bytes)
-    else:
-        comp_size = _pick_first_int(compression_snapshot, [["comp_size"]])
-
-    ratio_bytes = _pick_first_float(
-        compression_obj,
-        [["ratio_bytes"]],
-    )
-    if ratio_bytes is None:
-        ratio_bytes = _pick_first_float(compression_snapshot, [["ratio"]])
-
-    keyframes_frames = _pick_first_int(
-        compression_obj,
-        [["keyframes_frames"]],
-    )
-    if keyframes_frames is None:
-        keyframes_frames = _pick_first_int(compression_snapshot, [["keyframes"]])
+    unit_boundary_count = _pick_first_int(compression_snapshot, [["unit_boundary_count"], ["unit_boundaries"]])
 
     reduction_ratio = None  # type: Optional[float]
     if ratio_bytes is not None:
         reduction_ratio = 1.0 - float(ratio_bytes)
     else:
-        reduction_ratio = _pick_first_float(compression_snapshot, [["reduction"]])
+        reduction_pct = _pick_first_float(compression_snapshot, [["reduction_pct"]])
+        if reduction_pct is not None:
+            reduction_ratio = float(reduction_pct) / 100.0
+        else:
+            reduction_ratio = _pick_first_float(compression_snapshot, [["reduction"]])
 
     phase_times = {}
     for phase_name in phase_names:
@@ -363,7 +332,7 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
             "reduction": reduction_ratio,
             "orig_size": ori_bytes,
             "comp_size": comp_size,
-            "keyframes": keyframes_frames,
+            "unit_boundaries": unit_boundary_count,
         },
     }
     return report
@@ -414,7 +383,7 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
         ("reduction", _fmt_reduction(_as_float_or_none(compression.get("reduction")))),
         ("orig_size", _fmt_bytes(_as_int_or_none(compression.get("orig_size")))),
         ("comp_size", _fmt_bytes(_as_int_or_none(compression.get("comp_size")))),
-        ("keyframes", _fmt_count(_as_int_or_none(compression.get("keyframes")))),
+        ("unit_boundaries", _fmt_count(_as_int_or_none(compression.get("unit_boundaries")))),
     ]
 
     _info(sep)

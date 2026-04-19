@@ -1,34 +1,27 @@
 from __future__ import annotations
 
 import argparse
-import datetime
-import sys
+import csv
+import os
+import tempfile
+from datetime import datetime
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-from exphub.common.io import read_json_dict, write_json_atomic
+from exphub.common.io import read_json_dict, write_json_atomic, write_text_atomic
 from exphub.common.logging import log_info, log_prog, log_warn
 
 
-def _as_int_or_none(value):
-    try:
-        if value is None:
-            return None
-        return int(value)
-    except Exception:
-        return None
+_FRAME_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
-def _as_float_or_none(value):
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
+def _get_arg(config, name, default=None):
+    if isinstance(config, dict):
+        return config.get(name, default)
+    return getattr(config, name, default)
+
+
+def _as_dict(value):
+    return value if isinstance(value, dict) else {}
 
 
 def _relative_path(base_dir, target_path):
@@ -40,435 +33,422 @@ def _relative_path(base_dir, target_path):
         return str(target)
 
 
-def _get_nested(obj, path):
-    current = obj
-    for key in list(path or []):
-        if not isinstance(current, dict):
-            return None
-        current = current.get(key)
-    return current
-
-
-def _pick_int(meta, candidate_paths):
-    for path in list(candidate_paths or []):
-        value = _as_int_or_none(_get_nested(meta, path))
-        if value is not None:
-            return value
-    return None
-
-
-def _pick_float(meta, candidate_paths):
-    for path in list(candidate_paths or []):
-        value = _as_float_or_none(_get_nested(meta, path))
-        if value is not None:
-            return value
-    return None
-
-
-def _dir_png_stats(directory):
-    root = Path(directory).resolve()
-    if not root.is_dir():
-        return 0, 0
-    count = 0
-    bytes_sum = 0
-    for item in root.iterdir():
-        if not item.is_file():
-            continue
-        if item.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
-            continue
-        count += 1
-        try:
-            bytes_sum += int(item.stat().st_size)
-        except Exception:
-            pass
-    return int(count), int(bytes_sum)
-
-
-def _read_stage_report(path_obj, warnings):
+def _read_required_json(path_obj, label, warnings):
     path = Path(path_obj).resolve()
-    if not path.is_file():
-        msg = "missing stage report: {}".format(path)
-        warnings.append(msg)
-        log_warn(msg)
-        return {}
     payload = read_json_dict(path)
     if not payload:
-        msg = "invalid or empty stage report: {}".format(path)
-        warnings.append(msg)
-        log_warn(msg)
+        message = "missing or invalid {}: {}".format(label, path)
+        warnings.append(message)
+        log_warn(message)
     return payload
 
 
-def _segment_manifest_path(exp_dir):
-    exp = Path(exp_dir).resolve()
-    for candidate in (
-        exp / "encode" / "legacy_segment_manifest.json",
-        exp / "input" / "input_report.json",
-    ):
-        if candidate.is_file():
-            return candidate.resolve()
-    return exp / "encode" / "legacy_segment_manifest.json"
-
-
-def _native_paths(exp_dir):
-    exp = Path(exp_dir).resolve()
-    return {
-        "prepare_result": exp / "prepare" / "prepare_result.json",
-        "generation_units": exp / "encode" / "generation_units.json",
-        "prompts": exp / "encode" / "prompts.json",
-        "encode_result": exp / "encode" / "encode_result.json",
-        "legacy_segment_manifest": exp / "encode" / "legacy_segment_manifest.json",
-        "encode_plan": exp / "encode" / "encode_plan.json",
-        "prompt_spans": exp / "encode" / "prompt_spans.json",
-        "encode_report": exp / "encode" / "encode_report.json",
-    }
-
-
-def _prepare_frames_dir(exp_dir):
-    exp = Path(exp_dir).resolve()
-    if (exp / "prepare" / "frames").is_dir():
-        return exp / "prepare" / "frames"
-    return exp / "input" / "frames"
-
-
-def _file_size_or_none(path_obj):
-    path = Path(path_obj).resolve()
-    if not path.is_file():
-        return None
+def _fmt_value(value, unit=""):
+    if value is None:
+        return "n/a"
     try:
-        return int(path.stat().st_size)
+        text = "{:.6f}".format(float(value))
+    except Exception:
+        return "n/a"
+    unit_text = str(unit or "").strip()
+    if unit_text:
+        return "{} {}".format(text, unit_text)
+    return text
+
+
+def _pick_float(obj, keys):
+    current = obj
+    for key in list(keys or []):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    try:
+        if current is None:
+            return None
+        return float(current)
     except Exception:
         return None
 
 
-def _build_compression_summary(exp_dir, prepare_result, prompts_path, fallback_segment_report, fallback_prompt_report, warnings):
-    segment_frames_dir = _prepare_frames_dir(exp_dir)
-    ori_frames, ori_bytes = _dir_png_stats(segment_frames_dir)
+def _pick_int(obj, keys):
+    current = obj
+    for key in list(keys or []):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    try:
+        if current is None:
+            return None
+        return int(current)
+    except Exception:
+        return None
 
-    legal_positions = [int(item) for item in list((prepare_result.get("legal_grid") or {}).get("legal_positions") or [])]
-    keyframes_frames = len(legal_positions) if legal_positions else None
-    keyframes_bytes = None
-    if legal_positions:
-        keyframes_bytes = 0
-        for idx in legal_positions:
-            frame_path = segment_frames_dir / "{:06d}.png".format(int(idx))
+
+def _input_paths(exp_dir, config):
+    return {
+        "prepare_frames_dir": Path(_get_arg(config, "prepare_frames_dir")).resolve(),
+        "prepare_result": Path(_get_arg(config, "prepare_result")).resolve(),
+        "generation_units": Path(_get_arg(config, "generation_units")).resolve(),
+        "prompts": Path(_get_arg(config, "prompts")).resolve(),
+        "encode_result": Path(_get_arg(config, "encode_result")).resolve(),
+        "decode_report": Path(_get_arg(config, "decode_report")).resolve(),
+        "decode_merge_report": Path(_get_arg(config, "decode_merge_report")).resolve(),
+        "eval_slam_report": Path(_get_arg(config, "slam_report")).resolve(),
+        "eval_traj_report": Path(_get_arg(config, "traj_report")).resolve(),
+    }
+
+
+def _frame_sort_key(path_obj):
+    item = Path(path_obj)
+    if item.stem.isdigit():
+        return int(item.stem)
+    return 10**12
+
+
+def _image_files(frames_dir):
+    root = Path(frames_dir).resolve()
+    if not root.is_dir():
+        return []
+    out = [item for item in root.iterdir() if item.is_file() and item.suffix.lower() in _FRAME_EXTS]
+    out.sort(key=lambda item: (_frame_sort_key(item), item.name))
+    return out
+
+
+def _file_size(path_obj):
+    path = Path(path_obj).resolve()
+    if not path.is_file():
+        return 0
+    try:
+        return int(path.stat().st_size)
+    except Exception:
+        return 0
+
+
+def _boundary_indices(generation_units):
+    out = []
+    seen = set()
+    for unit in list(_as_dict(generation_units).get("units") or []):
+        for key in ("start_idx", "end_idx"):
             try:
-                keyframes_bytes += int(frame_path.stat().st_size)
+                value = int(_as_dict(unit).get(key))
             except Exception:
-                pass
-    if keyframes_frames is None:
-        keyframes_frames = _pick_int(
-            fallback_segment_report,
-            [
-                ("keyframes", "count"),
-                ("outputs", "keyframes", "frame_count"),
-            ],
-        )
-    if keyframes_bytes is None:
-        keyframes_bytes = _pick_int(fallback_segment_report, [("keyframes", "bytes_sum")])
-    prompt_bytes = _file_size_or_none(prompts_path)
-    if prompt_bytes is None:
-        prompt_bytes = _pick_int(fallback_prompt_report, [("outputs", "bytes_sum"), ("outputs", "prompt_bytes")])
-
-    if prompt_bytes is None:
-        msg = "missing prompts artifact size; prompt_bytes set to null"
-        warnings.append(msg)
-        log_warn(msg)
-    if ori_frames <= 0:
-        msg = "prepare/frames unavailable for eval compression scan; ori_frames and ori_bytes set to null"
-        warnings.append(msg)
-        log_warn(msg)
-        ori_frames = None
-        ori_bytes = None
-
-    ratio_bytes = None
-    if ori_bytes and ori_bytes > 0 and keyframes_bytes is not None and prompt_bytes is not None:
-        ratio_bytes = float(keyframes_bytes + prompt_bytes) / float(ori_bytes)
-
-    ratio_frames = None
-    if ori_frames and ori_frames > 0 and keyframes_frames is not None:
-        ratio_frames = float(keyframes_frames) / float(ori_frames)
-
-    return {
-        "ori_frames": ori_frames,
-        "ori_bytes": ori_bytes,
-        "keyframes_frames": keyframes_frames,
-        "keyframes_bytes": keyframes_bytes,
-        "prompt_bytes": prompt_bytes,
-        "ratio_bytes": ratio_bytes,
-        "ratio_frames": ratio_frames,
-    }
+                continue
+            if value < 0 or value in seen:
+                continue
+            seen.add(value)
+            out.append(value)
+    out.sort()
+    return out
 
 
-def _build_quality(traj_metrics, slam_report):
-    primary_track = str(_get_nested(slam_report, ("primary_track",)) or "")
-    return {
-        "eval_status": str((traj_metrics or {}).get("eval_status", "") or ""),
-        "traj_status": str((traj_metrics or {}).get("eval_status", "") or ""),
-        "ape_rmse": _pick_float(traj_metrics, [("ape_trans", "rmse")]),
-        "rpe_trans_rmse": _pick_float(traj_metrics, [("rpe_trans", "rmse")]),
-        "rpe_rot_rmse": _pick_float(traj_metrics, [("rpe_rot", "rmse")]),
-        "matched_pose_count": _pick_int(traj_metrics, [("matched_pose_count",)]),
-        "ori_path_length_m": _pick_float(traj_metrics, [("ori_path_length_m",)]),
-        "gen_path_length_m": _pick_float(traj_metrics, [("gen_path_length_m",)]),
-        "primary_track": primary_track,
-    }
+def _frame_path_for_idx(frames_dir, frame_idx):
+    root = Path(frames_dir).resolve()
+    stem = "{:06d}".format(int(frame_idx))
+    for ext in sorted(_FRAME_EXTS):
+        candidate = root / "{}{}".format(stem, ext)
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
 
 
-def _stage_status(*statuses):
-    ordered = []
-    for value in statuses:
-        text = str(value or "").strip()
-        if text:
-            ordered.append(text)
-    if not ordered:
-        return "missing"
-    if any(item not in ("success", "partial") for item in ordered):
-        return ordered[0]
-    if any(item == "partial" for item in ordered):
-        return "partial"
-    return "success"
+def _build_compression_report(exp_dir, out_dir, inputs, reports, warnings):
+    prepare_frames_dir = inputs["prepare_frames_dir"]
+    generation_units_path = inputs["generation_units"]
+    prompts_path = inputs["prompts"]
+    generation_units = reports["generation_units"]
 
+    frame_files = _image_files(prepare_frames_dir)
+    orig_size_bytes = int(sum(_file_size(item) for item in frame_files))
+    boundaries = _boundary_indices(generation_units)
+    boundary_frame_paths = []
+    boundary_frame_bytes = 0
+    missing_boundaries = []
+    for frame_idx in boundaries:
+        frame_path = _frame_path_for_idx(prepare_frames_dir, frame_idx)
+        if frame_path is None:
+            missing_boundaries.append(int(frame_idx))
+            continue
+        boundary_frame_paths.append(frame_path)
+        boundary_frame_bytes += _file_size(frame_path)
 
-def _stage_created_at(*reports):
-    for report_obj in reversed(list(reports)):
-        value = str((report_obj or {}).get("created_at", "") or "")
-        if value:
-            return value
-    return ""
+    if missing_boundaries:
+        message = "compression boundary frames missing: {}".format(missing_boundaries)
+        warnings.append(message)
+        log_warn(message)
 
+    json_payload_paths = [generation_units_path, prompts_path]
+    json_payload_bytes = int(sum(_file_size(path) for path in json_payload_paths))
+    comp_size_bytes = int(boundary_frame_bytes + json_payload_bytes)
+    ratio = float(comp_size_bytes) / float(orig_size_bytes) if orig_size_bytes > 0 else None
+    reduction_pct = (1.0 - float(ratio)) * 100.0 if ratio is not None else None
 
-def _build_generation_unit_summary(infer_report, merge_report, merge_manifest, encode_result, generation_units):
-    merge_summary = dict((merge_manifest or {}).get("summary") or {})
-    if not merge_summary:
-        merge_summary = dict((merge_report or {}).get("summary") or {})
-    units = list((generation_units or {}).get("units") or [])
-    encode_units = _pick_int(encode_result, [("num_generation_units",)])
-    return {
-        "planner": "generation_units",
-        "prompt_strategy": str((infer_report or {}).get("prompt_strategy", "") or (encode_result or {}).get("prompt_mode", "") or "prompts"),
-        "source_unit_count": int(merge_summary.get("source_unit_count", 0) or encode_units or len(units) or 0),
-        "source_span_count": int(merge_summary.get("source_span_count", 0) or 0),
-        "shared_anchor_count": int(merge_summary.get("shared_anchor_count", 0) or _pick_int(generation_units, [("summary", "shared_anchor_count")]) or 0),
-    }
-
-
-def _build_stage_table(exp_dir, stage_reports, traj_metrics, inputs, eval_dir):
-    paths = _native_paths(exp_dir)
-    return {
-        "encode": {
-            "status": _stage_status("success" if stage_reports["prepare"] else "", "success" if stage_reports["encode_result"] else ""),
-            "created_at": _stage_created_at(stage_reports["prepare"], stage_reports["encode_result"]),
-            "artifacts": {
-                "prepare_result": _relative_path(exp_dir, paths["prepare_result"]),
-                "generation_units": _relative_path(exp_dir, paths["generation_units"]),
-                "prompts": _relative_path(exp_dir, paths["prompts"]),
-                "encode_result": _relative_path(exp_dir, paths["encode_result"]),
-            },
-            "transition_artifacts": {
-                "legacy_segment_manifest": _relative_path(exp_dir, paths["legacy_segment_manifest"]),
-                "encode_plan": _relative_path(exp_dir, paths["encode_plan"]),
-                "prompt_spans": _relative_path(exp_dir, paths["prompt_spans"]),
-                "encode_report": _relative_path(exp_dir, paths["encode_report"]),
-            },
-        },
-        "decode": {
-            "status": _stage_status(
-                stage_reports["decode"].get("image_gen_status"),
-                stage_reports["decode"].get("decode_status"),
-                stage_reports["merge"].get("merge_status"),
-            ),
-            "created_at": _stage_created_at(stage_reports["decode"], stage_reports["merge"]),
-            "artifacts": {
-                "decode_plan": _relative_path(exp_dir, Path(inputs.get("decode_plan")).resolve()),
-                "decode_report": _relative_path(exp_dir, Path(inputs.get("decode_report")).resolve()),
-                "decode_merge_report": _relative_path(exp_dir, Path(inputs.get("decode_merge_report")).resolve()),
-            },
-        },
-        "eval": {
-            "status": _stage_status(stage_reports["slam"].get("slam_status"), traj_metrics.get("eval_status")),
-            "created_at": _stage_created_at(stage_reports["slam"], {"created_at": traj_metrics.get("created_at")}),
-            "artifacts": {
-                "slam_report": _relative_path(exp_dir, Path(eval_dir).resolve() / "eval_slam_report.json"),
-                "traj_metrics": _relative_path(exp_dir, Path(eval_dir).resolve() / "eval_traj_report.json"),
-                "report": _relative_path(exp_dir, Path(eval_dir).resolve() / "eval_report.json"),
-            },
-        },
-    }
-
-
-def _build_compression_snapshot(compression_summary):
-    ratio = compression_summary.get("ratio_bytes")
-    reduction = None if ratio is None else 1.0 - float(ratio)
-    comp_size = None
-    if compression_summary.get("keyframes_bytes") is not None and compression_summary.get("prompt_bytes") is not None:
-        comp_size = int(compression_summary["keyframes_bytes"]) + int(compression_summary["prompt_bytes"])
-    return {
+    report = {
+        "version": 1,
+        "source": "eval.compression_report.v1",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "definition": "unique generation unit boundary frames plus native prompt/unit JSON payload",
+        "orig_size_bytes": int(orig_size_bytes),
+        "comp_size_bytes": int(comp_size_bytes),
         "ratio": ratio,
-        "reduction": reduction,
-        "orig_size": compression_summary.get("ori_bytes"),
-        "comp_size": comp_size,
-        "keyframes": compression_summary.get("keyframes_frames"),
+        "reduction_pct": reduction_pct,
+        "unit_count": int(len(list(_as_dict(generation_units).get("units") or []))),
+        "unit_boundary_count": int(len(boundaries)),
+        "unit_boundaries": list(boundaries),
+        "boundary_frame_bytes": int(boundary_frame_bytes),
+        "json_payload_bytes": int(json_payload_bytes),
+        "json_payload_files": [_relative_path(exp_dir, path) for path in json_payload_paths],
+        "boundary_frame_files": [_relative_path(exp_dir, path) for path in boundary_frame_paths],
+        "source_inputs": {
+            "prepare_frames_dir": _relative_path(exp_dir, prepare_frames_dir),
+            "generation_units": _relative_path(exp_dir, generation_units_path),
+            "prompts": _relative_path(exp_dir, prompts_path),
+        },
+        "excluded_from_comp_size": {
+            "encode_result": "local validation/summary metadata, not required by backend execution payload",
+            "decode_frames": "generated output, not compressed input",
+        },
+        "warnings": list(warnings),
     }
+    report_path = Path(out_dir).resolve() / "eval_compression_report.json"
+    write_json_atomic(report_path, report, indent=2)
+    return report_path, report
 
 
-def run_diagnostics_substage(args):
-    exp_dir = Path(args.exp_dir).resolve()
-    eval_dir = Path(args.out_dir).resolve()
-    eval_dir.mkdir(parents=True, exist_ok=True)
-    native_paths = _native_paths(exp_dir)
+def _detail_fieldnames():
+    return [
+        "pose_idx",
+        "timestamp",
+        "ape_trans_m",
+        "ref_x",
+        "ref_y",
+        "ref_z",
+        "est_x",
+        "est_y",
+        "est_z",
+    ]
+
+
+def _write_csv(path_obj, fieldnames, rows):
+    path = Path(path_obj).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(path.name + ".tmp")
+    with tmp_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(fieldnames))
+        writer.writeheader()
+        for row in list(rows or []):
+            writer.writerow(dict(row))
+    os.replace(str(tmp_path), str(path))
+
+
+def _write_details(out_dir, traj_records):
+    rows = []
+    for item in list(traj_records or []):
+        rows.append(
+            {
+                "pose_idx": item.get("pose_idx", ""),
+                "timestamp": item.get("timestamp", ""),
+                "ape_trans_m": item.get("ape_trans_m", ""),
+                "ref_x": item.get("ref_x", ""),
+                "ref_y": item.get("ref_y", ""),
+                "ref_z": item.get("ref_z", ""),
+                "est_x": item.get("est_x", ""),
+                "est_y": item.get("est_y", ""),
+                "est_z": item.get("est_z", ""),
+            }
+        )
+    details_path = Path(out_dir).resolve() / "eval_details.csv"
+    _write_csv(details_path, _detail_fieldnames(), rows)
+    return details_path
+
+
+def _setup_matplotlib():
+    if not os.environ.get("MPLBACKEND"):
+        os.environ["MPLBACKEND"] = "Agg"
+    if not os.environ.get("MPLCONFIGDIR"):
+        os.environ["MPLCONFIGDIR"] = tempfile.mkdtemp(prefix="exphub_mpl_")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt
+
+
+def _curve_xy(curve):
+    if not isinstance(curve, dict):
+        return [], []
+    return list(curve.get("x") or []), list(curve.get("y") or [])
+
+
+def _save_metrics_overview(out_dir, traj_overview):
+    plt = _setup_matplotlib()
+    plot_path = Path(out_dir).resolve() / "eval_metrics_overview.png"
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.8), dpi=180)
+    fig.patch.set_facecolor("white")
+
+    ape_x, ape_y = _curve_xy((traj_overview or {}).get("ape_curve"))
+    if ape_x and ape_y:
+        axes[0].plot(ape_x, ape_y, color="#1f4e79", linewidth=1.6)
+    axes[0].set_title("APE Curve")
+    axes[0].set_xlabel("pose")
+    axes[0].set_ylabel("m")
+
+    rpe_tx, rpe_ty = _curve_xy((traj_overview or {}).get("rpe_trans_curve"))
+    rpe_rx, rpe_ry = _curve_xy((traj_overview or {}).get("rpe_rot_curve"))
+    if rpe_tx and rpe_ty:
+        axes[1].plot(rpe_tx, rpe_ty, color="#c56a2d", linewidth=1.5, label="rpe_trans")
+    if rpe_rx and rpe_ry:
+        axes[1].plot(rpe_rx, rpe_ry, color="#546d8c", linewidth=1.5, label="rpe_rot")
+    if rpe_tx or rpe_rx:
+        axes[1].legend(loc="upper right", fontsize=8)
+    axes[1].set_title("RPE Curves")
+    axes[1].set_xlabel("pose")
+
+    for ax in axes:
+        ax.grid(True, alpha=0.3)
+        ax.set_facecolor("white")
+
+    fig.tight_layout()
+    fig.savefig(str(plot_path), bbox_inches="tight", pad_inches=0.05)
+    plt.close(fig)
+    return plot_path
+
+
+def _summary_lines(exp_dir, inputs, reports, compression_report, warnings):
+    prepare = reports["prepare_result"]
+    generation_units = reports["generation_units"]
+    slam_report = reports["eval_slam_report"]
+    traj_report = reports["eval_traj_report"]
+
+    units = list(_as_dict(generation_units).get("units") or [])
+    lines = [
+        "=== ExpHub Eval Native Summary ===",
+        "created_at: {}".format(datetime.now().isoformat(timespec="seconds")),
+        "workflow: slam_run -> trajectory_eval -> summary_build",
+        "",
+        "[Native Inputs]",
+    ]
+    for name in [
+        "prepare_result",
+        "generation_units",
+        "prompts",
+        "encode_result",
+        "decode_report",
+        "decode_merge_report",
+        "eval_slam_report",
+        "eval_traj_report",
+    ]:
+        lines.append("{}: {}".format(name, _relative_path(exp_dir, inputs[name])))
+
+    lines.extend(
+        [
+            "",
+            "[Headline Metrics]",
+            "status: {}".format(str(traj_report.get("eval_status", "failed") or "failed")),
+            "matched_poses: {}".format(int(traj_report.get("num_matches", traj_report.get("matched_pose_count", 0)) or 0)),
+            "APE RMSE: {}".format(_fmt_value(traj_report.get("ape_rmse_m"), "m")),
+            "RPE trans RMSE: {}".format(_fmt_value(traj_report.get("rpe_trans_rmse_m"), "m")),
+            "RPE rot RMSE: {}".format(_fmt_value(traj_report.get("rpe_rot_rmse_deg"), "deg")),
+            "ori_path_length: {}".format(_fmt_value(traj_report.get("ori_path_length_m"), "m")),
+            "gen_path_length: {}".format(_fmt_value(traj_report.get("gen_path_length_m"), "m")),
+            "",
+            "[Generation Units]",
+            "unit_count: {}".format(int(traj_report.get("unit_count", 0) or 0)),
+            "unit_boundaries: {}".format(list(traj_report.get("unit_boundaries") or [])),
+            "boundary_source: {}".format(str(traj_report.get("boundary_source", "") or "")),
+            "boundary_time_source_kind: {}".format(str(traj_report.get("boundary_time_source_kind", "") or "")),
+            "",
+            "[Compression]",
+            "orig_size: {} bytes".format(int(compression_report.get("orig_size_bytes", 0) or 0)),
+            "comp_size: {} bytes".format(int(compression_report.get("comp_size_bytes", 0) or 0)),
+            "ratio: {}".format(_fmt_value(compression_report.get("ratio"))),
+            "reduction_pct: {}".format(_fmt_value(compression_report.get("reduction_pct"), "%")),
+            "unit_boundaries: {}".format(int(compression_report.get("unit_boundary_count", 0) or 0)),
+            "boundary_frame_bytes: {} bytes".format(int(compression_report.get("boundary_frame_bytes", 0) or 0)),
+            "json_payload_bytes: {} bytes".format(int(compression_report.get("json_payload_bytes", 0) or 0)),
+            "",
+            "[Output Files]",
+            "slam_report: eval/eval_slam_report.json",
+            "traj_report: eval/eval_traj_report.json",
+            "compression_report: eval/eval_compression_report.json",
+            "summary: eval/eval_summary.txt",
+            "details: eval/eval_details.csv",
+            "trajectory_plot: {}".format(str(traj_report.get("plot_path", "eval/eval_traj_xy.png") or "eval/eval_traj_xy.png")),
+            "metrics_overview: eval/eval_metrics_overview.png",
+            "raw_ori_traj: {}".format(_as_dict(slam_report.get("ori")).get("trajectory_path", "")),
+            "raw_gen_traj: {}".format(_as_dict(slam_report.get("gen")).get("trajectory_path", "")),
+        ]
+    )
+    if warnings or list(traj_report.get("warnings") or []):
+        lines.extend(["", "[Warnings]"])
+        for warning in list(warnings) + list(traj_report.get("warnings") or []):
+            lines.append("- {}".format(warning))
+    return lines
+
+
+def build_eval_summary(config):
+    exp_dir = Path(_get_arg(config, "exp_dir")).resolve()
+    out_dir = Path(_get_arg(config, "out_dir")).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    inputs = _input_paths(exp_dir, config)
 
     warnings = []
-    stage_reports = {
-        "prepare": _read_stage_report(Path(getattr(args, "prepare_result", "")) if str(getattr(args, "prepare_result", "") or "").strip() else native_paths["prepare_result"], warnings),
-        "generation_units": _read_stage_report(Path(getattr(args, "generation_units", "")) if str(getattr(args, "generation_units", "") or "").strip() else native_paths["generation_units"], warnings),
-        "prompts": _read_stage_report(Path(getattr(args, "prompts", "")) if str(getattr(args, "prompts", "") or "").strip() else native_paths["prompts"], warnings),
-        "encode_result": _read_stage_report(Path(getattr(args, "encode_result", "")) if str(getattr(args, "encode_result", "") or "").strip() else native_paths["encode_result"], warnings),
-        "legacy_segment_manifest": _read_stage_report(native_paths["legacy_segment_manifest"], warnings) if not native_paths["prepare_result"].is_file() else {},
-        "encode_report": _read_stage_report(native_paths["encode_report"], warnings) if not native_paths["encode_result"].is_file() else {},
-        "decode": _read_stage_report(Path(args.infer_report), warnings),
-        "merge": _read_stage_report(Path(args.merge_report), warnings),
-        "slam": _read_stage_report(Path(args.slam_report), warnings),
-    }
-    merge_manifest = dict(read_json_dict(Path(args.merge_manifest)) or {})
-    if not merge_manifest:
-        msg = "missing or invalid merge manifest: {}".format(Path(args.merge_manifest).resolve())
-        warnings.append(msg)
-        log_warn(msg)
-    traj_metrics = dict(read_json_dict(Path(args.traj_metrics)) or {})
-    if not traj_metrics:
-        msg = "missing eval trajectory metrics: {}".format(Path(args.traj_metrics).resolve())
-        warnings.append(msg)
-        log_warn(msg)
-
-    compression_summary = _build_compression_summary(
-        exp_dir,
-        stage_reports["prepare"],
-        Path(getattr(args, "prompts", "")) if str(getattr(args, "prompts", "") or "").strip() else native_paths["prompts"],
-        stage_reports["legacy_segment_manifest"],
-        stage_reports["encode_report"],
-        warnings,
-    )
-    quality = _build_quality(traj_metrics, stage_reports["slam"])
-    compression_snapshot = _build_compression_snapshot(compression_summary)
-    source_summary = _build_generation_unit_summary(
-        infer_report=stage_reports["decode"],
-        merge_report=stage_reports["merge"],
-        merge_manifest=merge_manifest,
-        encode_result=stage_reports["encode_result"],
-        generation_units=stage_reports["generation_units"],
-    )
-
-    final_report = {
-        "report_schema_version": "eval_report.v2",
-        "step": "eval",
-        "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
-        "planner": "generation_units",
-        "prompt_strategy": str(source_summary["prompt_strategy"]),
-        "source_unit_count": int(source_summary["source_unit_count"]),
-        "source_span_count": int(source_summary["source_span_count"]),
-        "shared_anchor_count": int(source_summary["shared_anchor_count"]),
-        "workflow": "encode -> decode -> eval",
-        "inputs": {
-            "prepare_result": _relative_path(exp_dir, exp_dir / "prepare" / "prepare_result.json"),
-            "generation_units": _relative_path(exp_dir, native_paths["generation_units"]),
-            "prompts": _relative_path(exp_dir, native_paths["prompts"]),
-            "encode_result": _relative_path(exp_dir, native_paths["encode_result"]),
-            "decode_report": _relative_path(exp_dir, Path(args.infer_report).resolve()),
-            "decode_merge_report": _relative_path(exp_dir, Path(args.merge_report).resolve()),
-            "slam_report": _relative_path(exp_dir, Path(args.slam_report).resolve()),
-            "traj_metrics": _relative_path(exp_dir, Path(args.traj_metrics).resolve()),
-            "summary": _relative_path(exp_dir, Path(args.summary).resolve()),
-            "details": _relative_path(exp_dir, Path(args.details).resolve()),
-        },
-        "transition_artifacts": {
-            "legacy_segment_manifest": _relative_path(exp_dir, native_paths["legacy_segment_manifest"]),
-            "encode_plan": _relative_path(exp_dir, native_paths["encode_plan"]),
-            "prompt_spans": _relative_path(exp_dir, native_paths["prompt_spans"]),
-            "encode_report": _relative_path(exp_dir, native_paths["encode_report"]),
-        },
-        "stages": _build_stage_table(
-            exp_dir,
-            stage_reports,
-            traj_metrics,
-            inputs={
-                "decode_plan": args.infer_report,
-                "decode_report": args.infer_report,
-                "decode_merge_report": args.merge_report,
-            },
-            eval_dir=eval_dir,
-        ),
-        "compression": compression_summary,
-        "quality": quality,
-        "traj_eval": traj_metrics,
-        "source_summary": source_summary,
-        "slam": {
-            "slam_status": str(stage_reports["slam"].get("slam_status", "") or ""),
-            "primary_track": str(stage_reports["slam"].get("primary_track", "") or ""),
-            "primary_trajectory_path": str(stage_reports["slam"].get("primary_trajectory_path", "") or ""),
-            "reference_track": str(stage_reports["slam"].get("reference_track", "") or ""),
-            "reference_trajectory_path": str(stage_reports["slam"].get("reference_trajectory_path", "") or ""),
-        },
-        "warnings": warnings,
-        "artifact_contract": {
-            "formal_files": [
-                "eval_report.json",
-                "eval_compression_report.json",
-                "eval_summary.txt",
-                "eval_details.csv",
-                "eval_traj_report.json",
-                "eval_traj_xy.png",
-                "eval_metrics_overview.png",
-                "eval_slam_report.json",
-                "traj_est.txt",
-            ],
-            "formal_track_files": [
-                "<track>/traj_est.tum",
-                "<track>/traj_est.npz",
-                "<track>/run_meta.json",
-            ],
-        },
+    reports = {
+        "prepare_result": _read_required_json(inputs["prepare_result"], "prepare result", warnings),
+        "generation_units": _read_required_json(inputs["generation_units"], "generation units", warnings),
+        "prompts": _read_required_json(inputs["prompts"], "prompts", warnings),
+        "encode_result": _read_required_json(inputs["encode_result"], "encode result", warnings),
+        "decode_report": _read_required_json(inputs["decode_report"], "decode report", warnings),
+        "decode_merge_report": _read_required_json(inputs["decode_merge_report"], "decode merge report", warnings),
+        "eval_slam_report": _read_required_json(inputs["eval_slam_report"], "eval slam report", warnings),
+        "eval_traj_report": _read_required_json(inputs["eval_traj_report"], "eval trajectory report", warnings),
     }
 
-    report_path = eval_dir / "eval_report.json"
-    compression_path = eval_dir / "eval_compression_report.json"
-    write_json_atomic(report_path, final_report, indent=2)
-    write_json_atomic(compression_path, compression_snapshot, indent=2)
-    log_prog("eval diagnostics: final report generated")
-    log_info("eval report: {}".format(report_path))
-    log_info("eval compression snapshot: {}".format(compression_path))
+    compression_path, compression_report = _build_compression_report(exp_dir, out_dir, inputs, reports, warnings)
+    summary_text = "\n".join(_summary_lines(exp_dir, inputs, reports, compression_report, warnings))
+    summary_path = out_dir / "eval_summary.txt"
+    details_path = _write_details(out_dir, _get_arg(config, "traj_records", []))
+    overview_path = _save_metrics_overview(out_dir, _get_arg(config, "traj_overview", {}))
+    write_text_atomic(summary_path, summary_text + "\n")
+
+    log_prog("eval summary generated")
+    log_info("eval summary: {}".format(summary_path))
+    log_info("eval compression report: {}".format(compression_path))
+    log_info("eval details: {}".format(details_path))
+    log_info("eval metrics overview: {}".format(overview_path))
     return {
-        "report_path": report_path,
+        "summary_path": summary_path,
         "compression_path": compression_path,
-        "report": final_report,
-        "compression": compression_snapshot,
+        "details_path": details_path,
+        "metrics_overview_path": overview_path,
+        "summary_text": summary_text,
+        "compression": compression_report,
     }
 
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-formal-mainline", action="store_true")
+    parser.add_argument("--run-native-summary", action="store_true")
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
+    parser.add_argument("--prepare_frames_dir", required=True)
+    parser.add_argument("--prepare_result", required=True)
+    parser.add_argument("--generation_units", required=True)
+    parser.add_argument("--prompts", required=True)
+    parser.add_argument("--encode_result", required=True)
+    parser.add_argument("--decode_report", required=True)
+    parser.add_argument("--decode_merge_report", required=True)
     parser.add_argument("--slam_report", required=True)
-    parser.add_argument("--prepare_result", default="")
-    parser.add_argument("--generation_units", default="")
-    parser.add_argument("--prompts", default="")
-    parser.add_argument("--encode_result", default="")
-    parser.add_argument("--infer_report", required=True)
-    parser.add_argument("--merge_report", required=True)
-    parser.add_argument("--merge_manifest", required=True)
-    parser.add_argument("--traj_metrics", required=True)
-    parser.add_argument("--summary", required=True)
-    parser.add_argument("--details", required=True)
+    parser.add_argument("--traj_report", required=True)
     return parser
 
 
 def main(argv=None):
     args = _build_arg_parser().parse_args(argv)
-    if not args.run_formal_mainline:
-        raise SystemExit("eval diagnostics helper requires --run-formal-mainline")
-    run_diagnostics_substage(args)
+    if not args.run_native_summary:
+        raise SystemExit("eval summary helper requires --run-native-summary")
+    build_eval_summary(vars(args))
 
 
 if __name__ == "__main__":

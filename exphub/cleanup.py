@@ -118,7 +118,6 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir,
         exp_dir / "eval",
         {
-            "eval_report.json",
             "eval_slam_report.json",
             "eval_traj_report.json",
             "eval_compression_report.json",
@@ -126,6 +125,8 @@ def _cleanup_min(exp_dir: Path) -> None:
             "eval_details.csv",
             "eval_traj_xy.png",
             "eval_metrics_overview.png",
+            "ori",
+            "gen",
         },
     )
     _prune_dir_keep_names(
