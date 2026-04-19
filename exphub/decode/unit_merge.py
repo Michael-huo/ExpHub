@@ -235,7 +235,7 @@ def merge_units(runtime, tasks_payload, decode_report):
             "prompt_strategy": "prompts",
             "source_inputs": source_inputs,
             "decode_report": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_report_path),
-            "decode_tasks": "in_memory",
+            "generation_tasks": "in_memory",
         },
         "artifacts": {
             "frames_dir": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_frames_dir),

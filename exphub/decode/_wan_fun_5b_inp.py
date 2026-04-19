@@ -495,7 +495,6 @@ def load_image_gen_runtime(path, default_prompt="", default_negative_prompt=""):
             "state_label": str(item.get("state_label", "") or ""),
             "risk_level": str(item.get("risk_level", "") or ""),
             "is_valid_for_decode": bool(item.get("is_valid_for_decode", True)),
-            "is_valid_for_export": bool(item.get("is_valid_for_export", False)),
             "prompt_source": str(item.get("prompt_source", "prompts.assembled_prompt") or "prompts.assembled_prompt"),
             "base_prompt": str(item.get("base_prompt", base_prompt) or base_prompt),
             "resolved_prompt": str(prompt),
@@ -504,11 +503,11 @@ def load_image_gen_runtime(path, default_prompt="", default_negative_prompt=""):
             "guidance_scale": item.get("guidance_scale"),
         })
     if not segments:
-        raise ValueError("decode task runtime must contain at least one segment")
+        raise ValueError("generation task runtime must contain at least one segment")
     segments.sort(key=lambda item: (int(item.get("seg", 0)), int(item.get("start_idx", 0))))
     return {
         "version": int(payload.get("version", 1) or 1),
-        "schema": str(payload.get("schema", "decode_tasks_runtime.v1") or "decode_tasks_runtime.v1"),
+        "schema": str(payload.get("schema", "generation_task_runtime.v1") or "generation_task_runtime.v1"),
         "planner": str(payload.get("planner", "generation_units") or "generation_units"),
         "prompt_strategy": str(payload.get("prompt_strategy", "prompts") or "prompts"),
         "base_prompt": str(base_prompt),
@@ -1116,15 +1115,6 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
             json.dump(obj, fobj, ensure_ascii=False, indent=2)
         os.replace(tmp, path)
 
-    def _samefile_safe_path(src, dst):
-        # type: (Path, Path) -> bool
-        src_s = os.path.abspath(str(src))
-        dst_s = os.path.abspath(str(dst))
-        try:
-            return os.path.samefile(src_s, dst_s)
-        except Exception:
-            return src_s == dst_s
-
     def _load_execution_plan(path):
         # type: (str) -> dict
         with open(path, "r", encoding="utf-8") as fobj:
@@ -1166,7 +1156,6 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
                     "target_num_frames": int(item.get("target_num_frames", item.get("num_frames", end_idx - start_idx + 1))),
                     "align_reason": str(item.get("align_reason", "") or ""),
                     "is_valid_for_decode": bool(item.get("is_valid_for_decode", True)),
-                    "is_valid_for_export": bool(item.get("is_valid_for_export", False)),
                     "state_label": str(item.get("state_label", "") or ""),
                     "motion_label": str(item.get("motion_label", "") or ""),
                 }
@@ -1176,33 +1165,6 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
             "execution_backend": str(payload.get("execution_backend", "") or ""),
             "segments": segments,
         }
-
-    def _fallback_batch_execution_segments(base_idx, stride, num_segments):
-        # type: (int, int, int) -> list
-        if stride <= 0:
-            raise ValueError("fallback batch stride must be > 0")
-        out = []
-        for seg in range(int(num_segments)):
-            start_idx = int(base_idx + seg * stride)
-            end_idx = int(start_idx + stride)
-            out.append(
-                {
-                    "seg": int(seg),
-                    "segment_id": int(seg),
-                    "schedule_source": "fallback_kf_gap",
-                    "execution_backend": "fallback_uniform",
-                    "raw_start_idx": int(start_idx),
-                    "raw_end_idx": int(end_idx),
-                    "deploy_start_idx": int(start_idx),
-                    "deploy_end_idx": int(end_idx),
-                    "start_idx": int(start_idx),
-                    "end_idx": int(end_idx),
-                    "raw_gap": int(stride),
-                    "deploy_gap": int(stride),
-                    "num_frames": int(stride + 1),
-                }
-            )
-        return out
 
     def _escape_one_line(text):
         # type: (str) -> str
@@ -1271,36 +1233,32 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
     exp_name = str(args.exp_name or "").strip() or _auto_exp_name_short()
     runs_root = os.path.join(runs_parent, exp_name)
 
-    runs_parent_path = Path(runs_parent).resolve()
-    if runs_parent_path.name == "infer":
-        prompt_dir = runs_parent_path.parent / "prompt"
-    else:
-        prompt_dir = runs_parent_path / "prompt"
-    prompt_dir.mkdir(parents=True, exist_ok=True)
-
-    prompt_file_dst = prompt_dir / "image_gen_runtime.json"
-    prompt_file_path = str(prompt_file_dst.resolve())
     if str(args.prompt_file or "").strip():
         src = Path(args.prompt_file).resolve()
         if not src.is_file():
             raise FileNotFoundError("prompt_file not found: {}".format(src))
         prompt_file_path = str(src)
-        if _samefile_safe_path(src, prompt_file_dst.resolve()):
-            rprint("[INFO] prompt_file already at standard path, using: {}".format(src))
+        rprint("[INFO] prompt_file using custom path: {}".format(src))
+    else:
+        runs_parent_path = Path(runs_parent).resolve()
+        if runs_parent_path.name == "infer":
+            prompt_dir = runs_parent_path.parent / "prompt"
         else:
-            rprint("[INFO] prompt_file using custom path: {}".format(src))
-    elif not prompt_file_dst.is_file():
-        _write_json_atomic(
-            str(prompt_file_dst),
-            {
-                "version": 1,
-                "schema": "image_gen_runtime.v1",
-                "base_prompt": prompt.strip(),
-                "negative_prompt": negative_prompt.strip(),
-                "source": "image_gen_runtime.default",
-                "segments": [],
-            },
-        )
+            prompt_dir = runs_parent_path / "prompt"
+        prompt_dir.mkdir(parents=True, exist_ok=True)
+        prompt_file_dst = prompt_dir / "image_gen_runtime.json"
+        if not prompt_file_dst.is_file():
+            _write_json_atomic(
+                str(prompt_file_dst),
+                {
+                    "version": 1,
+                    "schema": "image_gen_runtime.v1",
+                    "base_prompt": prompt.strip(),
+                    "negative_prompt": negative_prompt.strip(),
+                    "source": "image_gen_runtime.default",
+                    "segments": [],
+                },
+            )
         prompt_file_path = str(prompt_file_dst.resolve())
     image_gen_runtime = load_image_gen_runtime(
         prompt_file_path,
@@ -1319,13 +1277,7 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
             execution_schedule_source = str(execution_plan.get("schedule_source", "") or "")
             execution_backend = str(execution_plan.get("execution_backend", "") or "")
         if not batch_execution_segments:
-            if int(args.kf_gap) <= 0:
-                raise SystemExit("[ERR] --kf_gap is required in --batch mode when execution plan is missing")
-            if int(args.num_segments) <= 0:
-                raise SystemExit("[ERR] --num_segments must be > 0 in batch mode when execution plan is missing")
-            batch_execution_segments = _fallback_batch_execution_segments(int(args.base_idx), int(args.kf_gap), int(args.num_segments))
-            execution_schedule_source = "fallback_kf_gap"
-            execution_backend = "fallback_uniform"
+            raise SystemExit("[ERR] --execution_plan with segments is required in --batch mode")
         elif execution_schedule_source == "":
             execution_schedule_source = "execution_plan"
             if execution_backend == "":
@@ -1924,97 +1876,6 @@ def run_wan_fun_backend_cli(argv=None, backend_config=None):
                 int(fps),
             )
         )
-        if os.environ.get("RANK", "0") == "0":
-            try:
-                width = int(sample_size[1])
-                height = int(sample_size[0])
-            except Exception:
-                width, height = 0, 0
-            plan_path = os.path.join(runs_parent, "decode_plan.json")
-            segs = []
-            for seg, seg_spec in enumerate(batch_execution_segments):
-                start_idx = int(seg_spec["start_idx"])
-                end_idx = int(seg_spec["end_idx"])
-                desired_frames = int(seg_spec.get("num_frames", end_idx - start_idx + 1))
-                seg_seed = int(args.seed_base) + int(seg)
-                run_name = str(seg_spec.get("run_name", "") or "").strip()
-                if not run_name:
-                    run_name = _make_run_name(task_name, width, height, int(fps), desired_frames, start_idx, end_idx, seg_seed)
-                resolved_info = resolved_segments[int(seg)] if int(seg) < len(resolved_segments) else {}
-                segs.append(
-                    {
-                        "seg": int(seg),
-                        "segment_id": int(seg_spec.get("segment_id", seg)),
-                        "schedule_source": str(seg_spec.get("schedule_source", execution_schedule_source)),
-                        "execution_backend": str(seg_spec.get("execution_backend", execution_backend)),
-                        "start_idx": int(start_idx),
-                        "end_idx": int(end_idx),
-                        "raw_start_idx": int(seg_spec.get("raw_start_idx", start_idx)),
-                        "raw_end_idx": int(seg_spec.get("raw_end_idx", end_idx)),
-                        "desired_start_idx": int(seg_spec.get("desired_start_idx", start_idx)),
-                        "desired_end_idx": int(seg_spec.get("desired_end_idx", end_idx)),
-                        "desired_num_frames": int(seg_spec.get("desired_num_frames", desired_frames)),
-                        "aligned_start_idx": int(seg_spec.get("aligned_start_idx", start_idx)),
-                        "aligned_end_idx": int(seg_spec.get("aligned_end_idx", end_idx)),
-                        "aligned_num_frames": int(seg_spec.get("aligned_num_frames", desired_frames)),
-                        "deploy_start_idx": int(seg_spec.get("deploy_start_idx", start_idx)),
-                        "deploy_end_idx": int(seg_spec.get("deploy_end_idx", end_idx)),
-                        "raw_gap": int(seg_spec.get("raw_gap", end_idx - start_idx)),
-                        "deploy_gap": int(seg_spec.get("deploy_gap", end_idx - start_idx)),
-                        "num_frames": int(desired_frames),
-                        "left_shift": int(seg_spec.get("left_shift", 0)),
-                        "right_shift": int(seg_spec.get("right_shift", 0)),
-                        "align_reason": str(seg_spec.get("align_reason", "") or ""),
-                        "is_valid_for_decode": bool(seg_spec.get("is_valid_for_decode", False)),
-                        "is_valid_for_export": bool(seg_spec.get("is_valid_for_export", False)),
-                        "run_id": str(seg_spec.get("run_id", "") or ""),
-                        "source_unit_id": str(seg_spec.get("source_unit_id", "") or ""),
-                        "source_span_id": str(seg_spec.get("source_span_id", "") or ""),
-                        "source_prompt_ref": dict(seg_spec.get("source_prompt_ref", {}) or {}),
-                        "target_num_frames": int(seg_spec.get("target_num_frames", desired_frames) or desired_frames),
-                        "seed": int(seg_seed),
-                        "run_name": run_name,
-                        "prompt": str(resolved_info.get("resolved_prompt", "") or ""),
-                        "negative_prompt": str(resolved_info.get("negative_prompt", "") or ""),
-                        "prompt_hash8": resolved_info.get("prompt_hash8"),
-                        "prompt_source": str(resolved_info.get("prompt_source", "")),
-                        "num_inference_steps": int(resolved_info.get("num_inference_steps", num_inference_steps)),
-                        "guidance_scale": float(resolved_info.get("guidance_scale", guidance_scale)),
-                    }
-                )
-            plan = {
-                "version": 1,
-                "created_at": datetime.now().isoformat(),
-                "runs_parent": os.path.abspath(runs_parent),
-                "runs_root": os.path.abspath(runs_root),
-                "exp_name": exp_name,
-                "task": task_name,
-                "width": int(width),
-                "height": int(height),
-                "fps": int(fps),
-                "dataset_fps": int(args.dataset_fps),
-                "schedule_source": str(execution_schedule_source),
-                "execution_backend": str(execution_backend),
-                "segment_seconds": float(args.segment_seconds),
-                "segment_seconds_mean": float(mean_gap_exec) / float(max(int(fps), 1)),
-                "kf_gap": int(args.kf_gap),
-                "step": None,
-                "stride": None,
-                "base_idx": int(base_idx_exec),
-                "num_segments": int(total),
-                "seed_base": int(args.seed_base),
-                "image_gen_runtime": os.path.abspath(prompt_file_path),
-                "image_gen_runtime_digest8": prompt_digest8,
-                "image_gen_runtime_version": int(image_gen_runtime.get("version", 1)),
-                "image_gen_runtime_source": str(image_gen_runtime.get("source", "") or ""),
-                "default_num_inference_steps": int(num_inference_steps),
-                "default_guidance_scale": float(guidance_scale),
-                "segments": segs,
-            }
-            tmp_path = plan_path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as fobj:
-                json.dump(plan, fobj, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, plan_path)
         batch_start = time.time()
         for seg, seg_spec in enumerate(batch_execution_segments):
             start_idx = int(seg_spec["start_idx"])

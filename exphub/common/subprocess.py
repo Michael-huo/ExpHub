@@ -195,7 +195,6 @@ def _should_emit_prog_terminal_line(payload: str) -> bool:
             "image gen config:",
             "slam summary:",
             "merge summary:",
-            "export summary:",
         )
     )
 
@@ -246,7 +245,7 @@ def run_cmd(
     env=None,
     check=True,
     log_path=None,
-    log_level="debug",
+    log_level="info",
     pass_prefixes=None,
     fail_tail_lines=30,
     log_append=False,
@@ -254,9 +253,9 @@ def run_cmd(
     display_phase_name=None,
     stream_mode="filtered",
 ):
-    level = (log_level or "debug").strip().lower()
-    if level not in ("debug", "info", "quiet"):
-        level = "debug"
+    level = (log_level or "info").strip().lower()
+    if level not in ("info", "quiet"):
+        level = "info"
     stream_mode_norm = str(stream_mode or "filtered").strip().lower()
     if stream_mode_norm not in ("filtered", "tee"):
         stream_mode_norm = "filtered"
@@ -337,20 +336,19 @@ def run_cmd(
             if stream_mode_norm == "tee":
                 sys.stdout.write(raw_line)
                 sys.stdout.flush()
-                if level == "debug" or any(line.lstrip().startswith(prefix) for prefix in prefixes):
+                if any(line.lstrip().startswith(prefix) for prefix in prefixes):
                     tail.append(line)
                 continue
             stripped = line.lstrip()
-            if level == "debug" or any(stripped.startswith(prefix) for prefix in prefixes):
+            if any(stripped.startswith(prefix) for prefix in prefixes):
                 tail.append(line)
-            if not (level == "debug" or _should_emit_terminal_line(phase_name, stripped)):
+            if not _should_emit_terminal_line(phase_name, stripped):
                 continue
             if stripped.startswith("[BAR]"):
                 _emit_bar_line(stripped)
                 continue
             _flush_bar_line()
-            if level == "debug" or _should_emit_terminal_line(phase_name, stripped):
-                print(_colorize_terminal_line(line))
+            print(_colorize_terminal_line(line))
 
         return_code = process.wait()
     finally:

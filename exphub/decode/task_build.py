@@ -107,9 +107,9 @@ def _validate_native_sources(prepare_result, generation_units, prompts_payload, 
     return units, prompt_map, prepare_num_frames
 
 
-def build_decode_tasks(runtime):
+def build_generation_tasks(runtime):
     paths = runtime.paths
-    return build_decode_tasks_from_paths(
+    return build_generation_tasks_from_paths(
         exp_dir=paths.exp_dir,
         prepare_result_path=paths.prepare_result_path,
         prepare_frames_dir=paths.prepare_frames_dir,
@@ -121,7 +121,7 @@ def build_decode_tasks(runtime):
     )
 
 
-def build_decode_tasks_from_paths(
+def build_generation_tasks_from_paths(
     exp_dir,
     prepare_result_path,
     prepare_frames_dir,
@@ -230,7 +230,6 @@ def build_decode_tasks_from_paths(
             "source_prompt_ref": dict(_as_dict(unit.get("prompt_ref"))),
             "source_segment_ids": list(unit.get("source_segment_ids") or []),
             "is_valid_for_decode": True,
-            "is_valid_for_export": bool(unit.get("is_valid_for_export", False)),
             "align_reason": "generation_unit_shared_anchor",
             "num_inference_steps": prompt_item.get("num_inference_steps"),
             "guidance_scale": prompt_item.get("guidance_scale"),
@@ -246,7 +245,7 @@ def build_decode_tasks_from_paths(
         "encode_result": _relative_path(exp_root, encode_result_path),
     }
     return {
-        "schema": "decode_tasks.v1",
+        "schema": "generation_tasks.v1",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "planner": "generation_units",
         "prompt_strategy": "prompts",

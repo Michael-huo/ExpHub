@@ -38,11 +38,6 @@ def _runtime_info(msg: str) -> None:
         _info(msg)
 
 
-def _debug_info(msg: str) -> None:
-    if _CLI_LOG_LEVEL == "debug":
-        _info(msg)
-
-
 def _run(msg: str) -> None:
     print(f"[RUN] {msg}")
 
@@ -229,22 +224,6 @@ def _pick_int(obj: Dict[str, object], path: List[str]) -> Optional[int]:
     return _as_int_or_none(_get_nested(obj, path))
 
 
-def _pick_first_int(obj: Dict[str, object], paths: List[List[str]]) -> Optional[int]:
-    for path in paths:
-        value = _pick_int(obj, path)
-        if value is not None:
-            return value
-    return None
-
-
-def _pick_first_float(obj: Dict[str, object], paths: List[List[str]]) -> Optional[float]:
-    for path in paths:
-        value = _pick_float(obj, path)
-        if value is not None:
-            return value
-    return None
-
-
 def _parse_infer_log_details(log_path: Path) -> Dict[str, object]:
     out = {}  # type: Dict[str, object]
     if not log_path.is_file():
@@ -292,23 +271,18 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
 
     compression_snapshot = _read_json_dict(eval_dir / "eval_compression_report.json")
 
-    ori_bytes = _pick_first_int(compression_snapshot, [["orig_size_bytes"], ["orig_size"]])
-
-    comp_size = _pick_first_int(compression_snapshot, [["comp_size_bytes"], ["comp_size"]])
-
-    ratio_bytes = _pick_first_float(compression_snapshot, [["ratio"]])
-
-    unit_boundary_count = _pick_first_int(compression_snapshot, [["unit_boundary_count"], ["unit_boundaries"]])
+    ori_bytes = _pick_int(compression_snapshot, ["orig_size_bytes"])
+    comp_size = _pick_int(compression_snapshot, ["comp_size_bytes"])
+    ratio_bytes = _pick_float(compression_snapshot, ["ratio"])
+    unit_boundary_count = _pick_int(compression_snapshot, ["unit_boundary_count"])
 
     reduction_ratio = None  # type: Optional[float]
     if ratio_bytes is not None:
         reduction_ratio = 1.0 - float(ratio_bytes)
     else:
-        reduction_pct = _pick_first_float(compression_snapshot, [["reduction_pct"]])
+        reduction_pct = _pick_float(compression_snapshot, ["reduction_pct"])
         if reduction_pct is not None:
             reduction_ratio = float(reduction_pct) / 100.0
-        else:
-            reduction_ratio = _pick_first_float(compression_snapshot, [["reduction"]])
 
     phase_times = {}
     for phase_name in phase_names:
@@ -404,69 +378,6 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     _info(sep)
 
 
-def _load_export_report(export_root: Path, step_times: Dict[str, float]) -> Dict[str, object]:
-    dataset_report = _read_json_dict(export_root / "export_dataset_report.json")
-    summary = dict(dataset_report.get("summary") or {})
-    outputs = dict(dataset_report.get("outputs") or {})
-    return {
-        "export_root": str(export_root),
-        "total_time": float(sum(float(x) for x in step_times.values())),
-        "phase_times": {"export": _as_float_or_none(step_times.get("export"))},
-        "summary": summary,
-        "outputs": outputs,
-    }
-
-
-def _print_export_report(export_root: Path, step_times: Dict[str, float]) -> None:
-    payload = _load_export_report(export_root, step_times)
-    total_time = float(payload.get("total_time") or 0.0)
-    phase_times = dict(payload.get("phase_times") or {})
-    summary = dict(payload.get("summary") or {})
-    outputs = dict(payload.get("outputs") or {})
-    sep = "=" * 70
-    div = "-" * 70
-    _info(sep)
-    _info("EXPORT REPORT")
-    _info(sep)
-    _print_rows(
-        [
-            ("export", _fmt_phase_seconds(_as_float_or_none(phase_times.get("export")), total_time)),
-            ("total", _fmt_seconds(total_time)),
-        ]
-    )
-    _info(div)
-    _print_rows(
-        [
-            ("bags", _fmt_count(_as_int_or_none(summary.get("bag_count")))),
-            ("clips", _fmt_count(_as_int_or_none(summary.get("exported_clip_count")))),
-            ("skipped", _fmt_count(_as_int_or_none(summary.get("skipped_clip_count")))),
-            ("spans", _fmt_count(_as_int_or_none(summary.get("prompt_span_count")))),
-            ("units", _fmt_count(_as_int_or_none(summary.get("total_units_consumed")))),
-            ("short_spans", _fmt_count(_as_int_or_none(summary.get("skipped_short_span_count")))),
-            ("train", _fmt_count(_as_int_or_none(_get_nested(summary, ["split_counts", "train"])))),
-            ("val", _fmt_count(_as_int_or_none(_get_nested(summary, ["split_counts", "val"])))),
-            ("test", _fmt_count(_as_int_or_none(_get_nested(summary, ["split_counts", "test"])))),
-        ]
-    )
-    _info(div)
-    _print_rows(
-        [
-            ("reuse_ratio", str(summary.get("prompt_reuse_ratio", "unavailable"))),
-            ("clips/span", str(summary.get("mean_clips_per_span", "unavailable"))),
-            ("shared_units", _fmt_count(_as_int_or_none(summary.get("shared_prompt_unit_count")))),
-        ]
-    )
-    _info(div)
-    _print_rows(
-        [
-            ("clips_dir", str(outputs.get("clips_dir") or "unavailable")),
-            ("metadata_dir", str(outputs.get("metadata_dir") or "unavailable")),
-            ("export_root", str(payload.get("export_root") or export_root)),
-        ]
-    )
-    _info(sep)
-
-
 def main(argv: Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(prog="python -m exphub.cli", add_help=True)
 
@@ -483,7 +394,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--mode",
         required=True,
-        choices=["infer", "train"],
+        choices=["infer"],
         help="execution mode",
     )
     ap.add_argument(
@@ -502,7 +413,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--dur", type=str, required=True)
     ap.add_argument("--start", type=str, required=True)
 
-    ap.add_argument("--keyframes_mode", default="symlink", choices=["symlink", "hardlink", "copy"], help="how to materialize segment/keyframes")
     ap.add_argument(
         "--segment_policy",
         default=FORMAL_ENCODE_POLICY,
@@ -532,7 +442,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         choices=["max", "min"],
         help="artifact retention level: max (keep all) or min (batch-optimized cleanup)",
     )
-    ap.add_argument("--log_level", default="info", choices=["info", "debug", "quiet"], help="child process terminal verbosity")
+    ap.add_argument("--log_level", default="info", choices=["info", "quiet"], help="child process terminal verbosity")
 
     ap.add_argument(
         "--no_auto_conda",
@@ -560,8 +470,6 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--no_viz", action="store_true")
 
     args = ap.parse_args(argv)
-    if args.mode == "train":
-        _die("train mode is not connected in this pass")
     args.datasets_cfg = ""
     args.kf_gap = 0
     args.start_idx = -1

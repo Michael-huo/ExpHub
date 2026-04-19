@@ -11,7 +11,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from exphub.common.io import ensure_dir, ensure_file, remove_path
-from exphub.common.logging import debug_info, log_info, log_prog, log_warn
+from exphub.common.logging import log_info, log_prog, log_warn
 from exphub.eval.slam_run import run_slam
 from exphub.eval.summary_build import build_eval_summary
 from exphub.eval.trajectory_eval import run_trajectory_eval
@@ -25,8 +25,6 @@ _STALE_EVAL_OUTPUTS = (
     "eval_details.csv",
     "eval_traj_xy.png",
     "eval_metrics_overview.png",
-    "ori_traj.txt",
-    "gen_traj.txt",
 )
 
 
@@ -230,7 +228,6 @@ def run(runtime):
                 log_warn("eval traj plot skipped by --no_viz")
                 continue
         ensure_file(artifact_path, label)
-        debug_info("STEP eval: {}={}".format(label, Path(artifact_path).resolve()))
 
     return runtime.paths.eval_dir
 

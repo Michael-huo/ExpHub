@@ -50,20 +50,10 @@ def _prune_dir_keep_names(root: Path, d: Path, keep_names) -> None:
 
 
 def _cleanup_min(exp_dir: Path) -> None:
-    heavy_dirs = [
-        exp_dir / "prepare" / "frames",
-        exp_dir / "input" / "frames",
-        exp_dir / "decode" / "runs",
-        exp_dir / "decode" / "frames",
-        exp_dir / "export" / "clips",
-    ]
-    for d in heavy_dirs:
-        _rm_if_exists(exp_dir, d)
-
-    root_keep = {"prepare", "input", "encode", "decode", "eval", "export", "logs"}
+    root_keep = {"prepare", "encode", "decode", "eval", "logs"}
     if exp_dir.is_dir():
         for child in list(exp_dir.iterdir()):
-            if child.name in root_keep or child.name in ("run_meta.json", "exp_meta.json"):
+            if child.name in root_keep or child.name == "run_meta.json":
                 continue
             _rm_if_exists(exp_dir, child)
 
@@ -78,20 +68,8 @@ def _cleanup_min(exp_dir: Path) -> None:
 
     _prune_dir_keep_names(
         exp_dir,
-        exp_dir / "input",
-        {
-            "input_report.json",
-            "frames",
-        },
-    )
-    _prune_dir_keep_names(
-        exp_dir,
         exp_dir / "encode",
         {
-            "encode_plan.json",
-            "legacy_segment_manifest.json",
-            "prompt_spans.json",
-            "encode_report.json",
             "motion_segments.json",
             "semantic_anchors.json",
             "generation_units.json",
@@ -104,7 +82,6 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir,
         exp_dir / "decode",
         {
-            "decode_plan.json",
             "decode_merge_report.json",
             "decode_report.json",
             "frames",
@@ -127,17 +104,6 @@ def _cleanup_min(exp_dir: Path) -> None:
             "eval_metrics_overview.png",
             "ori",
             "gen",
-        },
-    )
-    _prune_dir_keep_names(
-        exp_dir,
-        exp_dir / "export",
-        {
-            "export_report.json",
-            "export_dataset_report.json",
-            "clips",
-            "metadata",
-            "clip_manifests",
         },
     )
 

@@ -36,10 +36,6 @@ class ExperimentPaths:
         return (self.exp_root / self.exp_name).resolve()
 
     @property
-    def input_dir(self) -> Path:
-        return self.prepare_dir
-
-    @property
     def prepare_dir(self) -> Path:
         return self.exp_dir / "prepare"
 
@@ -52,8 +48,16 @@ class ExperimentPaths:
         return self.prepare_dir / "prepare_result.json"
 
     @property
-    def encode_legacy_manifest_path(self) -> Path:
-        return self.encode_dir / "legacy_segment_manifest.json"
+    def encode_dir(self) -> Path:
+        return self.exp_dir / "encode"
+
+    @property
+    def encode_motion_segments_path(self) -> Path:
+        return self.encode_dir / "motion_segments.json"
+
+    @property
+    def encode_semantic_anchors_path(self) -> Path:
+        return self.encode_dir / "semantic_anchors.json"
 
     @property
     def encode_generation_units_path(self) -> Path:
@@ -68,8 +72,8 @@ class ExperimentPaths:
         return self.encode_dir / "encode_result.json"
 
     @property
-    def encode_dir(self) -> Path:
-        return self.exp_dir / "encode"
+    def encode_overview_path(self) -> Path:
+        return self.encode_dir / "encode_overview.png"
 
     @property
     def decode_dir(self) -> Path:
@@ -80,48 +84,16 @@ class ExperimentPaths:
         return self.exp_dir / "eval"
 
     @property
-    def export_dir(self) -> Path:
-        return self.exp_dir / "export"
-
-    @property
     def logs_dir(self) -> Path:
         return self.exp_dir / "logs"
-
-    @property
-    def default_export_root(self) -> Path:
-        return self.export_dir.resolve()
-
-    @property
-    def exp_meta_path(self) -> Path:
-        return self.run_meta_path
 
     @property
     def run_meta_path(self) -> Path:
         return self.exp_dir / "run_meta.json"
 
     @property
-    def input_frames_dir(self) -> Path:
-        return self.prepare_frames_dir
-
-    @property
-    def encode_plan_path(self) -> Path:
-        return self.encode_dir / "encode_plan.json"
-
-    @property
-    def prompt_spans_path(self) -> Path:
-        return self.encode_dir / "prompt_spans.json"
-
-    @property
-    def encode_report_path(self) -> Path:
-        return self.encode_dir / "encode_report.json"
-
-    @property
     def decode_runs_dir(self) -> Path:
         return self.decode_dir / "runs"
-
-    @property
-    def decode_plan_path(self) -> Path:
-        return self.decode_dir / "decode_plan.json"
 
     @property
     def decode_report_path(self) -> Path:
@@ -174,23 +146,3 @@ class ExperimentPaths:
     @property
     def eval_metrics_overview_path(self) -> Path:
         return self.eval_dir / "eval_metrics_overview.png"
-
-    @property
-    def export_report_path(self) -> Path:
-        return self.export_dir / "export_report.json"
-
-    @property
-    def export_dataset_report_path(self) -> Path:
-        return self.export_dir / "export_dataset_report.json"
-
-    @property
-    def export_clips_dir(self) -> Path:
-        return self.export_dir / "clips"
-
-    @property
-    def export_metadata_dir(self) -> Path:
-        return self.export_dir / "metadata"
-
-    @property
-    def export_clip_manifests_dir(self) -> Path:
-        return self.export_dir / "clip_manifests"

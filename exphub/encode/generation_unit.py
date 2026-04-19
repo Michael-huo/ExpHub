@@ -120,12 +120,11 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
                         "end_reason": str(anchor_items[local_idx + 1].get("reason", "") or ""),
                     },
                     "prompt_ref": {
-                        "artifact_path": "encode/prompt_spans.json",
-                        "span_id": "span_{:04d}".format(int(len(units))),
+                        "artifact_path": "encode/prompts.json",
+                        "unit_id": str(unit_id),
                     },
                     "scene_label": "motion_segment_{:04d}".format(int(seg_index)),
                     "is_valid_for_decode": True,
-                    "is_valid_for_export": True,
                     "source_segment_ids": [int(seg_index)],
                 }
             )
@@ -159,7 +158,6 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
         "summary": {
             "unit_count": int(len(units)),
             "decode_valid_unit_count": int(len([item for item in units if item.get("is_valid_for_decode")])),
-            "export_valid_unit_count": int(len([item for item in units if item.get("is_valid_for_export")])),
             "motion_segment_count": int(len(list(_as_dict(motion_segments).get("segments") or []))),
             "shared_anchor_count": int(max(0, len(units) - 1)),
         },

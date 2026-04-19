@@ -13,7 +13,7 @@ _CLI_LOG_LEVEL = "info"
 def set_cli_log_level(level):
     global _CLI_LOG_LEVEL
     value = str(level or "info").strip().lower()
-    if value not in ("info", "debug", "quiet"):
+    if value not in ("info", "quiet"):
         value = "info"
     _CLI_LOG_LEVEL = value
 
@@ -28,11 +28,6 @@ def log_info(msg):
 
 def runtime_info(msg):
     if _CLI_LOG_LEVEL != "quiet":
-        log_info(msg)
-
-
-def debug_info(msg):
-    if _CLI_LOG_LEVEL == "debug":
         log_info(msg)
 
 

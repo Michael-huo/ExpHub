@@ -6,9 +6,9 @@ from pathlib import Path
 from exphub.common.io import ensure_dir, ensure_file, read_json_dict
 from exphub.common.logging import log_info
 
-from .export_router import export_encode_outputs
 from .generation_unit import build_generation_units
 from .motion_segment import build_motion_segments
+from .result_writer import write_encode_outputs
 from .synthetic_prompt import build_prompts
 
 
@@ -38,8 +38,8 @@ def run(runtime):
     runtime.paths.encode_dir.mkdir(parents=True, exist_ok=True)
 
     prepare_result = runtime.prepare_result()
-    motion_segments_path = runtime.paths.encode_dir / "motion_segments.json"
-    semantic_anchors_path = runtime.paths.encode_dir / "semantic_anchors.json"
+    motion_segments_path = runtime.paths.encode_motion_segments_path
+    semantic_anchors_path = runtime.paths.encode_semantic_anchors_path
     generation_units_path = runtime.paths.encode_generation_units_path
     prompts_path = runtime.paths.encode_prompts_path
 
@@ -80,8 +80,8 @@ def run(runtime):
         out_path=prompts_path,
     )
 
-    log_info("encode pass1 export_router start")
-    result_path = export_encode_outputs(
+    log_info("encode pass1 result_writer start")
+    result_path = write_encode_outputs(
         runtime=runtime,
         prepare_result=prepare_result,
         motion_segments=motion_segments,
@@ -91,16 +91,12 @@ def run(runtime):
         elapsed_sec=float(time.time() - total_started),
     )
     for path, label in [
-        (runtime.paths.encode_dir / "motion_segments.json", "motion segments"),
-        (runtime.paths.encode_dir / "semantic_anchors.json", "semantic anchors"),
+        (runtime.paths.encode_motion_segments_path, "motion segments"),
+        (runtime.paths.encode_semantic_anchors_path, "semantic anchors"),
         (runtime.paths.encode_generation_units_path, "generation units"),
         (runtime.paths.encode_prompts_path, "prompts"),
         (runtime.paths.encode_result_path, "encode result"),
-        (runtime.paths.encode_dir / "encode_overview.png", "encode overview"),
-        (runtime.paths.encode_legacy_manifest_path, "legacy segment manifest"),
-        (runtime.paths.encode_plan_path, "transition encode plan"),
-        (runtime.paths.prompt_spans_path, "transition prompt spans"),
-        (runtime.paths.encode_report_path, "transition encode report"),
+        (runtime.paths.encode_overview_path, "encode overview"),
     ]:
         ensure_file(path, label)
     log_info("encode pass1 done: {}".format(Path(result_path).resolve()))
