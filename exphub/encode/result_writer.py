@@ -17,7 +17,25 @@ def _motion_label_counts(motion_segments):
     return counts
 
 
-def _build_encode_result(motion_segments, semantic_anchors, generation_units, prompts):
+def _artifact_rel(paths, attr_name):
+    if paths is None:
+        defaults = {
+            "encode_motion_segments_path": "encode/motion_segments.json",
+            "encode_semantic_anchors_path": "encode/semantic_anchors.json",
+            "encode_generation_units_path": "encode/generation_units.json",
+            "encode_prompts_path": "encode/prompts.json",
+            "encode_overview_path": "encode/encode_overview.png",
+        }
+        return defaults.get(str(attr_name), str(attr_name))
+    path = Path(getattr(paths, attr_name)).resolve()
+    exp_dir = Path(getattr(paths, "exp_dir", path.parent.parent)).resolve()
+    try:
+        return path.relative_to(exp_dir).as_posix()
+    except Exception:
+        return path.name
+
+
+def _build_encode_result(motion_segments, semantic_anchors, generation_units, prompts, paths=None):
     units = list(_as_dict(generation_units).get("units") or [])
     prompt_units = list(_as_dict(prompts).get("units") or [])
     return {
@@ -31,11 +49,11 @@ def _build_encode_result(motion_segments, semantic_anchors, generation_units, pr
         "unit_lengths": [int(item.get("length", item.get("duration_frames", 0)) or 0) for item in units],
         "prompt_mode": "base+motion+semantic",
         "artifacts": {
-            "motion_segments": "encode/motion_segments.json",
-            "semantic_anchors": "encode/semantic_anchors.json",
-            "generation_units": "encode/generation_units.json",
-            "prompts": "encode/prompts.json",
-            "overview": "encode/encode_overview.png",
+            "motion_segments": _artifact_rel(paths, "encode_motion_segments_path"),
+            "semantic_anchors": _artifact_rel(paths, "encode_semantic_anchors_path"),
+            "generation_units": _artifact_rel(paths, "encode_generation_units_path"),
+            "prompts": _artifact_rel(paths, "encode_prompts_path"),
+            "overview": _artifact_rel(paths, "encode_overview_path"),
         },
     }
 
@@ -131,16 +149,18 @@ def write_encode_outputs(
     generation_units,
     prompts,
     elapsed_sec=0.0,
+    paths=None,
 ):
     del prepare_result, elapsed_sec
-    runtime.paths.encode_dir.mkdir(parents=True, exist_ok=True)
+    out_paths = paths or runtime.paths
+    out_paths.encode_dir.mkdir(parents=True, exist_ok=True)
 
-    encode_result = _build_encode_result(motion_segments, semantic_anchors, generation_units, prompts)
+    encode_result = _build_encode_result(motion_segments, semantic_anchors, generation_units, prompts, paths=out_paths)
 
-    write_json_atomic(runtime.paths.encode_motion_segments_path, motion_segments, indent=2)
-    write_json_atomic(runtime.paths.encode_semantic_anchors_path, semantic_anchors, indent=2)
-    write_json_atomic(runtime.paths.encode_generation_units_path, generation_units, indent=2)
-    write_json_atomic(runtime.paths.encode_prompts_path, prompts, indent=2)
-    write_json_atomic(runtime.paths.encode_result_path, encode_result, indent=2)
-    write_encode_overview(runtime.paths.encode_overview_path, motion_segments, semantic_anchors, generation_units)
-    return runtime.paths.encode_result_path
+    write_json_atomic(out_paths.encode_motion_segments_path, motion_segments, indent=2)
+    write_json_atomic(out_paths.encode_semantic_anchors_path, semantic_anchors, indent=2)
+    write_json_atomic(out_paths.encode_generation_units_path, generation_units, indent=2)
+    write_json_atomic(out_paths.encode_prompts_path, prompts, indent=2)
+    write_json_atomic(out_paths.encode_result_path, encode_result, indent=2)
+    write_encode_overview(out_paths.encode_overview_path, motion_segments, semantic_anchors, generation_units)
+    return out_paths.encode_result_path

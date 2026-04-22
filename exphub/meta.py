@@ -63,6 +63,7 @@ def resolve_kf_gap(fps, kf_gap) -> int:
 @dataclass(frozen=True)
 class ExperimentSpec:
     exphub_root: Path
+    mode: str
     dataset: str
     sequence: str
     tag: str
@@ -89,6 +90,19 @@ class ExperimentSpec:
         )
 
     @staticmethod
+    def build_train_exp_name(tag, fps, sequence="") -> str:
+        fps_f = float(fps)
+        if fps_f.is_integer():
+            fps_tag = str(int(round(fps_f)))
+        else:
+            fps_tag = dot_to_p(canon_num_str(fps))
+        base = "{tag}_fps{fps}".format(tag=sanitize_token(str(tag)), fps=fps_tag)
+        seq = sanitize_token(str(sequence or ""))
+        if seq:
+            return "{}_{}".format(base, seq)
+        return base
+
+    @staticmethod
     def compute_segment_count(frames_avail, base_idx, kf_gap, requested_segments=0) -> int:
         frames_avail_i = int(frames_avail)
         base_idx_i = int(base_idx)
@@ -107,12 +121,26 @@ class ExperimentSpec:
 
     @property
     def exp_name(self) -> str:
+        if str(self.mode or "").strip().lower() == "train":
+            return self.build_train_exp_name(
+                tag=self.tag,
+                fps=self.fps,
+                sequence=self.sequence,
+            )
         return self.build_exp_name(
             tag=self.tag,
             start=self.start,
             dur=self.dur,
             fps=self.fps,
         )
+
+    @property
+    def scope(self) -> str:
+        if str(self.mode or "").strip().lower() == "train" and str(self.sequence or "").strip():
+            return "sequence"
+        if str(self.mode or "").strip().lower() == "train":
+            return "dataset"
+        return "sequence"
 
     @property
     def fps_text(self) -> str:

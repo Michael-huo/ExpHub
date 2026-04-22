@@ -136,7 +136,11 @@ def _run_single_prepare(
     _reset_frame_dir(frame_dir)
     maybe_write_frames(geometry.frames, frame_dir)
 
-    legal_grid = build_legal_grid(num_frames=len(geometry.frames), fps=fps)
+    legal_grid = build_legal_grid(
+        num_frames=len(geometry.frames),
+        fps=fps,
+        tail_policy="include_final" if str(mode).strip().lower() == "train" else "drop",
+    )
     result = PrepareResult(
         mode=str(mode),
         dataset=str(cfg.dataset),
@@ -209,6 +213,57 @@ def _all_sequences(config_path, dataset_name):
     dataset_cfg = datasets.get(dataset_name) or {}
     sequences = dataset_cfg.get("sequences") or {}
     return list(sequences.keys())
+
+
+def _resolution_list(result):
+    resolution = dict(result.normalized_resolution if hasattr(result, "normalized_resolution") else {})
+    return [int(resolution.get("width", 0) or 0), int(resolution.get("height", 0) or 0)]
+
+
+def _train_prepare_ok_entry(sequence, result, result_path, frames_dir):
+    return {
+        "sequence": str(sequence),
+        "status": "ok",
+        "error_message": "",
+        "prepare_result_path": str(Path(result_path).resolve()),
+        "frames_dir": str(Path(frames_dir).resolve()),
+        "num_frames": int(result.num_frames),
+        "normalized_resolution": _resolution_list(result),
+    }
+
+
+def _train_prepare_failed_entry(sequence, error):
+    return {
+        "sequence": str(sequence),
+        "status": "failed",
+        "error_message": str(error),
+        "prepare_result_path": "",
+        "frames_dir": "",
+        "num_frames": 0,
+        "normalized_resolution": [0, 0],
+    }
+
+
+def _write_train_prepare_index(runtime, sequences):
+    entries = list(sequences or [])
+    ok_count = len([item for item in entries if item.get("status") == "ok"])
+    failed_count = len([item for item in entries if item.get("status") == "failed"])
+    skipped_count = len([item for item in entries if item.get("status") == "skipped"])
+    payload = {
+        "version": 1,
+        "mode": "train",
+        "scope": str(runtime.paths.scope),
+        "dataset": str(runtime.spec.dataset),
+        "run_id": str(runtime.spec.exp_name),
+        "target_fps": int(float(runtime.spec.fps)),
+        "sequence_count": int(len(entries)),
+        "ok_count": int(ok_count),
+        "failed_count": int(failed_count),
+        "skipped_count": int(skipped_count),
+        "sequences": entries,
+    }
+    write_json_atomic(runtime.paths.prepare_dataset_index_path, payload, indent=2)
+    return payload
 
 
 def train_prepare(
@@ -296,22 +351,79 @@ def run_prepare(
 
 
 def run(runtime):
-    if str(runtime.args.mode).strip().lower() != "infer":
-        raise RuntimeError("prepare runner currently supports infer mode only")
+    mode = str(runtime.args.mode).strip().lower()
+    if mode == "infer":
+        runtime.ensure_clean_exp_dir()
+        runtime.paths.prepare_dir.mkdir(parents=True, exist_ok=True)
+        result = infer_prepare(
+            config_path=runtime.cfg_path,
+            dataset_name=runtime.spec.dataset,
+            sequence_name=runtime.spec.sequence,
+            target_fps=int(float(runtime.spec.fps)),
+            start_sec=float(runtime.spec.start),
+            dur_sec=float(runtime.spec.dur),
+            run_id=runtime.spec.exp_name,
+            output_dir=runtime.paths.prepare_dir,
+        )
+        runtime._prepare_result_cache = result.to_dict()
+        runtime.write_meta_snapshot()
+        return runtime.paths.prepare_dir
+
+    if mode != "train":
+        raise RuntimeError("unsupported prepare mode: {}".format(mode))
+
     runtime.ensure_clean_exp_dir()
     runtime.paths.prepare_dir.mkdir(parents=True, exist_ok=True)
-    result = infer_prepare(
-        config_path=runtime.cfg_path,
-        dataset_name=runtime.spec.dataset,
-        sequence_name=runtime.spec.sequence,
-        target_fps=int(float(runtime.spec.fps)),
-        start_sec=float(runtime.spec.start),
-        dur_sec=float(runtime.spec.dur),
-        run_id=runtime.spec.exp_name,
-        output_dir=runtime.paths.prepare_dir,
-    )
-    runtime._prepare_result_cache = result.to_dict()
+    runtime.paths.prepare_sequences_dir.mkdir(parents=True, exist_ok=True)
     runtime.write_meta_snapshot()
+
+    if runtime.spec.sequence:
+        sequence_names = [runtime.spec.sequence]
+    else:
+        sequence_names = _all_sequences(runtime.cfg_path, runtime.spec.dataset)
+    if not sequence_names:
+        raise RuntimeError("no sequences found for train_prepare dataset={}".format(runtime.spec.dataset))
+
+    entries = []
+    first_error = None
+    for sequence_name in sequence_names:
+        try:
+            out_dir = runtime.paths.prepare_sequence_dir(sequence_name)
+            result = _run_single_prepare(
+                mode="train",
+                config_path=runtime.cfg_path,
+                dataset_name=runtime.spec.dataset,
+                sequence_name=sequence_name,
+                target_fps=int(float(runtime.spec.fps)),
+                start_sec=None,
+                dur_sec=None,
+                run_id=runtime.spec.exp_name,
+                output_dir=out_dir,
+            )
+            entries.append(
+                _train_prepare_ok_entry(
+                    sequence=sequence_name,
+                    result=result,
+                    result_path=runtime.paths.prepare_sequence_result_path(sequence_name),
+                    frames_dir=runtime.paths.prepare_sequence_frames_dir(sequence_name),
+                )
+            )
+        except Exception as exc:
+            entries.append(_train_prepare_failed_entry(sequence_name, exc))
+            if first_error is None:
+                first_error = exc
+            if runtime.paths.scope == "sequence":
+                _write_train_prepare_index(runtime, entries)
+                raise
+
+    index_payload = _write_train_prepare_index(runtime, entries)
+    if int(index_payload.get("failed_count", 0) or 0) > 0:
+        raise RuntimeError(
+            "train prepare completed with failed sequences: failed_count={} first_error={}".format(
+                int(index_payload.get("failed_count", 0) or 0),
+                first_error,
+            )
+        )
     return runtime.paths.prepare_dir
 
 

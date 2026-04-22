@@ -26,6 +26,17 @@ def build_legal_grid(
     grid_step = int(fps_i * grid_seconds_i)
     allowed_delta_indices = [int(fps_i * seconds) for seconds in allowed_seconds]
     legal_positions = list(range(0, int(num_frames), int(grid_step)))
+    if str(tail_policy or "").strip().lower() == "include_final" and int(num_frames) > 0:
+        final_idx = int(num_frames) - 1
+        if not legal_positions or int(legal_positions[-1]) != final_idx:
+            legal_positions.append(final_idx)
+        if len(legal_positions) >= 2:
+            max_delta = max(allowed_delta_indices)
+            for position in legal_positions[:-1]:
+                tail_delta = int(final_idx) - int(position)
+                if 0 < tail_delta <= max_delta and tail_delta not in allowed_delta_indices:
+                    allowed_delta_indices.append(int(tail_delta))
+            allowed_delta_indices.sort()
 
     return {
         "fps": int(fps_i),

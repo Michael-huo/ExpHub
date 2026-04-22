@@ -394,7 +394,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--mode",
         required=True,
-        choices=["infer"],
+        choices=["infer", "train"],
         help="execution mode",
     )
     ap.add_argument(
@@ -406,12 +406,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--exphub", default=os.environ.get("EXPHUB", ""), help="ExpHub root (default: $EXPHUB or cwd)")
 
     ap.add_argument("--dataset", required=True)
-    ap.add_argument("--sequence", required=True)
+    ap.add_argument("--sequence", default="")
     ap.add_argument("--tag", required=True)
 
     ap.add_argument("--fps", type=int, required=True)
-    ap.add_argument("--dur", type=str, required=True)
-    ap.add_argument("--start", type=str, required=True)
+    ap.add_argument("--dur", type=str, default=None)
+    ap.add_argument("--start", type=str, default=None)
 
     ap.add_argument(
         "--segment_policy",
@@ -480,10 +480,33 @@ def main(argv: Optional[List[str]] = None) -> None:
     args.keep_level = normalize_keep_level(args.keep_level)
     args.segment_policy = str(args.segment_policy or FORMAL_ENCODE_POLICY).strip() or FORMAL_ENCODE_POLICY
 
+    args.mode = str(args.mode or "").strip().lower()
+    args.step = str(args.step or "").strip().lower()
+    if args.mode == "infer":
+        if not args.sequence:
+            _die("--sequence is required for --mode infer")
+        if args.start is None or str(args.start).strip() == "":
+            _die("--start is required for --mode infer")
+        if args.dur is None or str(args.dur).strip() == "":
+            _die("--dur is required for --mode infer")
+    elif args.mode == "train":
+        if args.step in ("decode", "eval"):
+            _die("train mode does not support --step {}".format(args.step))
+        if args.start is not None and str(args.start).strip() != "":
+            _die("train mode does not accept --start")
+        if args.dur is not None and str(args.dur).strip() != "":
+            _die("train mode does not accept --dur")
+        args.start = ""
+        args.dur = ""
+    else:
+        _die("unsupported mode: {}".format(args.mode))
+
     args.dataset = sanitize_token(args.dataset)
-    args.sequence = sanitize_token(args.sequence)
+    args.sequence = sanitize_token(args.sequence) if str(args.sequence or "").strip() else ""
     args.tag = sanitize_token(args.tag)
-    if not args.dataset or not args.sequence or not args.tag:
+    if not args.dataset or not args.tag:
+        _die("dataset/tag becomes empty after sanitize")
+    if args.mode == "infer" and not args.sequence:
         _die("dataset/sequence/tag becomes empty after sanitize")
 
     runtime = build_runtime(args)
@@ -493,7 +516,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             mode=args.mode,
             step=args.step,
             dataset=runtime.spec.dataset,
-            sequence=runtime.spec.sequence,
+            sequence=runtime.spec.sequence or "<all>",
             tag=runtime.spec.tag,
             fps_text=runtime.fps_arg,
             dur_text=str(args.dur),
@@ -506,7 +529,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     try:
         result = run_runtime(runtime)
         step_norm = str(args.step or "").strip().lower()
-        if step_norm != "prepare":
+        if args.mode == "infer" and step_norm != "prepare":
             _print_experiment_report(result.exp_dir, result.step_times)
     except (ConfigError, RunError, RuntimeError) as e:
         _die(str(e))

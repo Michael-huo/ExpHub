@@ -80,6 +80,17 @@ class PipelineRuntime:
         return "infer_fun_5b"
 
     def ensure_clean_exp_dir(self) -> None:
+        if str(self.args.mode or "").strip().lower() == "train" and self.paths.exp_dir.exists():
+            existing_meta = read_json_dict(self.paths.run_meta_path)
+            existing_scope = str(existing_meta.get("scope", "") or "").strip()
+            if existing_scope and existing_scope != str(self.paths.scope):
+                raise RuntimeError(
+                    "refusing to overwrite train run with mismatched scope: existing={} requested={} dir={}".format(
+                        existing_scope,
+                        self.paths.scope,
+                        self.paths.exp_dir,
+                    )
+                )
         if self.paths.exp_dir.exists():
             remove_path(self.paths.exp_dir)
         self.paths.exp_dir.mkdir(parents=True, exist_ok=True)
@@ -109,8 +120,11 @@ class PipelineRuntime:
     def write_meta_snapshot(self) -> None:
         prepare_result_path = self.paths.prepare_result_path
         prepare_result = read_json_dict(prepare_result_path) if prepare_result_path.is_file() else {}
+        mode = str(self.args.mode or "").strip().lower()
+        train_mode = mode == "train"
         meta = {
             "mode": str(self.args.mode),
+            "scope": str(self.paths.scope),
             "step": str(self.args.step),
             "dataset": self.spec.dataset,
             "sequence": self.spec.sequence,
@@ -131,7 +145,7 @@ class PipelineRuntime:
                 "gpus": self.args.gpus,
                 "planner": "generation_units",
                 "prompt_strategy": "prompts",
-                "workflow": "prepare -> encode -> decode -> eval",
+                "workflow": "prepare -> encode" if train_mode else "prepare -> encode -> decode -> eval",
                 "prompt_model_dir": self.args.prompt_model_dir,
                 "infer_backend": self.args.infer_backend,
                 "infer_model_dir": self.args.infer_model_dir,
@@ -142,12 +156,17 @@ class PipelineRuntime:
             "paths": {
                 "prepare_dir": str(self.paths.prepare_dir),
                 "prepare_frames_dir": str(self.paths.prepare_frames_dir),
+                "prepare_dataset_index": str(self.paths.prepare_dataset_index_path),
                 "encode_dir": str(self.paths.encode_dir),
+                "encode_dataset_index": str(self.paths.encode_dataset_index_path),
                 "encode_generation_units": str(self.paths.encode_generation_units_path),
                 "encode_prompts": str(self.paths.encode_prompts_path),
                 "encode_result": str(self.paths.encode_result_path),
                 "decode_dir": str(self.paths.decode_dir),
                 "eval_dir": str(self.paths.eval_dir),
+                "trainset_dir": str(self.paths.trainset_dir),
+                "trainset_metadata": str(self.paths.trainset_metadata_path),
+                "trainset_stats": str(self.paths.trainset_stats_path),
                 "logs_dir": str(self.paths.logs_dir),
                 "semantic_openclip_python": get_phase_python_config("semantic_openclip"),
                 "videox_root": self.args.videox_root,
@@ -276,6 +295,7 @@ def build_runtime(args) -> PipelineRuntime:
 
     spec = ExperimentSpec(
         exphub_root=exphub_root,
+        mode=args.mode,
         dataset=args.dataset,
         sequence=args.sequence,
         tag=args.tag,
@@ -323,31 +343,43 @@ def build_runtime(args) -> PipelineRuntime:
 
 
 def _validate_scripts(runtime: PipelineRuntime) -> None:
+    mode = str(runtime.args.mode or "").strip().lower()
     required = [
         (runtime.exphub_root / "exphub" / "prepare" / "prepare.py").resolve(),
         (runtime.exphub_root / "exphub" / "encode" / "encode.py").resolve(),
-        (runtime.exphub_root / "exphub" / "decode" / "decode.py").resolve(),
-        (runtime.exphub_root / "exphub" / "decode" / "frames_generate.py").resolve(),
-        (runtime.exphub_root / "exphub" / "eval" / "eval.py").resolve(),
     ]
+    if mode == "infer":
+        required.extend(
+            [
+                (runtime.exphub_root / "exphub" / "decode" / "decode.py").resolve(),
+                (runtime.exphub_root / "exphub" / "decode" / "frames_generate.py").resolve(),
+                (runtime.exphub_root / "exphub" / "eval" / "eval.py").resolve(),
+            ]
+        )
     for path in required:
         if not path.is_file():
             raise RuntimeError("file not found: {}".format(path))
 
 
 def run_runtime(runtime: PipelineRuntime) -> OrchestrationResult:
-    _validate_scripts(runtime)
     mode = str(runtime.args.mode or "").strip().lower()
     step = str(runtime.args.step or "").strip().lower()
-    if mode != "infer":
-        raise RuntimeError("only infer mode is connected in this pass: {}".format(mode))
+    if mode not in ("infer", "train"):
+        raise RuntimeError("unsupported mode: {}".format(mode))
+    _validate_scripts(runtime)
 
-    runtime.dataset()
+    if mode == "infer":
+        runtime.dataset()
 
     if step == "all":
-        stages = list(STAGE_ORDER)
+        stages = list(STAGE_ORDER if mode == "infer" else ("prepare", "encode"))
     else:
         stages = [step]
+
+    if mode == "train":
+        forbidden = [item for item in stages if item in ("decode", "eval")]
+        if forbidden:
+            raise RuntimeError("train mode does not support stage(s): {}".format(", ".join(forbidden)))
 
     last_out_hint = runtime.paths.exp_dir
     for stage_name in stages:
