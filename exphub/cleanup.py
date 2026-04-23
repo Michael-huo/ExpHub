@@ -84,6 +84,16 @@ def _cleanup_min(exp_dir: Path) -> None:
     )
     _prune_dir_keep_names(
         exp_dir,
+        exp_dir / "trainset",
+        {
+            "videos",
+            "train_metadata.json",
+            "stats.json",
+        },
+    )
+
+    _prune_dir_keep_names(
+        exp_dir,
         exp_dir / "decode",
         {
             "decode_merge_report.json",

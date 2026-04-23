@@ -132,12 +132,12 @@ class ExperimentPaths:
         return self.exp_dir / "trainset"
 
     @property
-    def trainset_clips_dir(self) -> Path:
-        return self.trainset_dir / "clips"
+    def trainset_videos_dir(self) -> Path:
+        return self.trainset_dir / "videos"
 
     @property
     def trainset_metadata_path(self) -> Path:
-        return self.trainset_dir / "metadata.json"
+        return self.trainset_dir / "train_metadata.json"
 
     @property
     def trainset_stats_path(self) -> Path:
