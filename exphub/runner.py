@@ -141,6 +141,8 @@ class PipelineRuntime:
                 "start": self.spec.start,
                 "kf_gap": self.spec.kf_gap,
                 "segment_policy": self.args.segment_policy,
+                "train_clip_num_frames": self.args.train_clip_num_frames,
+                "train_clip_stride": self.args.train_clip_stride,
                 "seed_base": self.args.seed_base,
                 "gpus": self.args.gpus,
                 "planner": "generation_units",

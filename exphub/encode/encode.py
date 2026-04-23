@@ -11,7 +11,7 @@ from .generation_unit import build_generation_units
 from .motion_segment import build_motion_segments
 from .result_writer import write_encode_outputs
 from .synthetic_prompt import build_prompts
-from .trainset_export import export_sequence_trainset, write_trainset_indexes
+from .train_export import TrainExportSession
 
 
 @dataclass(frozen=True)
@@ -236,18 +236,13 @@ def _run_train_encode(runtime):
 
     runtime.write_meta_snapshot()
     runtime.remove_in_exp(runtime.paths.encode_dir)
-    runtime.remove_in_exp(runtime.paths.trainset_dir)
     runtime.paths.encode_dir.mkdir(parents=True, exist_ok=True)
     runtime.paths.encode_sequences_dir.mkdir(parents=True, exist_ok=True)
-    runtime.paths.trainset_clips_dir.mkdir(parents=True, exist_ok=True)
+    train_export = TrainExportSession(runtime)
+    train_export.prepare_output_dirs()
 
     entries = []
-    trainset_records = []
-    motion_histogram = {}
-    unit_lengths = []
     successful_sequences = 0
-    fps_value = int(float(runtime.spec.fps))
-    resolution = [0, 0]
     first_error = None
 
     for prepare_entry in list(prepare_index.get("sequences") or []):
@@ -264,8 +259,7 @@ def _run_train_encode(runtime):
         paths = _train_sequence_encode_paths(runtime, sequence)
         try:
             result = _run_single_encode(runtime, paths, log_name="encode_{}.log".format(sequence))
-            trainset = export_sequence_trainset(
-                runtime=runtime,
+            train_export.export_sequence(
                 sequence=sequence,
                 prepare_result=result["prepare_result"],
                 prepare_frames_dir=paths.prepare_frames_dir,
@@ -273,15 +267,7 @@ def _run_train_encode(runtime):
                 prompts=result["prompts"],
                 generation_units_path=paths.encode_generation_units_path,
                 prompts_path=paths.encode_prompts_path,
-                clip_start_index=len(trainset_records),
             )
-            trainset_records.extend(list(trainset["records"]))
-            for label, count in dict(trainset["motion_label_histogram"]).items():
-                motion_histogram[label] = int(motion_histogram.get(label, 0)) + int(count)
-            unit_lengths.extend(list(trainset["unit_lengths"]))
-            if resolution == [0, 0]:
-                resolution = list(trainset["resolution"])
-            fps_value = int(trainset["fps"])
             successful_sequences += 1
             entries.append(_train_encode_ok_entry(sequence, paths, result))
         except Exception as exc:
@@ -293,15 +279,7 @@ def _run_train_encode(runtime):
                 raise
 
     index_payload = _write_train_encode_index(runtime, entries)
-    write_trainset_indexes(
-        runtime=runtime,
-        records=trainset_records,
-        sequence_count=successful_sequences,
-        fps=fps_value,
-        resolution=resolution,
-        motion_histogram=motion_histogram,
-        unit_lengths=unit_lengths,
-    )
+    train_export.write_indexes(sequence_count=successful_sequences)
     failed_or_skipped = int(index_payload.get("failed_count", 0) or 0) + int(index_payload.get("skipped_count", 0) or 0)
     if failed_or_skipped > 0:
         raise RuntimeError(

@@ -418,6 +418,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=FORMAL_ENCODE_POLICY,
         help="encode policy for the current workflow; default is encode_pass1",
     )
+    ap.add_argument("--train_clip_num_frames", type=int, default=73)
+    ap.add_argument("--train_clip_stride", type=int, default=36)
     ap.add_argument("--seed", type=int, default=43, dest="seed_base")
     ap.add_argument("--gpus", type=int, default=2)
 
@@ -479,6 +481,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     set_cli_log_level(_CLI_LOG_LEVEL)
     args.keep_level = normalize_keep_level(args.keep_level)
     args.segment_policy = str(args.segment_policy or FORMAL_ENCODE_POLICY).strip() or FORMAL_ENCODE_POLICY
+    if int(args.train_clip_num_frames) <= 0:
+        _die("--train_clip_num_frames must be > 0")
+    if int(args.train_clip_stride) <= 0:
+        _die("--train_clip_stride must be > 0")
 
     args.mode = str(args.mode or "").strip().lower()
     args.step = str(args.step or "").strip().lower()
