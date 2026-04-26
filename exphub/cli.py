@@ -427,7 +427,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--infer_backend",
         default="wan_fun_5b_inp",
-        choices=["wan_fun_5b_inp"],
+        choices=["wan_fun_5b_inp", "comfyui_wan2_2_5b_inp"],
         help="infer backend for the current workflow",
     )
     ap.add_argument(

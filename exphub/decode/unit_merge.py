@@ -167,6 +167,7 @@ def merge_units(runtime, tasks_payload, decode_report):
         if end_idx >= len(timestamps):
             raise RuntimeError("timestamps too short for unit {} end_idx={}".format(unit_id, end_idx))
 
+        # ComfyUI/Wan InP outputs include both start and end frames, so adjacent units share boundary frames.
         drop_leading = 1 if idx > 0 else 0
         if drop_leading:
             shared_endpoint_count += 1

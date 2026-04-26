@@ -31,6 +31,14 @@ repos:
   videox_fun: "/data/hx/VideoX-Fun"
   droid_slam: "/data/hx/DROID-SLAM"
 
+services:
+  comfyui:
+    base_url: "http://127.0.0.1:8188"
+    workflow_json: "/data/hx/ExpHub/config/video_wan2_2_5B_fun_inpaint.json"
+    output_root: "/home/hx/ComfyUI/output"
+    timeout_sec: 1800
+    poll_interval_sec: 2.0
+
 models:
   qwen2_vl:
     path: "/data/hx/Qwen2-VL/models/Qwen2-VL-7B-Instruct"

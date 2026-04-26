@@ -75,8 +75,8 @@ class PipelineRuntime:
 
     def infer_phase_name(self) -> str:
         backend = str(self.args.infer_backend or "wan_fun_5b_inp").strip().lower()
-        if backend != "wan_fun_5b_inp":
-            raise RuntimeError("decode backend supports only wan_fun_5b_inp: {}".format(backend or "<empty>"))
+        if backend not in ("wan_fun_5b_inp", "comfyui_wan2_2_5b_inp"):
+            raise RuntimeError("decode backend supports only wan_fun_5b_inp, comfyui_wan2_2_5b_inp: {}".format(backend or "<empty>"))
         return "infer_fun_5b"
 
     def ensure_clean_exp_dir(self) -> None:
