@@ -22,7 +22,7 @@ Expected workflow node IDs based on current template:
 - 75 : SaveImage frames
 
 Example:
-python comfyui_decode_client.py \
+python comfyui_client.py \
   --workflow-json /data/hx/ExpHub/config/workflows/comfyui/wan2_2_5b_inp_api.json \
   --start-frame /data/hx/input/start.png \
   --end-frame /data/hx/input/end.png \
@@ -43,15 +43,25 @@ import copy
 import json
 import mimetypes
 import random
+import re
 import shutil
 import sys
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import requests
 import yaml
+
+from exphub.common.io import ensure_dir, list_frames_sorted, read_json_dict, write_json_atomic
+from exphub.common.logging import log_info, log_prog
+from exphub.config import get_platform_config
 
 
 # Node IDs in the exported API workflow template.
@@ -64,6 +74,10 @@ NODE_START_IMAGE = "70"
 NODE_VIDEO_SPEC = "73"
 NODE_END_IMAGE = "74"
 NODE_SAVE_IMAGE = "75"
+
+COMFYUI_BACKEND = "comfyui_wan2_2_5b_inp"
+REPORT_FILENAME = "decode_report.json"
+_SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 @dataclass
@@ -104,6 +118,209 @@ class DecodeResult:
 
 class ComfyUIDecodeError(RuntimeError):
     pass
+
+
+def _relative_path(base_dir: str | Path, target_path: str | Path) -> str:
+    base = Path(base_dir).resolve()
+    target = Path(target_path).resolve()
+    try:
+        return str(target.relative_to(base))
+    except Exception:
+        return str(target)
+
+
+def _image_size(path: str | Path) -> tuple[int, int]:
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise RuntimeError("Pillow is required to read ComfyUI decode input frame size") from exc
+    with Image.open(str(path)) as image_obj:
+        width, height = image_obj.size
+    return int(width), int(height)
+
+
+def _task_steps(task: dict[str, Any]) -> int:
+    value = task.get("num_inference_steps")
+    if value is None or str(value).strip() == "":
+        return 20
+    return int(value)
+
+
+def _task_cfg(task: dict[str, Any]) -> float:
+    value = task.get("guidance_scale")
+    if value is None or str(value).strip() == "":
+        return 6.0
+    return float(value)
+
+
+def _platform_path_from_root(exphub_root: str | Path | None = None) -> Path:
+    if exphub_root:
+        return Path(exphub_root).resolve() / "config" / "platform.yaml"
+    return Path(__file__).resolve().parents[2] / "config" / "platform.yaml"
+
+
+def resolve_comfyui_platform_config(
+    platform_cfg: dict[str, Any] | None = None,
+    *,
+    exphub_root: str | Path | None = None,
+) -> dict[str, Any]:
+    cfg = platform_cfg if platform_cfg is not None else get_platform_config(exphub_root=exphub_root)
+    services = cfg.get("services", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(services, dict):
+        services = {}
+    comfyui = services.get("comfyui", {})
+    if not isinstance(comfyui, dict):
+        comfyui = {}
+
+    def require(key: str) -> Any:
+        value = comfyui.get(key)
+        if value is None or str(value).strip() == "":
+            raise RuntimeError("Missing services.comfyui.{} in config/platform.yaml".format(key))
+        return value
+
+    return {
+        "base_url": str(require("base_url")).strip(),
+        "workflow_json": Path(str(require("workflow_json"))).expanduser().resolve(),
+        "output_root": Path(str(require("output_root"))).expanduser().resolve(),
+        "timeout_sec": int(comfyui.get("timeout_sec", 1800) or 1800),
+        "poll_interval_sec": float(comfyui.get("poll_interval_sec", 2.0) or 2.0),
+        "platform_config": _platform_path_from_root(exphub_root).resolve(),
+    }
+
+
+def _validate_run_output(task: dict[str, Any], run_dir: str | Path) -> dict[str, Any]:
+    run_root = ensure_dir(run_dir, "decode unit run dir")
+    params_path = run_root / "params.json"
+    if not params_path.is_file():
+        raise RuntimeError("ComfyUI decode did not write params.json for {}".format(task["unit_id"]))
+    frames_dir = ensure_dir(run_root / "frames", "decode unit frames dir")
+    frames = list_frames_sorted(frames_dir)
+    if not frames:
+        raise RuntimeError("ComfyUI decode produced zero frames for {}".format(task["unit_id"]))
+    params = read_json_dict(params_path)
+    expected = int(params.get("video_length_run", task["length"]) or 0)
+    if expected != len(frames):
+        raise RuntimeError(
+            "decode unit frame count mismatch for {}: params.video_length_run={} files={}".format(
+                task["unit_id"],
+                expected,
+                len(frames),
+            )
+        )
+    if int(params.get("start_idx", task["start_idx"]) or 0) != int(task["start_idx"]):
+        raise RuntimeError("decode unit {} params start_idx mismatch".format(task["unit_id"]))
+    if int(params.get("end_idx", task["end_idx"]) or 0) != int(task["end_idx"]):
+        raise RuntimeError("decode unit {} params end_idx mismatch".format(task["unit_id"]))
+    return {
+        "params_path": params_path,
+        "frames_dir": frames_dir,
+        "num_frames": int(len(frames)),
+        "params": params,
+    }
+
+
+def _execution_segments(tasks_payload: dict[str, Any], backend_name: str = COMFYUI_BACKEND) -> list[dict[str, Any]]:
+    tasks = list(tasks_payload.get("tasks") or [])
+    segments: list[dict[str, Any]] = []
+    for idx, task in enumerate(tasks):
+        start_idx = int(task["start_idx"])
+        end_idx = int(task["end_idx"])
+        length = int(task["length"])
+        segments.append(
+            {
+                "seg": int(idx),
+                "segment_id": int(idx),
+                "unit_id": str(task["unit_id"]),
+                "source_unit_id": str(task["unit_id"]),
+                "source_span_id": str(dict(task.get("source_prompt_ref") or {}).get("span_id", "")),
+                "source_prompt_ref": dict(task.get("source_prompt_ref") or {}),
+                "run_id": "run_{:03d}".format(idx),
+                "run_name": str(task["run_name"]),
+                "schedule_source": "decode.native_tasks",
+                "execution_backend": str(backend_name),
+                "start_idx": int(start_idx),
+                "end_idx": int(end_idx),
+                "raw_start_idx": int(start_idx),
+                "raw_end_idx": int(end_idx),
+                "desired_start_idx": int(start_idx),
+                "desired_end_idx": int(end_idx),
+                "desired_num_frames": int(length),
+                "aligned_start_idx": int(start_idx),
+                "aligned_end_idx": int(end_idx),
+                "aligned_num_frames": int(length),
+                "deploy_start_idx": int(start_idx),
+                "deploy_end_idx": int(end_idx),
+                "raw_gap": int(end_idx - start_idx),
+                "deploy_gap": int(end_idx - start_idx),
+                "num_frames": int(length),
+                "target_num_frames": int(length),
+                "align_reason": str(task.get("align_reason", "generation_unit_shared_anchor") or "generation_unit_shared_anchor"),
+                "is_valid_for_decode": True,
+                "state_label": str(task.get("scene_label", "") or ""),
+                "motion_label": str(task.get("motion_label", "") or ""),
+                "prompt_source": str(task.get("prompt_source", "prompts.assembled_prompt") or "prompts.assembled_prompt"),
+                "base_prompt": str(task.get("base_prompt", "") or ""),
+                "resolved_prompt": str(task["prompt"]),
+                "negative_prompt": str(task.get("negative_prompt", "") or ""),
+                "prompt": str(task["prompt"]),
+                "prompt_hash8": str(task.get("prompt_hash8", "") or ""),
+                "num_inference_steps": task.get("num_inference_steps"),
+                "guidance_scale": task.get("guidance_scale"),
+            }
+        )
+    return segments
+
+
+def _write_comfyui_params(
+    task: dict[str, Any],
+    run_dir: str | Path,
+    result: DecodeResult,
+    width: int,
+    height: int,
+    fps: int,
+    steps: int,
+    cfg: float,
+    backend_name: str = COMFYUI_BACKEND,
+) -> dict[str, Any]:
+    run_root = Path(run_dir).resolve()
+    params = {
+        "task": str(task["unit_id"]),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "experiment_name": "runs",
+        "experiment_root": str(run_root.parent),
+        "dataset_fps": int(fps),
+        "target_fps": int(fps),
+        "width": int(width),
+        "height": int(height),
+        "video_length_desired": int(task["length"]),
+        "video_length_run": int(task["length"]),
+        "saved_frame_count": int(result.output_frames),
+        "start_idx": int(task["start_idx"]),
+        "end_idx": int(task["end_idx"]),
+        "start_path": str(task["start_frame_path"]),
+        "end_path": str(task["end_frame_path"]),
+        "batch": True,
+        "source_frames_dir": str(Path(task["start_frame_path"]).parent),
+        "base_idx": int(task["start_idx"]),
+        "num_segments": 1,
+        "segment_seconds": float(max(0, int(task["length"]) - 1)) / float(max(int(fps), 1)),
+        "schedule_source": "decode.native_tasks",
+        "execution_backend": str(backend_name),
+        "num_inference_steps": int(steps),
+        "guidance_scale": float(cfg),
+        "seed": int(result.actual_seed),
+        "prompt": str(task["prompt"]),
+        "negative_prompt": str(task.get("negative_prompt", "") or ""),
+        "prompt_source": str(task.get("prompt_source", "prompts.assembled_prompt") or "prompts.assembled_prompt"),
+        "prompt_hash8": str(task.get("prompt_hash8", "") or ""),
+        "output_dir": str(run_root),
+        "output_video": Path(result.video_paths[0]).name if result.video_paths else "",
+        "frames_dir": "frames",
+        "frame_ext": "png",
+        "comfyui_prompt_id": str(result.prompt_id),
+    }
+    write_json_atomic(run_root / "params.json", params, indent=2)
+    return params
 
 
 class ComfyUIWanInpClient:
@@ -284,13 +501,13 @@ class ComfyUIWanInpClient:
             workflow = self.build_workflow(req, start_name, end_name)
 
             workflow_debug_path = self.exp_output_dir / "submitted_workflow.json"
-            workflow_debug_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8")
+            write_json_atomic(workflow_debug_path, workflow, indent=2)
 
             prompt_id = self.submit_prompt(workflow)
             history_item = self.wait_history(prompt_id)
 
             history_path = self.exp_output_dir / "comfyui_history.json"
-            history_path.write_text(json.dumps(history_item, ensure_ascii=False, indent=2), encoding="utf-8")
+            write_json_atomic(history_path, history_item, indent=2)
 
             frame_paths = self._collect_frame_paths(req.segment_id)
             video_paths = self._collect_video_paths(req.segment_id)
@@ -306,7 +523,7 @@ class ComfyUIWanInpClient:
             local_video_paths = self._copy_videos(video_paths, self.exp_output_dir)
 
             result = DecodeResult(
-                backend="comfyui_wan2_2_5b_inp",
+                backend=COMFYUI_BACKEND,
                 segment_id=req.segment_id,
                 prompt_id=prompt_id,
                 actual_seed=actual_seed,
@@ -325,7 +542,7 @@ class ComfyUIWanInpClient:
             status = "failed"
             error = str(exc)
             result = DecodeResult(
-                backend="comfyui_wan2_2_5b_inp",
+                backend=COMFYUI_BACKEND,
                 segment_id=req.segment_id,
                 prompt_id=prompt_id,
                 actual_seed=actual_seed,
@@ -364,7 +581,7 @@ class ComfyUIWanInpClient:
             "expected_comfy_video_prefix": str(self.comfy_output_root / "video" / req.segment_id),
         }
         Path(result.meta_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(result.meta_path).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json_atomic(Path(result.meta_path), meta, indent=2)
 
         if result.status != "ok":
             raise ComfyUIDecodeError(error or "ComfyUI decode failed")
@@ -374,9 +591,7 @@ class ComfyUIWanInpClient:
     @staticmethod
     def _validate_segment_id(segment_id: str) -> str:
         value = str(segment_id or "").strip()
-        if not value:
-            raise ValueError("segment_id must not be empty")
-        if value in (".", "..") or ".." in value or "/" in value or "\\" in value:
+        if not value or not _SEGMENT_ID_RE.match(value) or value in (".", "..") or ".." in value:
             raise ValueError(f"unsafe segment_id for cleanup: {segment_id!r}")
         return value
 
@@ -403,6 +618,7 @@ class ComfyUIWanInpClient:
         remove_file(self.exp_output_dir / "submitted_workflow.json")
         remove_file(self.exp_output_dir / "comfyui_history.json")
         remove_file(self.exp_output_dir / "decode_meta.json")
+        remove_file(self.exp_output_dir / "params.json")
 
         video_dir = self.comfy_output_root / "video"
         if video_dir.exists():
@@ -413,6 +629,19 @@ class ComfyUIWanInpClient:
                     cleanup_paths.append(str(path))
                     if path.is_dir():
                         raise ComfyUIDecodeError(f"refusing to delete directory matched as video output: {path}")
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        pass
+
+        if self.exp_output_dir.exists():
+            if not self.exp_output_dir.is_dir() or self.exp_output_dir.is_symlink():
+                raise ComfyUIDecodeError(f"refusing to scan non-directory unit output path: {self.exp_output_dir}")
+            for suffix in ("mp4", "webm", "mov", "mkv"):
+                for path in sorted(self.exp_output_dir.glob(f"{segment}*.{suffix}")):
+                    cleanup_paths.append(str(path))
+                    if path.is_dir():
+                        raise ComfyUIDecodeError(f"refusing to delete directory matched as local video output: {path}")
                     try:
                         path.unlink()
                     except FileNotFoundError:
@@ -495,7 +724,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--height", type=int, required=True)
     p.add_argument("--length", type=int, required=True)
     p.add_argument("--fps", type=int, default=24)
-    p.add_argument("--seed", type=int, default=43)
+    p.add_argument("--seed", type=int, default=-1)
     p.add_argument("--steps", type=int, default=20)
     p.add_argument("--cfg", type=float, default=6.0)
     p.add_argument("--sampler-name", default="uni_pc")
@@ -563,25 +792,194 @@ def resolve_runtime_config(args: argparse.Namespace) -> dict[str, Any]:
 
 def run_comfyui_decode(
     req: DecodeRequest,
+    platform_cfg: dict[str, Any] | None = None,
     *,
-    comfy_url: str,
-    workflow_json: str | Path,
-    comfy_output_root: str | Path,
+    comfy_url: str | None = None,
+    workflow_json: str | Path | None = None,
+    comfy_output_root: str | Path | None = None,
     exp_output_dir: str | Path,
-    timeout_sec: int = 1800,
-    poll_interval_sec: float = 2.0,
+    timeout_sec: int | None = None,
+    poll_interval_sec: float | None = None,
     platform_config: str | Path | None = None,
 ) -> DecodeResult:
+    if platform_cfg is not None:
+        resolved = resolve_comfyui_platform_config(platform_cfg)
+        comfy_url = comfy_url or str(resolved["base_url"])
+        workflow_json = workflow_json or resolved["workflow_json"]
+        comfy_output_root = comfy_output_root or resolved["output_root"]
+        timeout_sec = int(timeout_sec if timeout_sec is not None else resolved["timeout_sec"])
+        poll_interval_sec = float(
+            poll_interval_sec if poll_interval_sec is not None else resolved["poll_interval_sec"]
+        )
+        platform_config = platform_config or resolved["platform_config"]
+    if comfy_url is None or workflow_json is None or comfy_output_root is None:
+        raise ValueError("run_comfyui_decode requires platform_cfg or explicit ComfyUI runtime config")
     client = ComfyUIWanInpClient(
         comfy_url=comfy_url,
         workflow_json=Path(workflow_json),
         comfy_output_root=Path(comfy_output_root),
         exp_output_dir=Path(exp_output_dir),
-        timeout_sec=int(timeout_sec),
-        poll_interval_sec=float(poll_interval_sec),
+        timeout_sec=int(timeout_sec if timeout_sec is not None else 1800),
+        poll_interval_sec=float(poll_interval_sec if poll_interval_sec is not None else 2.0),
         platform_config=Path(platform_config).resolve() if platform_config else None,
     )
     return client.run(req)
+
+
+def run_comfyui_decode_tasks(
+    tasks_payload: dict[str, Any],
+    runtime: Any,
+    platform_cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cfg = resolve_comfyui_platform_config(platform_cfg, exphub_root=runtime.exphub_root)
+    tasks = list(tasks_payload.get("tasks") or [])
+    execution_segments = _execution_segments(tasks_payload, COMFYUI_BACKEND)
+    if not execution_segments:
+        raise RuntimeError("generation task builder produced zero executable tasks")
+
+    seed_base = int(getattr(runtime.args, "seed_base", -1))
+    seed_policy = "random_per_unit" if seed_base == -1 else "fixed"
+    if seed_base <= 0 and seed_base != -1:
+        raise ValueError("seed must be a positive integer or -1, got: {}".format(seed_base))
+
+    log_prog(
+        "decode generate: backend={} tasks={} fps={} seed_policy={}".format(
+            COMFYUI_BACKEND,
+            len(execution_segments),
+            int(float(runtime.fps_arg)),
+            seed_policy,
+        )
+    )
+    unit_reports: list[dict[str, Any]] = []
+    started = time.time()
+
+    for idx, task in enumerate(tasks):
+        run_dir = Path(task["output_dir"]).resolve()
+        run_dir.mkdir(parents=True, exist_ok=True)
+        width, height = _image_size(task["start_frame_path"])
+        steps = _task_steps(task)
+        cfg_scale = _task_cfg(task)
+        requested_seed = -1 if seed_policy == "random_per_unit" else seed_base
+
+        log_prog(
+            "decode generate comfyui: unit={}/{} id={} frames={} seed_request={}".format(
+                idx + 1,
+                len(tasks),
+                task["unit_id"],
+                int(task["length"]),
+                int(requested_seed),
+            )
+        )
+
+        req = DecodeRequest(
+            segment_id=str(task["unit_id"]),
+            start_frame=str(task["start_frame_path"]),
+            end_frame=str(task["end_frame_path"]),
+            positive_prompt=str(task["prompt"]),
+            negative_prompt=str(task.get("negative_prompt", "") or ""),
+            width=int(width),
+            height=int(height),
+            length=int(task["length"]),
+            fps=int(float(runtime.fps_arg)),
+            seed=int(requested_seed),
+            steps=int(steps),
+            cfg=float(cfg_scale),
+        )
+        result = run_comfyui_decode(
+            req,
+            comfy_url=cfg["base_url"],
+            workflow_json=cfg["workflow_json"],
+            comfy_output_root=cfg["output_root"],
+            exp_output_dir=run_dir,
+            timeout_sec=int(cfg["timeout_sec"]),
+            poll_interval_sec=float(cfg["poll_interval_sec"]),
+            platform_config=cfg["platform_config"],
+        )
+        if int(result.output_frames) != int(task["length"]):
+            raise RuntimeError(
+                "ComfyUI output frame count mismatch for {}: expected={} actual={}".format(
+                    task["unit_id"],
+                    int(task["length"]),
+                    int(result.output_frames),
+                )
+            )
+
+        _write_comfyui_params(
+            task=task,
+            run_dir=run_dir,
+            result=result,
+            width=width,
+            height=height,
+            fps=int(float(runtime.fps_arg)),
+            steps=steps,
+            cfg=cfg_scale,
+            backend_name=COMFYUI_BACKEND,
+        )
+        actual = _validate_run_output(task, run_dir)
+        unit_reports.append(
+            {
+                "unit_id": str(task["unit_id"]),
+                "status": "success",
+                "error": "",
+                "start_idx": int(task["start_idx"]),
+                "end_idx": int(task["end_idx"]),
+                "length": int(task["length"]),
+                "seed": int(result.actual_seed),
+                "requested_seed": int(requested_seed),
+                "seed_policy": str(seed_policy),
+                "output_dir": _relative_path(runtime.paths.exp_dir, run_dir),
+                "frames_dir": _relative_path(runtime.paths.exp_dir, actual["frames_dir"]),
+                "params_path": _relative_path(runtime.paths.exp_dir, actual["params_path"]),
+                "decode_meta_path": _relative_path(runtime.paths.exp_dir, run_dir / "decode_meta.json"),
+                "num_frames": int(actual["num_frames"]),
+                "prompt_hash8": str(task.get("prompt_hash8", "") or ""),
+            }
+        )
+
+    elapsed = float(time.time() - started)
+    report = {
+        "schema": "decode_report.v1",
+        "stage": "decode",
+        "substage": "comfyui_decode",
+        "status": "success",
+        "run_id": str(runtime.spec.exp_name),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "planner": "generation_units",
+        "prompt_strategy": "prompts",
+        "backend_name": COMFYUI_BACKEND,
+        "backend_meta": {
+            "backend": COMFYUI_BACKEND,
+            "client": "exphub.decode.comfyui_client",
+            "call_mode": "direct_python",
+        },
+        "backend_result": {
+            "backend": COMFYUI_BACKEND,
+            "mode": "direct_python_comfyui_client",
+            "workflow_json": str(cfg["workflow_json"]),
+            "comfy_url": str(cfg["base_url"]),
+            "comfy_output_root": str(cfg["output_root"]),
+            "platform_config": str(cfg["platform_config"]),
+            "execution_segments": int(len(execution_segments)),
+            "seed_policy": str(seed_policy),
+            "requested_seed": int(seed_base),
+            "total_runtime_sec": float(elapsed),
+        },
+        "seed_policy": str(seed_policy),
+        "requested_seed": int(seed_base),
+        "num_tasks": int(len(unit_reports)),
+        "source_inputs": dict(tasks_payload.get("source_inputs") or {}),
+        "task_summary": dict(tasks_payload.get("summary") or {}),
+        "units": unit_reports,
+        "runs": unit_reports,
+        "outputs": {
+            "runs_dir": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_runs_dir),
+            "report": "decode/{}".format(REPORT_FILENAME),
+        },
+        "total_runtime_sec": float(elapsed),
+    }
+    write_json_atomic(runtime.paths.decode_report_path, report, indent=2)
+    log_info("decode generate report: {}".format(runtime.paths.decode_report_path))
+    return report
 
 
 def main() -> int:

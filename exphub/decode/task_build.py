@@ -204,7 +204,8 @@ def build_generation_tasks_from_paths(
         end_frame_path = _frame_path(frames_dir, end_idx)
         start_abs_time = float(unit.get("start_abs_time_sec", _time_at(timestamps, start_idx, "prepare_result")))
         end_abs_time = float(unit.get("end_abs_time_sec", _time_at(timestamps, end_idx, "prepare_result")))
-        seed = int(seed_base) + int(idx)
+        seed_base_value = int(seed_base)
+        seed = -1 if seed_base_value == -1 else seed_base_value
 
         task = {
             "task_index": int(idx),

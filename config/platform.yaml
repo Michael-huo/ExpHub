@@ -17,18 +17,11 @@ environments:
     prompt_smol:
       python: "/home/hx/anaconda3/envs/prompt_smol/bin/python"
       conda: "prompt_smol"
-    infer:
-      python: "/home/hx/anaconda3/envs/videox/bin/python"
-      conda: "videox"
-    infer_fun_5b:
-      python: "/home/hx/anaconda3/envs/videox/bin/python"
-      conda: "videox"
     slam:
       python: "/home/hx/anaconda3/envs/droid/bin/python"
       conda: "droid"
 
 repos:
-  videox_fun: "/data/hx/VideoX-Fun"
   droid_slam: "/data/hx/DROID-SLAM"
 
 services:
@@ -42,10 +35,6 @@ services:
 models:
   qwen2_vl:
     path: "/data/hx/Qwen2-VL/models/Qwen2-VL-7B-Instruct"
-
-  wan2_2_fun_5b_inp:
-    path: "/data/hx/models/exphub/infer/Wan2.2-Fun-5B-InP"
-    config: "/data/hx/ExpHub/config/models/infer/Wan2.2-Fun-5B-InP.yaml"
 
   droid:
     path: "/data/hx/DROID-SLAM/droid.pth"

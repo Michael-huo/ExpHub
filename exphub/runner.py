@@ -14,6 +14,7 @@ from exphub.common.subprocess import RunError, RunnerConfig, StepRunner, detect_
 from exphub.config import get_phase_python_config, load_datasets_cfg, resolve_dataset
 from exphub.meta import ExperimentSpec, STAGE_ORDER
 
+from .decode.comfyui_client import COMFYUI_BACKEND
 from .decode import decode as decode_pipeline
 from .encode import encode as encode_pipeline
 from .eval import eval as eval_pipeline
@@ -72,12 +73,6 @@ class PipelineRuntime:
         if phase_key not in self._phase_python_cache:
             self._phase_python_cache[phase_key] = resolve_phase_python(phase_key)
         return self._phase_python_cache[phase_key]
-
-    def infer_phase_name(self) -> str:
-        backend = str(self.args.infer_backend or "wan_fun_5b_inp").strip().lower()
-        if backend not in ("wan_fun_5b_inp", "comfyui_wan2_2_5b_inp"):
-            raise RuntimeError("decode backend supports only wan_fun_5b_inp, comfyui_wan2_2_5b_inp: {}".format(backend or "<empty>"))
-        return "infer_fun_5b"
 
     def ensure_clean_exp_dir(self) -> None:
         if str(self.args.mode or "").strip().lower() == "train" and self.paths.exp_dir.exists():
@@ -149,8 +144,7 @@ class PipelineRuntime:
                 "prompt_strategy": "prompts",
                 "workflow": "prepare -> encode" if train_mode else "prepare -> encode -> decode -> eval",
                 "prompt_model_dir": self.args.prompt_model_dir,
-                "infer_backend": self.args.infer_backend,
-                "infer_model_dir": self.args.infer_model_dir,
+                "decode_backend": COMFYUI_BACKEND,
                 "droid_seq": self.args.droid_seq,
                 "viz_enable": self.viz_enable,
                 "keep_level": self.args.keep_level,
@@ -171,7 +165,6 @@ class PipelineRuntime:
                 "trainset_stats": str(self.paths.trainset_stats_path),
                 "logs_dir": str(self.paths.logs_dir),
                 "semantic_openclip_python": get_phase_python_config("semantic_openclip"),
-                "videox_root": self.args.videox_root,
                 "droid_repo": self.args.droid_repo,
             },
             "prepare": {
@@ -254,7 +247,7 @@ def _run_step(runtime: PipelineRuntime, step_name: str, service_module):
 def _doctor(runtime: PipelineRuntime) -> None:
     log_info("STEP doctor: begin")
     has_critical_missing = False
-    phase_names = ["segment", "prompt_smol", runtime.infer_phase_name(), "slam"]
+    phase_names = ["segment", "prompt_smol", "slam"]
     for phase_name in phase_names:
         python_bin = get_phase_python_config(phase_name)
         exists = False
@@ -354,7 +347,7 @@ def _validate_scripts(runtime: PipelineRuntime) -> None:
         required.extend(
             [
                 (runtime.exphub_root / "exphub" / "decode" / "decode.py").resolve(),
-                (runtime.exphub_root / "exphub" / "decode" / "frames_generate.py").resolve(),
+                (runtime.exphub_root / "exphub" / "decode" / "comfyui_client.py").resolve(),
                 (runtime.exphub_root / "exphub" / "eval" / "eval.py").resolve(),
             ]
         )
