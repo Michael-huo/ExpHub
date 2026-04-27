@@ -1,43 +1,40 @@
 # ==============================================================================
-# ExpHub 平台外部依赖汇总配置 (config/platform.yaml)
-# 作用：统一管理外部 Conda 环境、算法仓库 (Repos) 和模型资产 (Models)
+# ExpHub external platform configuration example
+# Copy to config/platform.yaml and update local paths.
 # ==============================================================================
 
 environments:
   phases:
     segment:
-      python: "/home/hx/anaconda3/envs/segmentclip/bin/python"
+      python: "/path/to/segmentclip/bin/python"
       conda: "segmentclip"
     semantic_openclip:
-      python: "/home/hx/anaconda3/envs/segmentclip/bin/python"
+      python: "/path/to/segmentclip/bin/python"
       conda: "segmentclip"
     prompt:
-      python: "/home/hx/anaconda3/envs/vlm_prompt/bin/python"
+      python: "/path/to/vlm_prompt/bin/python"
       conda: "vlm_prompt"
     prompt_smol:
-      python: "/home/hx/anaconda3/envs/prompt_smol/bin/python"
+      python: "/path/to/prompt_smol/bin/python"
       conda: "prompt_smol"
-    infer:
-      python: "/home/hx/anaconda3/envs/videox/bin/python"
-      conda: "videox"
-    infer_fun_5b:
-      python: "/home/hx/anaconda3/envs/videox/bin/python"
-      conda: "videox"
     slam:
-      python: "/home/hx/anaconda3/envs/droid/bin/python"
+      python: "/path/to/droid/bin/python"
       conda: "droid"
 
 repos:
-  videox_fun: "/data/hx/VideoX-Fun"
-  droid_slam: "/data/hx/DROID-SLAM"
+  droid_slam: "/path/to/DROID-SLAM"
+
+services:
+  comfyui:
+    base_url: "http://127.0.0.1:8188"
+    workflow_json: "/path/to/ExpHub/config/video_wan2_2_5B_fun_inpaint.json"
+    output_root: "/path/to/ComfyUI/output"
+    timeout_sec: 1800
+    poll_interval_sec: 2.0
 
 models:
   qwen2_vl:
-    path: "/data/hx/Qwen2-VL-Prompt/models/Qwen2-VL-7B-Instruct" 
-    
-  wan2_2_fun_5b_inp:
-    path: "/data/hx/models/exphub/infer/Wan2.2-Fun-5B-InP"
-    config: "/data/hx/ExpHub/config/models/infer/Wan2.2-Fun-5B-InP.yaml"
+    path: "/path/to/Qwen2-VL-7B-Instruct"
 
   droid:
-    path: "/data/hx/DROID-SLAM/droid.pth"
+    path: "/path/to/DROID-SLAM/droid.pth"

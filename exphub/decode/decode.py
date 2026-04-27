@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
-from exphub.common.io import ensure_dir, ensure_file, read_json_dict, write_json_atomic
+from exphub.common.io import ensure_dir, ensure_file, read_json_dict
 from exphub.common.logging import log_info, log_prog
+from exphub.config import get_platform_config
 
+from .comfyui_client import run_comfyui_decode_tasks
 from .task_build import build_generation_tasks
 from .unit_merge import merge_units
 
@@ -26,53 +25,6 @@ def _remove_decode_outputs(runtime):
     runtime.paths.decode_runs_dir.mkdir(parents=True, exist_ok=True)
 
 
-def _write_generation_task_payload(path, tasks_payload):
-    snapshot = dict(tasks_payload)
-    snapshot.pop("_raw", None)
-    write_json_atomic(path, snapshot, indent=2)
-    return Path(path).resolve()
-
-
-def _run_frame_generation(runtime, tasks_path):
-    cmd = [
-        "-m",
-        "exphub.decode.frames_generate",
-        "--run-native-tasks",
-        "--exp_dir",
-        str(runtime.paths.exp_dir),
-        "--prepare_frames_dir",
-        str(runtime.paths.prepare_frames_dir),
-        "--tasks",
-        str(tasks_path),
-        "--run_id",
-        str(runtime.spec.exp_name),
-        "--videox_root",
-        str(runtime.args.videox_root),
-        "--gpus",
-        str(runtime.args.gpus),
-        "--fps",
-        runtime.fps_arg,
-        "--kf_gap",
-        str(runtime.spec.kf_gap),
-        "--seed_base",
-        str(runtime.args.seed_base),
-        "--infer_backend",
-        str(runtime.args.infer_backend),
-        "--infer_model_dir",
-        str(runtime.args.infer_model_dir),
-        "--backend_python_phase",
-        str(runtime.infer_phase_name()),
-    ]
-    if runtime.args.infer_extra:
-        cmd.extend(["--infer_extra", str(runtime.args.infer_extra)])
-    runtime.step_runner.run_env_python(
-        cmd,
-        phase_name=runtime.infer_phase_name(),
-        log_name="infer.log",
-        cwd=runtime.exphub_root,
-    )
-
-
 def run(runtime):
     _ensure_native_inputs(runtime)
     _remove_decode_outputs(runtime)
@@ -87,9 +39,7 @@ def run(runtime):
         )
     )
 
-    with tempfile.TemporaryDirectory(prefix="exphub_generation_tasks_") as tmp_dir:
-        tasks_path = _write_generation_task_payload(Path(tmp_dir) / "generation_tasks.json", tasks_payload)
-        _run_frame_generation(runtime, tasks_path)
+    run_comfyui_decode_tasks(tasks_payload, runtime, get_platform_config(exphub_root=runtime.exphub_root))
 
     decode_report = read_json_dict(runtime.paths.decode_report_path)
     if not decode_report:
