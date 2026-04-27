@@ -47,9 +47,11 @@ import re
 import shutil
 import sys
 import time
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from queue import Queue
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -114,6 +116,24 @@ class DecodeResult:
     history_path: str | None = None
     cleanup_paths: list[str] | None = None
     error: str | None = None
+    instance_name: str = ""
+    instance_base_url: str = ""
+    instance_output_root: str = ""
+    generate_sec: float | None = None
+
+
+@dataclass(frozen=True)
+class ComfyUIInstance:
+    name: str
+    base_url: str
+    output_root: Path
+
+    def as_report(self) -> dict[str, str]:
+        return {
+            "name": str(self.name),
+            "base_url": str(self.base_url),
+            "output_root": str(self.output_root),
+        }
 
 
 class ComfyUIDecodeError(RuntimeError):
@@ -153,6 +173,19 @@ def _task_cfg(task: dict[str, Any]) -> float:
     return float(value)
 
 
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "y", "on"):
+        return True
+    if text in ("0", "false", "no", "n", "off"):
+        return False
+    raise ValueError("invalid boolean value: {!r}".format(value))
+
+
 def _platform_path_from_root(exphub_root: str | Path | None = None) -> Path:
     if exphub_root:
         return Path(exphub_root).resolve() / "config" / "platform.yaml"
@@ -178,10 +211,44 @@ def resolve_comfyui_platform_config(
             raise RuntimeError("Missing services.comfyui.{} in config/platform.yaml".format(key))
         return value
 
+    raw_instances = comfyui.get("instances")
+    instances: list[ComfyUIInstance] = []
+    if raw_instances is not None:
+        if not isinstance(raw_instances, list) or not raw_instances:
+            raise RuntimeError("services.comfyui.instances must be a non-empty list when configured")
+        for idx, raw_item in enumerate(raw_instances):
+            if not isinstance(raw_item, dict):
+                raise RuntimeError("services.comfyui.instances[{}] must be a mapping".format(idx))
+
+            def require_instance(key: str) -> Any:
+                value = raw_item.get(key)
+                if value is None or str(value).strip() == "":
+                    raise RuntimeError("Missing services.comfyui.instances[{}].{}".format(idx, key))
+                return value
+
+            instances.append(
+                ComfyUIInstance(
+                    name=str(require_instance("name")).strip(),
+                    base_url=str(require_instance("base_url")).strip().rstrip("/"),
+                    output_root=Path(str(require_instance("output_root"))).expanduser().resolve(),
+                )
+            )
+    else:
+        instances.append(
+            ComfyUIInstance(
+                name="single",
+                base_url=str(require("base_url")).strip().rstrip("/"),
+                output_root=Path(str(require("output_root"))).expanduser().resolve(),
+            )
+        )
+
     return {
-        "base_url": str(require("base_url")).strip(),
+        "base_url": str(instances[0].base_url),
         "workflow_json": Path(str(require("workflow_json"))).expanduser().resolve(),
-        "output_root": Path(str(require("output_root"))).expanduser().resolve(),
+        "output_root": Path(instances[0].output_root),
+        "parallel": _as_bool(comfyui.get("parallel"), False),
+        "schedule": str(comfyui.get("schedule", "longest_first") or "longest_first").strip(),
+        "instances": instances,
         "timeout_sec": int(comfyui.get("timeout_sec", 1800) or 1800),
         "poll_interval_sec": float(comfyui.get("poll_interval_sec", 2.0) or 2.0),
         "platform_config": _platform_path_from_root(exphub_root).resolve(),
@@ -309,6 +376,7 @@ def _write_comfyui_params(
         "num_inference_steps": int(steps),
         "guidance_scale": float(cfg),
         "seed": int(result.actual_seed),
+        "actual_seed": int(result.actual_seed),
         "prompt": str(task["prompt"]),
         "negative_prompt": str(task.get("negative_prompt", "") or ""),
         "prompt_source": str(task.get("prompt_source", "prompts.assembled_prompt") or "prompts.assembled_prompt"),
@@ -318,6 +386,10 @@ def _write_comfyui_params(
         "frames_dir": "frames",
         "frame_ext": "png",
         "comfyui_prompt_id": str(result.prompt_id),
+        "instance_name": str(result.instance_name),
+        "instance_base_url": str(result.instance_base_url),
+        "instance_output_root": str(result.instance_output_root),
+        "generate_sec": result.generate_sec,
     }
     write_json_atomic(run_root / "params.json", params, indent=2)
     return params
@@ -333,6 +405,7 @@ class ComfyUIWanInpClient:
         timeout_sec: int = 1800,
         poll_interval_sec: float = 2.0,
         platform_config: Path | None = None,
+        instance_name: str = "single",
     ) -> None:
         self.comfy_url = comfy_url.rstrip("/")
         self.workflow_json = workflow_json
@@ -341,6 +414,7 @@ class ComfyUIWanInpClient:
         self.timeout_sec = timeout_sec
         self.poll_interval_sec = poll_interval_sec
         self.platform_config = platform_config
+        self.instance_name = str(instance_name or "single")
 
         if not self.workflow_json.exists():
             raise FileNotFoundError(f"workflow json not found: {self.workflow_json}")
@@ -473,6 +547,7 @@ class ComfyUIWanInpClient:
         status = "ok"
         error = None
         prompt_id = ""
+        generate_started = time.time()
         actual_seed = self.resolve_seed(req.seed)
         if int(req.seed) != actual_seed:
             req = DecodeRequest(
@@ -536,6 +611,10 @@ class ComfyUIWanInpClient:
                 history_path=str(history_path),
                 cleanup_paths=cleanup_paths,
                 error=error,
+                instance_name=str(self.instance_name),
+                instance_base_url=str(self.comfy_url),
+                instance_output_root=str(self.comfy_output_root),
+                generate_sec=float(time.time() - generate_started),
             )
 
         except Exception as exc:
@@ -555,6 +634,10 @@ class ComfyUIWanInpClient:
                 history_path=None,
                 cleanup_paths=cleanup_paths,
                 error=error,
+                instance_name=str(self.instance_name),
+                instance_base_url=str(self.comfy_url),
+                instance_output_root=str(self.comfy_output_root),
+                generate_sec=float(time.time() - generate_started),
             )
 
         meta = {
@@ -562,6 +645,10 @@ class ComfyUIWanInpClient:
             "segment_id": req.segment_id,
             "prompt_id": prompt_id,
             "actual_seed": actual_seed,
+            "instance_name": str(result.instance_name),
+            "instance_base_url": str(result.instance_base_url),
+            "instance_output_root": str(result.instance_output_root),
+            "generate_sec": result.generate_sec,
             "workflow_json": str(self.workflow_json),
             "platform_config": str(self.platform_config) if self.platform_config else None,
             "comfy_url": self.comfy_url,
@@ -584,7 +671,15 @@ class ComfyUIWanInpClient:
         write_json_atomic(Path(result.meta_path), meta, indent=2)
 
         if result.status != "ok":
-            raise ComfyUIDecodeError(error or "ComfyUI decode failed")
+            raise ComfyUIDecodeError(
+                "ComfyUI decode failed: unit_id={} instance_name={} base_url={} prompt_id={} error={}".format(
+                    req.segment_id,
+                    self.instance_name,
+                    self.comfy_url,
+                    prompt_id or "",
+                    error or "unknown",
+                )
+            )
 
         return result
 
@@ -772,21 +867,36 @@ def _first_config_value(cli_value: Any, cfg: dict[str, Any], key: str, label: st
 
 def resolve_runtime_config(args: argparse.Namespace) -> dict[str, Any]:
     comfyui_cfg, platform_path = _load_comfyui_platform_config(args.platform_config)
+    resolved_cfg = {}
+    default_instance = None
+    if comfyui_cfg:
+        resolved_cfg = resolve_comfyui_platform_config({"services": {"comfyui": comfyui_cfg}})
+        instances = list(resolved_cfg.get("instances") or [])
+        default_instance = instances[0] if instances else None
     return {
         "workflow_json": Path(
-            _first_config_value(args.workflow_json, comfyui_cfg, "workflow_json", "--workflow-json")
+            args.workflow_json
+            or resolved_cfg.get("workflow_json")
+            or _first_config_value(None, comfyui_cfg, "workflow_json", "--workflow-json")
         ).expanduser().resolve(),
         "comfy_url": str(
-            _first_config_value(args.comfy_url, comfyui_cfg, "base_url", "--comfy-url")
+            args.comfy_url
+            or comfyui_cfg.get("base_url")
+            or (default_instance.base_url if default_instance else None)
+            or _first_config_value(None, comfyui_cfg, "base_url", "--comfy-url")
         ).strip(),
         "comfy_output_root": Path(
-            _first_config_value(args.comfy_output_root, comfyui_cfg, "output_root", "--comfy-output-root")
+            args.comfy_output_root
+            or comfyui_cfg.get("output_root")
+            or (default_instance.output_root if default_instance else None)
+            or _first_config_value(None, comfyui_cfg, "output_root", "--comfy-output-root")
         ).expanduser().resolve(),
         "timeout_sec": int(_first_config_value(args.timeout_sec, comfyui_cfg, "timeout_sec", "--timeout-sec", 1800)),
         "poll_interval_sec": float(
             _first_config_value(args.poll_interval_sec, comfyui_cfg, "poll_interval_sec", "--poll-interval-sec", 2.0)
         ),
         "platform_config": platform_path,
+        "instance_name": default_instance.name if default_instance else "single",
     }
 
 
@@ -801,6 +911,7 @@ def run_comfyui_decode(
     timeout_sec: int | None = None,
     poll_interval_sec: float | None = None,
     platform_config: str | Path | None = None,
+    instance_name: str = "single",
 ) -> DecodeResult:
     if platform_cfg is not None:
         resolved = resolve_comfyui_platform_config(platform_cfg)
@@ -822,83 +933,106 @@ def run_comfyui_decode(
         timeout_sec=int(timeout_sec if timeout_sec is not None else 1800),
         poll_interval_sec=float(poll_interval_sec if poll_interval_sec is not None else 2.0),
         platform_config=Path(platform_config).resolve() if platform_config else None,
+        instance_name=str(instance_name or "single"),
     )
     return client.run(req)
 
 
-def run_comfyui_decode_tasks(
-    tasks_payload: dict[str, Any],
-    runtime: Any,
-    platform_cfg: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    cfg = resolve_comfyui_platform_config(platform_cfg, exphub_root=runtime.exphub_root)
-    tasks = list(tasks_payload.get("tasks") or [])
-    execution_segments = _execution_segments(tasks_payload, COMFYUI_BACKEND)
-    if not execution_segments:
-        raise RuntimeError("generation task builder produced zero executable tasks")
+def _check_comfyui_instance_health(instance: ComfyUIInstance) -> None:
+    url = "{}/queue".format(str(instance.base_url).rstrip("/"))
+    try:
+        resp = requests.get(url, timeout=20)
+        resp.raise_for_status()
+    except Exception as exc:
+        raise ComfyUIDecodeError(
+            "ComfyUI health check failed: instance_name={} base_url={} endpoint={} error={}".format(
+                instance.name,
+                instance.base_url,
+                url,
+                exc,
+            )
+        ) from exc
 
-    seed_base = int(getattr(runtime.args, "seed_base", -1))
-    seed_policy = "random_per_unit" if seed_base == -1 else "fixed"
-    if seed_base <= 0 and seed_base != -1:
-        raise ValueError("seed must be a positive integer or -1, got: {}".format(seed_base))
+
+def _check_comfyui_instances_health(instances: list[ComfyUIInstance]) -> None:
+    for instance in instances:
+        _check_comfyui_instance_health(instance)
+
+
+def _shutdown_executor(executor: ThreadPoolExecutor, *, wait_for_running: bool) -> None:
+    try:
+        executor.shutdown(wait=wait_for_running, cancel_futures=True)
+    except TypeError:
+        executor.shutdown(wait=wait_for_running)
+
+
+def _task_schedule_length(task: dict[str, Any]) -> int:
+    value = task.get("video_length_run")
+    if value is None or str(value).strip() == "":
+        value = task.get("length")
+    return int(value)
+
+
+def _run_comfyui_unit(
+    *,
+    task: dict[str, Any],
+    task_index: int,
+    total_tasks: int,
+    runtime: Any,
+    cfg: dict[str, Any],
+    instance: ComfyUIInstance,
+    seed_policy: str,
+    seed_base: int,
+) -> dict[str, Any]:
+    run_dir = Path(task["output_dir"]).resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+    width, height = _image_size(task["start_frame_path"])
+    steps = _task_steps(task)
+    cfg_scale = _task_cfg(task)
+    requested_seed = -1 if seed_policy == "random_per_unit" else seed_base
 
     log_prog(
-        "decode generate: backend={} tasks={} fps={} seed_policy={}".format(
-            COMFYUI_BACKEND,
-            len(execution_segments),
-            int(float(runtime.fps_arg)),
-            seed_policy,
+        "decode generate comfyui: unit={}/{} id={} frames={} seed_request={} instance={} base_url={}".format(
+            task_index + 1,
+            total_tasks,
+            task["unit_id"],
+            int(task["length"]),
+            int(requested_seed),
+            instance.name,
+            instance.base_url,
         )
     )
-    unit_reports: list[dict[str, Any]] = []
-    started = time.time()
 
-    for idx, task in enumerate(tasks):
-        run_dir = Path(task["output_dir"]).resolve()
-        run_dir.mkdir(parents=True, exist_ok=True)
-        width, height = _image_size(task["start_frame_path"])
-        steps = _task_steps(task)
-        cfg_scale = _task_cfg(task)
-        requested_seed = -1 if seed_policy == "random_per_unit" else seed_base
+    req = DecodeRequest(
+        segment_id=str(task["unit_id"]),
+        start_frame=str(task["start_frame_path"]),
+        end_frame=str(task["end_frame_path"]),
+        positive_prompt=str(task["prompt"]),
+        negative_prompt=str(task.get("negative_prompt", "") or ""),
+        width=int(width),
+        height=int(height),
+        length=int(task["length"]),
+        fps=int(float(runtime.fps_arg)),
+        seed=int(requested_seed),
+        steps=int(steps),
+        cfg=float(cfg_scale),
+    )
 
-        log_prog(
-            "decode generate comfyui: unit={}/{} id={} frames={} seed_request={}".format(
-                idx + 1,
-                len(tasks),
-                task["unit_id"],
-                int(task["length"]),
-                int(requested_seed),
-            )
-        )
-
-        req = DecodeRequest(
-            segment_id=str(task["unit_id"]),
-            start_frame=str(task["start_frame_path"]),
-            end_frame=str(task["end_frame_path"]),
-            positive_prompt=str(task["prompt"]),
-            negative_prompt=str(task.get("negative_prompt", "") or ""),
-            width=int(width),
-            height=int(height),
-            length=int(task["length"]),
-            fps=int(float(runtime.fps_arg)),
-            seed=int(requested_seed),
-            steps=int(steps),
-            cfg=float(cfg_scale),
-        )
+    try:
         result = run_comfyui_decode(
             req,
-            comfy_url=cfg["base_url"],
+            comfy_url=instance.base_url,
             workflow_json=cfg["workflow_json"],
-            comfy_output_root=cfg["output_root"],
+            comfy_output_root=instance.output_root,
             exp_output_dir=run_dir,
             timeout_sec=int(cfg["timeout_sec"]),
             poll_interval_sec=float(cfg["poll_interval_sec"]),
             platform_config=cfg["platform_config"],
+            instance_name=instance.name,
         )
         if int(result.output_frames) != int(task["length"]):
             raise RuntimeError(
-                "ComfyUI output frame count mismatch for {}: expected={} actual={}".format(
-                    task["unit_id"],
+                "ComfyUI output frame count mismatch: expected={} actual={}".format(
                     int(task["length"]),
                     int(result.output_frames),
                 )
@@ -916,27 +1050,160 @@ def run_comfyui_decode_tasks(
             backend_name=COMFYUI_BACKEND,
         )
         actual = _validate_run_output(task, run_dir)
-        unit_reports.append(
-            {
-                "unit_id": str(task["unit_id"]),
-                "status": "success",
-                "error": "",
-                "start_idx": int(task["start_idx"]),
-                "end_idx": int(task["end_idx"]),
-                "length": int(task["length"]),
-                "seed": int(result.actual_seed),
-                "requested_seed": int(requested_seed),
-                "seed_policy": str(seed_policy),
-                "output_dir": _relative_path(runtime.paths.exp_dir, run_dir),
-                "frames_dir": _relative_path(runtime.paths.exp_dir, actual["frames_dir"]),
-                "params_path": _relative_path(runtime.paths.exp_dir, actual["params_path"]),
-                "decode_meta_path": _relative_path(runtime.paths.exp_dir, run_dir / "decode_meta.json"),
-                "num_frames": int(actual["num_frames"]),
-                "prompt_hash8": str(task.get("prompt_hash8", "") or ""),
-            }
+        return {
+            "unit_id": str(task["unit_id"]),
+            "status": "success",
+            "error": "",
+            "start_idx": int(task["start_idx"]),
+            "end_idx": int(task["end_idx"]),
+            "length": int(task["length"]),
+            "seed": int(result.actual_seed),
+            "actual_seed": int(result.actual_seed),
+            "requested_seed": int(requested_seed),
+            "seed_policy": str(seed_policy),
+            "instance_name": str(result.instance_name),
+            "instance_base_url": str(result.instance_base_url),
+            "instance_output_root": str(result.instance_output_root),
+            "generate_sec": result.generate_sec,
+            "frame_count": int(actual["num_frames"]),
+            "output_dir": _relative_path(runtime.paths.exp_dir, run_dir),
+            "frames_dir": _relative_path(runtime.paths.exp_dir, actual["frames_dir"]),
+            "params_path": _relative_path(runtime.paths.exp_dir, actual["params_path"]),
+            "decode_meta_path": _relative_path(runtime.paths.exp_dir, run_dir / "decode_meta.json"),
+            "num_frames": int(actual["num_frames"]),
+            "prompt_hash8": str(task.get("prompt_hash8", "") or ""),
+        }
+    except Exception as exc:
+        raise ComfyUIDecodeError(
+            "ComfyUI unit failed: unit_id={} instance_name={} base_url={} error={}".format(
+                task.get("unit_id", ""),
+                instance.name,
+                instance.base_url,
+                exc,
+            )
+        ) from exc
+
+
+def run_comfyui_decode_tasks(
+    tasks_payload: dict[str, Any],
+    runtime: Any,
+    platform_cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cfg = resolve_comfyui_platform_config(platform_cfg, exphub_root=runtime.exphub_root)
+    tasks = list(tasks_payload.get("tasks") or [])
+    execution_segments = _execution_segments(tasks_payload, COMFYUI_BACKEND)
+    if not execution_segments:
+        raise RuntimeError("generation task builder produced zero executable tasks")
+    instances = list(cfg.get("instances") or [])
+    if not instances:
+        raise RuntimeError("ComfyUI platform config resolved zero instances")
+    parallel_requested = bool(cfg.get("parallel", False))
+    parallel_active = bool(parallel_requested and len(instances) > 1)
+    configured_schedule = str(cfg.get("schedule") or "longest_first").strip().lower()
+    schedule = "longest_first" if parallel_active else "serial"
+    if parallel_active and configured_schedule != "longest_first":
+        raise RuntimeError(
+            "unsupported services.comfyui.schedule for parallel decode: {}".format(cfg.get("schedule"))
         )
 
+    seed_base = int(getattr(runtime.args, "seed_base", -1))
+    seed_policy = "random_per_unit" if seed_base == -1 else "fixed"
+    if seed_base <= 0 and seed_base != -1:
+        raise ValueError("seed must be a positive integer or -1, got: {}".format(seed_base))
+
+    _check_comfyui_instances_health(instances)
+
+    log_prog(
+        "decode generate: backend={} tasks={} fps={} seed_policy={} parallel={} instances={} schedule={}".format(
+            COMFYUI_BACKEND,
+            len(execution_segments),
+            int(float(runtime.fps_arg)),
+            seed_policy,
+            str(parallel_active).lower(),
+            len(instances),
+            schedule,
+        )
+    )
+    unit_reports_by_index: list[dict[str, Any] | None] = [None] * len(tasks)
+    started = time.time()
+
+    if parallel_active:
+        idle_instances: Queue[ComfyUIInstance] = Queue()
+        for instance in instances:
+            idle_instances.put(instance)
+
+        def run_scheduled(item: tuple[int, dict[str, Any]]) -> tuple[int, dict[str, Any]]:
+            idx, task = item
+            instance = idle_instances.get()
+            try:
+                report_item = _run_comfyui_unit(
+                    task=task,
+                    task_index=idx,
+                    total_tasks=len(tasks),
+                    runtime=runtime,
+                    cfg=cfg,
+                    instance=instance,
+                    seed_policy=seed_policy,
+                    seed_base=seed_base,
+                )
+                return idx, report_item
+            finally:
+                idle_instances.put(instance)
+
+        scheduled = sorted(
+            list(enumerate(tasks)),
+            key=lambda item: (-_task_schedule_length(item[1]), int(item[0])),
+        )
+        executor = ThreadPoolExecutor(max_workers=len(instances))
+        futures = [executor.submit(run_scheduled, item) for item in scheduled]
+        failed = False
+        try:
+            pending = set(futures)
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_EXCEPTION)
+                for future in done:
+                    exc = future.exception()
+                    if exc is not None:
+                        for pending_future in pending:
+                            pending_future.cancel()
+                        failed = True
+                        _shutdown_executor(executor, wait_for_running=False)
+                        raise exc
+                    idx, report_item = future.result()
+                    unit_reports_by_index[idx] = report_item
+        finally:
+            if not failed:
+                _shutdown_executor(executor, wait_for_running=True)
+    else:
+        instance = instances[0]
+        for idx, task in enumerate(tasks):
+            unit_reports_by_index[idx] = _run_comfyui_unit(
+                task=task,
+                task_index=idx,
+                total_tasks=len(tasks),
+                runtime=runtime,
+                cfg=cfg,
+                instance=instance,
+                seed_policy=seed_policy,
+                seed_base=seed_base,
+            )
+
+    missing = [idx for idx, item in enumerate(unit_reports_by_index) if item is None]
+    if missing:
+        raise RuntimeError("ComfyUI decode missing unit reports for task indexes: {}".format(missing))
+    unit_reports = [dict(item) for item in unit_reports_by_index if item is not None]
     elapsed = float(time.time() - started)
+    sum_unit_generate_sec = sum(
+        float(item["generate_sec"])
+        for item in unit_reports
+        if item.get("generate_sec") is not None
+    )
+    parallel_speedup = (
+        float(sum_unit_generate_sec) / float(elapsed)
+        if elapsed > 0 and sum_unit_generate_sec > 0
+        else None
+    )
+    instances_report = [instance.as_report() for instance in instances]
     report = {
         "schema": "decode_report.v1",
         "stage": "decode",
@@ -963,7 +1230,21 @@ def run_comfyui_decode_tasks(
             "seed_policy": str(seed_policy),
             "requested_seed": int(seed_base),
             "total_runtime_sec": float(elapsed),
+            "wall_generate_sec": float(elapsed),
+            "sum_unit_generate_sec": float(sum_unit_generate_sec),
+            "parallel_speedup": parallel_speedup,
+            "parallel": bool(parallel_active),
+            "schedule": str(schedule),
+            "instance_count": int(len(instances)),
+            "instances": instances_report,
         },
+        "parallel": bool(parallel_active),
+        "schedule": str(schedule),
+        "instance_count": int(len(instances)),
+        "instances": instances_report,
+        "wall_generate_sec": float(elapsed),
+        "sum_unit_generate_sec": float(sum_unit_generate_sec),
+        "parallel_speedup": parallel_speedup,
         "seed_policy": str(seed_policy),
         "requested_seed": int(seed_base),
         "num_tasks": int(len(unit_reports)),
@@ -1012,6 +1293,7 @@ def main() -> int:
         timeout_sec=runtime_cfg["timeout_sec"],
         poll_interval_sec=runtime_cfg["poll_interval_sec"],
         platform_config=runtime_cfg["platform_config"],
+        instance_name=runtime_cfg["instance_name"],
     )
 
     result = client.run(req)
