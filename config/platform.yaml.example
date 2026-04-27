@@ -12,11 +12,8 @@ environments:
       python: "/path/to/segmentclip/bin/python"
       conda: "segmentclip"
     prompt:
-      python: "/path/to/vlm_prompt/bin/python"
-      conda: "vlm_prompt"
-    prompt_smol:
-      python: "/path/to/prompt_smol/bin/python"
-      conda: "prompt_smol"
+      python: "/path/to/blip2/bin/python"
+      conda: "blip2"
     slam:
       python: "/path/to/droid/bin/python"
       conda: "droid"

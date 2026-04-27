@@ -475,9 +475,20 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--droid_weights", default=_def_droid_w)
 
     ap.add_argument(
-        "--prompt_model_dir",
-        default="",
-        help="override prompt scene-encoding model dir or model id",
+        "--prompt-python",
+        default=os.environ.get("EXPHUB_PROMPT_PYTHON", "/home/hx/anaconda3/envs/blip2/bin/python"),
+        help="python executable for the BLIP-2 prompt caption backend",
+    )
+    ap.add_argument(
+        "--prompt-backend",
+        default="blip2",
+        choices=["blip2"],
+        help="prompt semantic caption backend; pass1 supports only blip2",
+    )
+    ap.add_argument(
+        "--prompt-blip2-model",
+        default=os.environ.get("EXPHUB_BLIP2_MODEL", "Salesforce/blip2-opt-2.7b"),
+        help="BLIP-2 Hugging Face repo id or local model path",
     )
 
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
@@ -504,6 +515,18 @@ def main(argv: Optional[List[str]] = None) -> None:
         _die("--train_clip_num_frames must be > 0")
     if int(args.train_clip_stride) <= 0:
         _die("--train_clip_stride must be > 0")
+    prompt_python = str(args.prompt_python or "").strip()
+    if not prompt_python:
+        _die("--prompt-python is required for BLIP-2 prompt captions")
+    if os.path.isabs(prompt_python) or os.sep in prompt_python:
+        if not (os.path.isfile(os.path.expanduser(prompt_python)) and os.access(os.path.expanduser(prompt_python), os.X_OK)):
+            _die(
+                "--prompt-python not found or not executable: {}. Create the blip2 conda environment or pass --prompt-python.".format(
+                    prompt_python
+                )
+            )
+    if str(args.prompt_backend or "").strip().lower() != "blip2":
+        _die("--prompt-backend must be blip2")
 
     args.mode = str(args.mode or "").strip().lower()
     args.step = str(args.step or "").strip().lower()

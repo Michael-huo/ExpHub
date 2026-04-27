@@ -266,9 +266,9 @@ class TrainExportSession:
             prompt_item = prompt_map.get(unit_id)
             if not prompt_item:
                 raise RuntimeError("prompt missing for generation unit: sequence={} unit_id={}".format(sequence, unit_id))
-            prompt = str(prompt_item.get("assembled_prompt", "") or "")
+            prompt = str(prompt_item.get("prompt_positive", "") or "")
             if not prompt:
-                raise RuntimeError("assembled_prompt is empty: sequence={} unit_id={}".format(sequence, unit_id))
+                raise RuntimeError("prompt_positive is empty: sequence={} unit_id={}".format(sequence, unit_id))
 
             start_idx = int(unit.get("start_idx"))
             end_idx = int(unit.get("end_idx"))

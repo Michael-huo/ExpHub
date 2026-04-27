@@ -47,7 +47,8 @@ def _build_encode_result(motion_segments, semantic_anchors, generation_units, pr
         "num_prompt_units": int(len(prompt_units)),
         "motion_labels": _motion_label_counts(motion_segments),
         "unit_lengths": [int(item.get("length", item.get("duration_frames", 0)) or 0) for item in units],
-        "prompt_mode": "base+motion+semantic",
+        "prompt_schema": "prompts.v2",
+        "prompt_source": "prompts.prompt_positive",
         "artifacts": {
             "motion_segments": _artifact_rel(paths, "encode_motion_segments_path"),
             "semantic_anchors": _artifact_rel(paths, "encode_semantic_anchors_path"),

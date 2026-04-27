@@ -126,8 +126,11 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         motion_segments=motion_segments,
         semantic_anchors=semantic_anchors,
         frames_dir=paths.prepare_frames_dir,
-        prompt_model_dir=str(runtime.args.prompt_model_dir or ""),
+        prompt_python=str(runtime.args.prompt_python or ""),
+        prompt_backend=str(runtime.args.prompt_backend or "blip2"),
+        prompt_blip2_model=str(runtime.args.prompt_blip2_model or ""),
         out_path=prompts_path,
+        exphub_root=runtime.exphub_root,
     )
 
     log_info("encode pass1 result_writer start")
