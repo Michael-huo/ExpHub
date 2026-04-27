@@ -58,7 +58,7 @@ def _train_sequence_encode_paths(runtime, sequence):
     )
 
 
-def _semantic_anchor_cmd(paths, motion_segments_path, semantic_anchors_path):
+def _semantic_anchor_cmd(paths, motion_segments_path, semantic_anchors_path, prompt_python, prompt_blip2_model):
     return [
         "-m",
         "exphub.encode.semantic_anchor",
@@ -71,6 +71,10 @@ def _semantic_anchor_cmd(paths, motion_segments_path, semantic_anchors_path):
         str(paths.prepare_frames_dir),
         "--out_path",
         str(semantic_anchors_path),
+        "--prompt_python",
+        str(prompt_python or ""),
+        "--prompt_blip2_model",
+        str(prompt_blip2_model or ""),
     ]
 
 
@@ -102,7 +106,13 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
 
     log_info("encode pass1 semantic_anchor start backend=semantic_openclip")
     runtime.step_runner.run_env_python(
-        _semantic_anchor_cmd(paths, motion_segments_path, semantic_anchors_path),
+        _semantic_anchor_cmd(
+            paths,
+            motion_segments_path,
+            semantic_anchors_path,
+            prompt_python=str(runtime.args.prompt_python or ""),
+            prompt_blip2_model=str(runtime.args.prompt_blip2_model or ""),
+        ),
         phase_name="semantic_openclip",
         log_name=log_name,
         cwd=runtime.exphub_root,

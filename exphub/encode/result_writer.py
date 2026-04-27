@@ -24,6 +24,7 @@ def _artifact_rel(paths, attr_name):
             "encode_semantic_anchors_path": "encode/semantic_anchors.json",
             "encode_generation_units_path": "encode/generation_units.json",
             "encode_prompts_path": "encode/prompts.json",
+            "encode_result_path": "encode/encode_result.json",
             "encode_overview_path": "encode/encode_overview.png",
         }
         return defaults.get(str(attr_name), str(attr_name))
@@ -38,22 +39,27 @@ def _artifact_rel(paths, attr_name):
 def _build_encode_result(motion_segments, semantic_anchors, generation_units, prompts, paths=None):
     units = list(_as_dict(generation_units).get("units") or [])
     prompt_units = list(_as_dict(prompts).get("units") or [])
+    semantic_summary = _as_dict(_as_dict(semantic_anchors).get("summary"))
     return {
         "version": 1,
         "source": "encode.result.v1",
         "num_motion_segments": int(len(list(_as_dict(motion_segments).get("segments") or []))),
         "num_semantic_anchor_groups": int(len(list(_as_dict(semantic_anchors).get("segments") or []))),
+        "num_semantic_states": int(semantic_summary.get("semantic_state_count", 0) or 0),
+        "blip2_caption_count": int(semantic_summary.get("blip2_caption_count", 0) or 0),
         "num_generation_units": int(len(units)),
         "num_prompt_units": int(len(prompt_units)),
         "motion_labels": _motion_label_counts(motion_segments),
         "unit_lengths": [int(item.get("length", item.get("duration_frames", 0)) or 0) for item in units],
         "prompt_schema": "prompts.v2",
         "prompt_source": "prompts.prompt_positive",
+        "semantic_anchor_source": str(_as_dict(semantic_anchors).get("source", "") or ""),
         "artifacts": {
             "motion_segments": _artifact_rel(paths, "encode_motion_segments_path"),
             "semantic_anchors": _artifact_rel(paths, "encode_semantic_anchors_path"),
             "generation_units": _artifact_rel(paths, "encode_generation_units_path"),
             "prompts": _artifact_rel(paths, "encode_prompts_path"),
+            "encode_result": _artifact_rel(paths, "encode_result_path"),
             "overview": _artifact_rel(paths, "encode_overview_path"),
         },
     }
@@ -87,16 +93,21 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
     ax_motion.set_ylabel("Motion")
     ax_motion.set_title("Motion segmentation")
 
-    gap_rows = list(_as_dict(semantic_anchors).get("gap_rows") or [])
+    gap_rows = list(_as_dict(semantic_anchors).get("similarity_rows") or _as_dict(semantic_anchors).get("gap_rows") or [])
     if gap_rows:
         xs = [int(item.get("frame_idx", 0) or 0) for item in gap_rows]
-        ys = [float(item.get("score", 0.0) or 0.0) for item in gap_rows]
-        ax_semantic.plot(xs, ys, color="#444444", linewidth=1.2, label="semantic gap")
-    reason_colors = {"segment_boundary": "#333333", "semantic_gain": "#e377c2", "duration_fallback": "#ff7f0e"}
-    reason_markers = {"segment_boundary": "|", "semantic_gain": "o", "duration_fallback": "s"}
+        ys = [float(item.get("similarity", item.get("score", 0.0)) or 0.0) for item in gap_rows]
+        ax_semantic.plot(xs, ys, color="#444444", linewidth=1.2, label="text-image similarity")
+    reason_colors = {
+        "segment_start": "#2ca02c",
+        "segment_boundary": "#333333",
+        "semantic_gain": "#e377c2",
+        "duration_fallback": "#ff7f0e",
+    }
+    reason_markers = {"segment_start": "^", "segment_boundary": "|", "semantic_gain": "o", "duration_fallback": "s"}
     seen_reasons = set()
     for group in list(_as_dict(semantic_anchors).get("segments") or []):
-        for item in list(_as_dict(group).get("anchor_items") or []):
+        for item in list(_as_dict(group).get("anchors") or _as_dict(group).get("anchor_items") or []):
             idx = int(item.get("frame_idx", 0) or 0)
             reason = str(item.get("reason", "") or "segment_boundary")
             score = float(item.get("score", 0.0) or 0.0)
