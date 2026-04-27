@@ -141,9 +141,11 @@ class PipelineRuntime:
                 "seed_base": self.args.seed_base,
                 "gpus": self.args.gpus,
                 "planner": "generation_units",
-                "prompt_strategy": "prompts",
+                "prompt_strategy": "four_part_blip2_semantic_v1",
+                "prompt_backend": self.args.prompt_backend,
+                "prompt_python": self.args.prompt_python,
+                "prompt_blip2_model": self.args.prompt_blip2_model,
                 "workflow": "prepare -> encode" if train_mode else "prepare -> encode -> decode -> eval",
-                "prompt_model_dir": self.args.prompt_model_dir,
                 "decode_backend": COMFYUI_BACKEND,
                 "droid_seq": self.args.droid_seq,
                 "viz_enable": self.viz_enable,
@@ -247,7 +249,7 @@ def _run_step(runtime: PipelineRuntime, step_name: str, service_module):
 def _doctor(runtime: PipelineRuntime) -> None:
     log_info("STEP doctor: begin")
     has_critical_missing = False
-    phase_names = ["segment", "prompt_smol", "slam"]
+    phase_names = ["segment", "semantic_openclip", "slam"]
     for phase_name in phase_names:
         python_bin = get_phase_python_config(phase_name)
         exists = False

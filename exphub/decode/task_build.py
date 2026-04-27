@@ -195,10 +195,10 @@ def build_generation_tasks_from_paths(
         prompt_item = prompt_map.get(unit_id)
         if not prompt_item:
             raise RuntimeError("missing prompt for generation unit {}".format(unit_id))
-        prompt = str(prompt_item.get("assembled_prompt", "") or "").strip()
+        prompt = str(prompt_item.get("prompt_positive", "") or "").strip()
         if not prompt:
-            raise RuntimeError("prompt for generation unit {} missing assembled_prompt".format(unit_id))
-        negative_prompt = str(prompt_item.get("negative_prompt", prompts_payload.get("negative_prompt", "")) or "")
+            raise RuntimeError("prompt for generation unit {} missing prompt_positive".format(unit_id))
+        negative_prompt = str(prompt_item.get("prompt_negative", prompts_payload.get("prompt_negative", "")) or "")
 
         start_frame_path = _frame_path(frames_dir, start_idx)
         end_frame_path = _frame_path(frames_dir, end_idx)
@@ -218,8 +218,7 @@ def build_generation_tasks_from_paths(
             "end_abs_time_sec": float(end_abs_time),
             "prompt": prompt,
             "negative_prompt": negative_prompt,
-            "base_prompt": str(prompt_item.get("base_prompt", prompts_payload.get("base_prompt", "")) or ""),
-            "prompt_source": "prompts.assembled_prompt",
+            "prompt_source": "prompts.prompt_positive",
             "prompt_hash8": _sha1_hex(prompt + "\n||NEG||\n" + negative_prompt)[:8],
             "motion_label": str(unit.get("motion_label", prompt_item.get("motion_label", "")) or ""),
             "scene_label": str(unit.get("scene_label", "") or ""),
@@ -249,7 +248,7 @@ def build_generation_tasks_from_paths(
         "schema": "generation_tasks.v1",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "planner": "generation_units",
-        "prompt_strategy": "prompts",
+        "prompt_strategy": "four_part_blip2_semantic_v1",
         "source_inputs": source_inputs,
         "timestamp_source": str(timestamp_key),
         "prepare_num_frames": int(prepare_num_frames),

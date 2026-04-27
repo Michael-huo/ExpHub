@@ -233,7 +233,7 @@ def merge_units(runtime, tasks_payload, decode_report):
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "inputs": {
             "planner": "generation_units",
-            "prompt_strategy": "prompts",
+            "prompt_strategy": "four_part_blip2_semantic_v1",
             "source_inputs": source_inputs,
             "decode_report": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_report_path),
             "generation_tasks": "in_memory",
