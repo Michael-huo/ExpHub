@@ -8,6 +8,8 @@ CONDA_ENV="${CONDA_ENV:-comfyui}"
 HOST="${HOST:-127.0.0.1}"
 RUN_DIR="${COMFY_ROOT}/run"
 LOG_DIR="${COMFY_ROOT}/logs"
+READY_TIMEOUT_SECONDS=90
+READY_CHECK_INTERVAL_SECONDS=2
 
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
@@ -95,9 +97,65 @@ start_all() {
   done
 
   echo
-  echo "[INFO] waiting for services..."
-  sleep 5
+  wait_ready_all
   status_all
+}
+
+wait_ready_all() {
+  local start_time
+  start_time="$SECONDS"
+  declare -A ready=()
+
+  echo "[INFO] waiting for HTTP readiness..."
+
+  while true; do
+    local all_ready=1
+
+    for item in "${INSTANCES[@]}"; do
+      IFS=":" read -r name gpu port <<< "$item"
+      local url="http://${HOST}:${port}"
+
+      if curl -fsS "${url}/queue" >/dev/null 2>&1; then
+        if [[ -z "${ready[$name]:-}" ]]; then
+          ready[$name]=1
+          echo "[READY] ${name}: ${url}"
+        fi
+      else
+        all_ready=0
+      fi
+    done
+
+    if (( all_ready )); then
+      echo "[OK] all ComfyUI instances are ready"
+      return 0
+    fi
+
+    local elapsed
+    elapsed=$((SECONDS - start_time))
+    if (( elapsed >= READY_TIMEOUT_SECONDS )); then
+      break
+    fi
+
+    local sleep_seconds="$READY_CHECK_INTERVAL_SECONDS"
+    if (( elapsed + sleep_seconds > READY_TIMEOUT_SECONDS )); then
+      sleep_seconds=$((READY_TIMEOUT_SECONDS - elapsed))
+    fi
+    sleep "$sleep_seconds"
+  done
+
+  echo "[ERROR] timeout waiting for ComfyUI instances"
+  for item in "${INSTANCES[@]}"; do
+    IFS=":" read -r name gpu port <<< "$item"
+    local url="http://${HOST}:${port}"
+
+    if ! curl -fsS "${url}/queue" >/dev/null 2>&1; then
+      echo "[ERROR] not ready: ${name}: ${url}"
+      echo "[LOG] ${name}: last 80 lines from ${LOG_DIR}/comfyui_${name}.log"
+      tail -n 80 "${LOG_DIR}/comfyui_${name}.log" || true
+    fi
+  done
+
+  return 1
 }
 
 stop_one() {
