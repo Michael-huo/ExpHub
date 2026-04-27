@@ -231,18 +231,41 @@ def _decode_generation_summary(exp_dir: Path) -> Dict[str, object]:
         generated_frames = merged_frames
 
     generate_sec = (
-        _as_float_or_none(decode_report.get("total_runtime_sec"))
+        _as_float_or_none(decode_report.get("wall_generate_sec"))
+        or _as_float_or_none(decode_report.get("total_runtime_sec"))
+        or _pick_float(decode_report, ["backend_result", "wall_generate_sec"])
         or _pick_float(decode_report, ["backend_result", "total_runtime_sec"])
     )
     avg_fps = None
     if generated_frames is not None and generate_sec is not None and float(generate_sec) > 0:
         avg_fps = float(generated_frames) / float(generate_sec)
+    parallel = decode_report.get("parallel")
+    if not isinstance(parallel, bool):
+        parallel = _get_nested(decode_report, ["backend_result", "parallel"])
+    if not isinstance(parallel, bool):
+        parallel = None
+    schedule = str(decode_report.get("schedule") or _get_nested(decode_report, ["backend_result", "schedule"]) or "").strip()
+    instance_count = (
+        _as_int_or_none(decode_report.get("instance_count"))
+        or _pick_int(decode_report, ["backend_result", "instance_count"])
+    )
 
     return {
         "backend": backend,
         "units": unit_count,
         "frames": merged_frames if merged_frames is not None else generated_frames,
         "generate_sec": generate_sec,
+        "parallel": parallel,
+        "instances": instance_count,
+        "schedule": schedule or None,
+        "sum_unit_sec": (
+            _as_float_or_none(decode_report.get("sum_unit_generate_sec"))
+            or _pick_float(decode_report, ["backend_result", "sum_unit_generate_sec"])
+        ),
+        "speedup": (
+            _as_float_or_none(decode_report.get("parallel_speedup"))
+            or _pick_float(decode_report, ["backend_result", "parallel_speedup"])
+        ),
         "avg_fps": avg_fps,
     }
 
@@ -333,9 +356,19 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     backend = str(decode_generation.get("backend") or "").strip()
     if backend:
         detail_rows.append(("decode.backend", backend))
+    if isinstance(decode_generation.get("parallel"), bool):
+        detail_rows.append(("decode.parallel", "true" if bool(decode_generation.get("parallel")) else "false"))
+    instances = _as_int_or_none(decode_generation.get("instances"))
+    if instances is not None and int(instances) > 0:
+        detail_rows.append(("decode.instances", _fmt_count(instances)))
+    schedule = str(decode_generation.get("schedule") or "").strip()
+    if schedule:
+        detail_rows.append(("decode.schedule", schedule))
     _add_row(detail_rows, "decode.units", _as_int_or_none(decode_generation.get("units")), _fmt_count)
     _add_row(detail_rows, "decode.frames", _as_int_or_none(decode_generation.get("frames")), _fmt_count)
     _add_row(detail_rows, "decode.generate_sec", _as_float_or_none(decode_generation.get("generate_sec")), _fmt_seconds)
+    _add_row(detail_rows, "decode.sum_unit_sec", _as_float_or_none(decode_generation.get("sum_unit_sec")), _fmt_seconds)
+    _add_row(detail_rows, "decode.speedup", _as_float_or_none(decode_generation.get("speedup")), lambda v: "{:.3f}x".format(float(v)))
     _add_row(detail_rows, "decode.avg_fps", _as_float_or_none(decode_generation.get("avg_fps")), lambda v: "{:.3f} fps".format(float(v)))
     if total_time > 0:
         detail_rows.append(("total", _fmt_seconds(total_time)))

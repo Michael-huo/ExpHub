@@ -26,11 +26,25 @@ repos:
 
 services:
   comfyui:
-    base_url: "http://127.0.0.1:8188"
     workflow_json: "/path/to/ExpHub/config/video_wan2_2_5B_fun_inpaint.json"
-    output_root: "/path/to/ComfyUI/output"
     timeout_sec: 1800
     poll_interval_sec: 2.0
+    parallel: true
+    schedule: "longest_first"
+    instances:
+      - name: "gpu0"
+        base_url: "http://127.0.0.1:8188"
+        output_root: "/path/to/ComfyUI/output/gpu0"
+      - name: "gpu1"
+        base_url: "http://127.0.0.1:8189"
+        output_root: "/path/to/ComfyUI/output/gpu1"
+      - name: "gpu2"
+        base_url: "http://127.0.0.1:8190"
+        output_root: "/path/to/ComfyUI/output/gpu2"
+    # Single-instance fallback: omit instances above and configure:
+    # base_url: "http://127.0.0.1:8188"
+    # output_root: "/path/to/ComfyUI/output"
+    # parallel: false
 
 models:
   qwen2_vl:
