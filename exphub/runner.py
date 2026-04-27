@@ -141,7 +141,7 @@ class PipelineRuntime:
                 "seed_base": self.args.seed_base,
                 "gpus": self.args.gpus,
                 "planner": "generation_units",
-                "prompt_strategy": "four_part_blip2_semantic_v1",
+                "prompt_strategy": "four_part_text_image_semantic_anchor_v1",
                 "prompt_backend": self.args.prompt_backend,
                 "prompt_python": self.args.prompt_python,
                 "prompt_blip2_model": self.args.prompt_blip2_model,
