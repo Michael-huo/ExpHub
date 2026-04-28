@@ -32,16 +32,6 @@ def _states_by_motion_state(semantic_anchors):
     return out
 
 
-def _semantic_events_by_motion_state(semantic_anchors):
-    out = {}
-    for raw_group in list(_as_dict(semantic_anchors).get("motion_states") or []):
-        group = _as_dict(raw_group)
-        motion_state_id = str(group.get("motion_state_id", "") or "")
-        events = [_as_dict(item) for item in list(group.get("semantic_events") or [])]
-        out[motion_state_id] = {int(item.get("frame_idx", -1)): item for item in events if item.get("frame_idx") is not None}
-    return out
-
-
 def _validate_legal(value, legal_set, label):
     if int(value) not in legal_set:
         raise RuntimeError("{} must be a legal position, got {}".format(label, int(value)))
@@ -138,7 +128,7 @@ def _semantic_cut_candidates(
 
 
 def _build_cut_points(seg_start, seg_end, legal_positions, allowed_deltas, semantic_cuts):
-    cuts = [int(seg_start)]
+    cuts = [(int(seg_start), "motion_boundary")]
     current = int(seg_start)
     while current < int(seg_end):
         allowed_next = [
@@ -150,8 +140,13 @@ def _build_cut_points(seg_start, seg_end, legal_positions, allowed_deltas, seman
         if not allowed_next:
             raise RuntimeError("cannot build legal generation unit span from {} to {}".format(current, seg_end))
         semantic_next = [idx for idx in allowed_next if int(idx) in semantic_cuts]
-        chosen = min(semantic_next) if semantic_next else max(allowed_next)
-        cuts.append(int(chosen))
+        if semantic_next:
+            chosen = min(semantic_next)
+            source = "semantic_boundary"
+        else:
+            chosen = max(allowed_next)
+            source = "motion_boundary" if int(chosen) == int(seg_end) else "unit_length_guard"
+        cuts.append((int(chosen), str(source)))
         current = int(chosen)
     return cuts
 
@@ -185,15 +180,12 @@ def _assign_state(unit_start, unit_end, states):
     return best, float(best_overlap) / float(max(1, unit_len))
 
 
-def _unit_boundary_sources(boundary_idx, motion_state_start, motion_state_end, semantic_event):
+def _unit_boundary_sources(boundary_idx, motion_state_start, motion_state_end, planned_source):
     if int(boundary_idx) in (int(motion_state_start), int(motion_state_end)):
         return ["motion_boundary"]
-    event_type = str(_as_dict(semantic_event).get("event_type", "") or "")
-    reason = str(_as_dict(semantic_event).get("reason", "") or "")
-    if event_type == "unit_length_guard" or reason == "max_unit_span_frames":
-        return ["unit_length_guard"]
-    if event_type in ("semantic_state_start", "semantic_update"):
-        return ["semantic_boundary"]
+    source = str(planned_source or "unit_boundary")
+    if source in ("semantic_boundary", "unit_length_guard", "motion_boundary"):
+        return [source]
     return ["unit_boundary"]
 
 
@@ -202,14 +194,15 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
     legal_grid = _as_dict(prepare.get("legal_grid"))
     legal_positions = [int(item) for item in list(legal_grid.get("legal_positions") or [])]
     legal_set = set(legal_positions)
-    allowed_deltas = set(int(item) for item in list(legal_grid.get("allowed_delta_indices") or []))
-    allowed_num_frames = set(int(item) for item in list(legal_grid.get("allowed_num_frames") or []))
+    raw_allowed_deltas = set(int(item) for item in list(legal_grid.get("allowed_delta_indices") or []))
+    max_unit_span_frames = int(_as_dict(_as_dict(semantic_anchors).get("policy")).get("max_unit_span_frames", 96) or 96)
+    allowed_deltas = set(delta for delta in raw_allowed_deltas if int(delta) <= int(max_unit_span_frames))
+    allowed_num_frames = set(int(delta) + 1 for delta in allowed_deltas)
     if not legal_positions or not allowed_deltas or not allowed_num_frames:
         raise RuntimeError("prepare_result legal_grid missing legal unit constraints")
 
     motion_state_by_id = _motion_state_map(motion_segments)
     states_by_motion_state = _states_by_motion_state(semantic_anchors)
-    semantic_events_by_motion_state = _semantic_events_by_motion_state(semantic_anchors)
     units = []
     diagnostics = []
     previous_end = None
@@ -245,11 +238,10 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
             diagnostics,
         )
         cut_points = _build_cut_points(motion_state_start, motion_state_end, motion_state_legal, allowed_deltas, semantic_cuts)
-        semantic_event_lookup = dict(semantic_events_by_motion_state.get(motion_state_id) or {})
-        for start_idx, end_idx in zip(cut_points[:-1], cut_points[1:]):
+        for (start_idx, _start_source), (end_idx, end_source) in zip(cut_points[:-1], cut_points[1:]):
             delta = int(end_idx) - int(start_idx)
             length = int(delta + 1)
-            if delta not in allowed_deltas or length not in allowed_num_frames:
+            if delta not in allowed_deltas or length not in allowed_num_frames or int(delta) > int(max_unit_span_frames):
                 raise RuntimeError(
                     "generation unit span is not allowed: motion_state_id={} start={} end={} delta={} length={}".format(
                         motion_state_id,
@@ -272,8 +264,7 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
                     }
                 )
             unit_id = "unit_{:04d}".format(int(len(units)))
-            end_event = _as_dict(semantic_event_lookup.get(int(end_idx)))
-            unit_boundary_sources = _unit_boundary_sources(end_idx, motion_state_start, motion_state_end, end_event)
+            unit_boundary_sources = _unit_boundary_sources(end_idx, motion_state_start, motion_state_end, end_source)
             units.append(
                 {
                     "unit_id": str(unit_id),
@@ -338,6 +329,7 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
             "unit_length_guard_count": int(
                 len([item for item in units if "unit_length_guard" in list(item.get("unit_boundary_sources") or [])])
             ),
+            "max_unit_span_frames": int(max_unit_span_frames),
             "shared_unit_boundary_count": int(max(0, len(units) - 1)),
         },
     }
