@@ -11,9 +11,6 @@ environments:
     semantic_openclip:
       python: "/path/to/segmentclip/bin/python"
       conda: "segmentclip"
-    prompt:
-      python: "/path/to/blip2/bin/python"
-      conda: "blip2"
     slam:
       python: "/path/to/droid/bin/python"
       conda: "droid"

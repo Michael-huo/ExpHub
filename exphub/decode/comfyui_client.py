@@ -1211,7 +1211,8 @@ def run_comfyui_decode_tasks(
         "run_id": str(runtime.spec.exp_name),
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "planner": "generation_units",
-        "prompt_strategy": "four_part_blip2_semantic_v1",
+        "prompt_strategy": "base_motion_fixed_prompt_v1",
+        "anchor_backend": "image_embedding_visual_anchor",
         "backend_name": COMFYUI_BACKEND,
         "backend_meta": {
             "backend": COMFYUI_BACKEND,
