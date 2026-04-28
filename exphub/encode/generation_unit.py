@@ -314,8 +314,7 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
                 raise RuntimeError("generation unit motion_state transition does not land on motion_boundary")
 
     payload = {
-        "version": 2,
-        "source": "encode.generation_unit.v2",
+        "source": "encode.generation_unit",
         "sequence_range": {
             "start_idx": int(units[0]["start_idx"]),
             "end_idx": int(units[-1]["end_idx"]),

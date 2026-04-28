@@ -164,7 +164,7 @@ def _base_metrics(config):
     )
     return {
         "version": 1,
-        "source": "eval.trajectory_eval.v1",
+        "source": "eval.trajectory_eval",
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "eval_status": "failed",
         "warnings": [],

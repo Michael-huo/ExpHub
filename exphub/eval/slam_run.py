@@ -370,7 +370,7 @@ def _run_track(exp_dir, track_name, frames_dir, args):
 
     run_meta = {
         "version": 1,
-        "source": "eval.slam_run.track.v1",
+        "source": "eval.slam_run.track",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "track": str(track_name),
         "frames_dir": _relative_path(exp_dir, frames_dir),
@@ -443,7 +443,7 @@ def run_slam(config):
     }
     report = {
         "version": 1,
-        "source": "eval.slam_run.v1",
+        "source": "eval.slam_run",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "status": "success",
         "requested_seq": str(seq),

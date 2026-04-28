@@ -347,8 +347,7 @@ def build_semantic_anchors(
         )
 
     payload = {
-        "version": 3,
-        "source": "encode.semantic_anchor.image_embedding.v1",
+        "source": "encode.semantic_anchor.image_embedding",
         "backend_meta": backend_meta,
         "policy": policy,
         "motion_states": motion_state_payloads,

@@ -14,7 +14,7 @@ from .runner import build_runtime, run_runtime
 from .runner import RunError
 
 
-FORMAL_ENCODE_POLICY = "encode_pass1"
+FORMAL_ENCODE_POLICY = "encode_mainline"
 
 
 _ANSI_RESET = "\033[0m"
@@ -445,7 +445,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--segment_policy",
         default=FORMAL_ENCODE_POLICY,
-        help="encode policy for the current workflow; default is encode_pass1",
+        help="encode policy for the current workflow; default is encode_mainline",
     )
     ap.add_argument("--train_clip_num_frames", type=int, default=73)
     ap.add_argument("--train_clip_stride", type=int, default=36)
