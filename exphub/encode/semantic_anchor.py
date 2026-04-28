@@ -21,6 +21,9 @@ DEFAULT_CANDIDATE_STRIDE = 24
 DEFAULT_TEXT_IMAGE_DROP_THRESHOLD = 0.05
 DEFAULT_MIN_SEMANTIC_UPDATE_GAP = 24
 DEFAULT_LOW_SIMILARITY_PATIENCE = 2
+DEFAULT_IMAGE_NOVELTY_THRESHOLD = 0.08
+DEFAULT_TURN_IMAGE_NOVELTY_THRESHOLD = 0.12
+DEFAULT_COVERAGE_GAP_PATIENCE = 2
 DEFAULT_MAX_UNIT_SPAN_FRAMES = 96
 
 _LOW_VALUE_PREFIXES = (
@@ -215,15 +218,32 @@ def _candidate_positions(candidates, start_idx, end_idx, stride):
     return out
 
 
-def _choose_unit_length_guard_boundary(candidates, current_idx, end_idx, max_unit_span_frames):
-    limit = min(int(end_idx), int(current_idx) + int(max_unit_span_frames))
-    viable = [int(idx) for idx in candidates if int(current_idx) < int(idx) < int(end_idx) and int(idx) <= limit]
-    if not viable:
-        return None
-    return int(max(viable))
+def _image_novelty(normalized_images, pos_to_embed, reference_idx, frame_idx):
+    ref_pos = pos_to_embed.get(int(reference_idx))
+    frame_pos = pos_to_embed.get(int(frame_idx))
+    if ref_pos is None or frame_pos is None:
+        return 0.0
+    cosine = float(np.dot(normalized_images[ref_pos], normalized_images[frame_pos]))
+    return float(1.0 - max(-1.0, min(1.0, cosine)))
 
 
-def _plan_semantic_events_for_motion_state(motion_state_id, motion_state_start, motion_state_end, candidates, policy):
+def _motion_image_novelty_threshold(motion_label, policy):
+    label = str(motion_label or "mixed")
+    if label in ("left_turn", "right_turn", "mixed"):
+        return float(policy["turn_image_novelty_threshold"])
+    return float(policy["image_novelty_threshold"])
+
+
+def _plan_semantic_events_for_motion_state(
+    motion_state_id,
+    motion_label,
+    motion_state_start,
+    motion_state_end,
+    candidates,
+    normalized_images,
+    pos_to_embed,
+    policy,
+):
     if (
         not candidates
         or int(candidates[0]) != int(motion_state_start)
@@ -235,23 +255,45 @@ def _plan_semantic_events_for_motion_state(motion_state_id, motion_state_start, 
             "frame_idx": int(motion_state_start),
             "event_type": "semantic_state_start",
             "reason": "semantic_state_start",
-            "score": 0.0,
+            "image_novelty": 0.0,
+            "threshold": _motion_image_novelty_threshold(motion_label, policy),
+            "patience": int(policy["coverage_gap_patience"]),
+            "max_image_novelty_before_update": 0.0,
         }
     ]
-    current = int(motion_state_start)
-    while int(motion_state_end) - int(current) > int(policy["max_unit_span_frames"]):
-        chosen = _choose_unit_length_guard_boundary(candidates, current, motion_state_end, policy["max_unit_span_frames"])
-        if chosen is None:
-            break
+    current_semantic_start = int(motion_state_start)
+    threshold = _motion_image_novelty_threshold(motion_label, policy)
+    patience = max(1, int(policy["coverage_gap_patience"]))
+    min_gap = max(1, int(policy["min_semantic_update_gap"]))
+    consecutive = []
+    max_novelty = 0.0
+    for frame_idx in _candidate_positions(candidates, motion_state_start, motion_state_end, policy["candidate_stride"]):
+        frame_idx = int(frame_idx)
+        novelty = _image_novelty(normalized_images, pos_to_embed, current_semantic_start, frame_idx)
+        max_novelty = max(float(max_novelty), float(novelty))
+        far_enough_from_start = int(frame_idx) - int(current_semantic_start) >= int(min_gap)
+        far_enough_from_end = int(motion_state_end) - int(frame_idx) >= int(min_gap)
+        if novelty > threshold and far_enough_from_start and far_enough_from_end:
+            consecutive.append((int(frame_idx), float(novelty), float(max_novelty)))
+        else:
+            consecutive = []
+        if len(consecutive) < patience:
+            continue
         events.append(
             {
-                "frame_idx": int(chosen),
-                "event_type": "unit_length_guard",
-                "reason": "max_unit_span_frames",
-                "score": 0.0,
+                "frame_idx": int(frame_idx),
+                "event_type": "semantic_update",
+                "reason": "coverage_gap",
+                "image_novelty": float(novelty),
+                "threshold": float(threshold),
+                "patience": int(patience),
+                "max_image_novelty_before_update": float(max_novelty),
+                "frames_from_semantic_state_start": int(frame_idx) - int(current_semantic_start),
             }
         )
-        current = int(chosen)
+        current_semantic_start = int(frame_idx)
+        consecutive = []
+        max_novelty = 0.0
     return events
 
 
@@ -331,23 +373,27 @@ def _run_blip2_caption_backend(unique_items, prompt_python, prompt_blip2_model, 
 def _similarity_rows(candidates, normalized_images, pos_to_embed, text_emb, reference_sim, semantic_state_start_idx):
     rows = []
     min_similarity = float(reference_sim)
+    max_image_novelty = 0.0
     if text_emb is None:
-        return rows, float(min_similarity)
+        return rows, float(min_similarity), float(max_image_novelty)
     for frame_idx in candidates:
         pos = pos_to_embed.get(int(frame_idx))
         if pos is None:
             continue
         sim = float(np.dot(normalized_images[pos], text_emb))
+        novelty = _image_novelty(normalized_images, pos_to_embed, semantic_state_start_idx, frame_idx)
         min_similarity = min(float(min_similarity), float(sim))
+        max_image_novelty = max(float(max_image_novelty), float(novelty))
         rows.append(
             {
                 "frame_idx": int(frame_idx),
                 "text_image_similarity": float(sim),
                 "text_image_drop": float(reference_sim - sim),
+                "image_novelty": float(novelty),
                 "frames_from_semantic_state_start": int(frame_idx) - int(semantic_state_start_idx),
             }
         )
-    return rows, float(min_similarity)
+    return rows, float(min_similarity), float(max_image_novelty)
 
 
 def build_semantic_anchors(
@@ -361,6 +407,9 @@ def build_semantic_anchors(
     text_image_drop_threshold=DEFAULT_TEXT_IMAGE_DROP_THRESHOLD,
     min_semantic_update_gap=DEFAULT_MIN_SEMANTIC_UPDATE_GAP,
     low_similarity_patience=DEFAULT_LOW_SIMILARITY_PATIENCE,
+    image_novelty_threshold=DEFAULT_IMAGE_NOVELTY_THRESHOLD,
+    turn_image_novelty_threshold=DEFAULT_TURN_IMAGE_NOVELTY_THRESHOLD,
+    coverage_gap_patience=DEFAULT_COVERAGE_GAP_PATIENCE,
     max_unit_span_frames=DEFAULT_MAX_UNIT_SPAN_FRAMES,
     exphub_root=None,
 ):
@@ -378,6 +427,9 @@ def build_semantic_anchors(
         "text_image_drop_threshold": float(text_image_drop_threshold),
         "min_semantic_update_gap": int(min_semantic_update_gap),
         "low_similarity_patience": int(low_similarity_patience),
+        "image_novelty_threshold": float(image_novelty_threshold),
+        "turn_image_novelty_threshold": float(turn_image_novelty_threshold),
+        "coverage_gap_patience": int(coverage_gap_patience),
         "max_unit_span_frames": int(max_unit_span_frames),
     }
 
@@ -388,6 +440,7 @@ def build_semantic_anchors(
     pos_to_embed = {int(frame_idx): int(pos) for pos, frame_idx in enumerate(legal_positions)}
     backend_meta = clip.meta(image_embeddings.shape[1] if image_embeddings.ndim == 2 else 0)
     backend_meta["caption_model"] = str(prompt_blip2_model or DEFAULT_BLIP2_MODEL)
+    backend_meta["semantic_state_policy"] = "image_novelty_coverage_gap"
 
     planned_motion_states = []
     unique_by_path = {}
@@ -400,9 +453,12 @@ def build_semantic_anchors(
         candidates = _legal_between(legal_positions, motion_state_start, motion_state_end)
         semantic_events = _plan_semantic_events_for_motion_state(
             motion_state_id,
+            str(motion_state.get("motion_label", "") or "mixed"),
             motion_state_start,
             motion_state_end,
             candidates,
+            normalized_images,
+            pos_to_embed,
             policy,
         )
         planned_motion_states.append(
@@ -440,7 +496,7 @@ def build_semantic_anchors(
 
     motion_state_payloads = []
     all_similarity_rows = []
-    unit_length_guard_count = 0
+    coverage_gap_count = 0
     state_counter = 0
     for planned in planned_motion_states:
         motion_state_id = str(planned["motion_state_id"])
@@ -468,7 +524,7 @@ def build_semantic_anchors(
             scan_candidates = [
                 idx for idx in candidate_rows if int(semantic_state_start_idx) <= int(idx) <= int(semantic_state_end_idx)
             ]
-            rows, min_similarity = _similarity_rows(
+            rows, min_similarity, max_image_novelty = _similarity_rows(
                 scan_candidates,
                 normalized_images,
                 pos_to_embed,
@@ -482,9 +538,11 @@ def build_semantic_anchors(
                 )
             state_counter += 1
             event_type = str(event.get("event_type", "semantic_state_start") or "semantic_state_start")
-            state_reason = "unit_length_guard_refresh" if event_type == "unit_length_guard" else "semantic_state_start"
-            if event_type == "unit_length_guard":
-                unit_length_guard_count += 1
+            state_reason = str(event.get("reason", "semantic_state_start") or "semantic_state_start")
+            image_novelty_at_start = float(event.get("image_novelty", 0.0) or 0.0)
+            max_image_novelty_before_update = float(event.get("max_image_novelty_before_update", 0.0) or 0.0)
+            if state_reason == "coverage_gap":
+                coverage_gap_count += 1
             semantic_states.append(
                 {
                     "semantic_state_id": str(state_id),
@@ -497,6 +555,8 @@ def build_semantic_anchors(
                     "reason": str(state_reason),
                     "text_image_similarity_at_start": float(text_image_similarity),
                     "min_text_image_similarity": float(min_similarity),
+                    "image_novelty_at_start": float(image_novelty_at_start),
+                    "max_image_novelty_before_update": float(max_image_novelty_before_update),
                     "caption_frame": {
                         "frame_idx": int(semantic_state_start_idx),
                         "frame_path": _display_frame_path(frames[semantic_state_start_idx], out_path),
@@ -513,18 +573,29 @@ def build_semantic_anchors(
                                 ]
                             )
                         ),
+                        "max_image_novelty": float(max_image_novelty),
                     },
                 }
             )
+            event_item = {
+                "frame_idx": int(semantic_state_start_idx),
+                "abs_time_sec": _abs_time_at(prepare, int(semantic_state_start_idx)),
+                "event_type": str(event_type),
+                "reason": str(state_reason),
+                "semantic_state_id": str(state_id),
+                "text_image_similarity": float(text_image_similarity),
+                "text_image_drop": 0.0,
+                "image_novelty": float(image_novelty_at_start),
+            }
+            if state_reason == "coverage_gap":
+                event_item.update(
+                    {
+                        "threshold": float(event.get("threshold", policy["image_novelty_threshold"]) or 0.0),
+                        "patience": int(event.get("patience", policy["coverage_gap_patience"]) or 0),
+                    }
+                )
             event_items.append(
-                {
-                    "frame_idx": int(semantic_state_start_idx),
-                    "abs_time_sec": _abs_time_at(prepare, int(semantic_state_start_idx)),
-                    "event_type": str(event_type),
-                    "reason": str(event.get("reason", state_reason) or state_reason),
-                    "semantic_state_id": str(state_id),
-                    "text_image_similarity": float(text_image_similarity),
-                }
+                event_item
             )
         motion_state_payloads.append(
             {
@@ -540,7 +611,7 @@ def build_semantic_anchors(
 
     payload = {
         "version": 2,
-        "source": "encode.semantic_state.text_image.v1",
+        "source": "encode.semantic_state.image_novelty.v2",
         "backend_meta": {
             **backend_meta,
             "caption_model": str(blip2_payload.get("model", prompt_blip2_model or DEFAULT_BLIP2_MODEL)),
@@ -552,17 +623,19 @@ def build_semantic_anchors(
             "motion_state_count": int(len(motion_state_payloads)),
             "semantic_state_count": int(sum(len(item.get("semantic_states") or []) for item in motion_state_payloads)),
             "blip2_caption_count": int(len(unique_items)),
-            "unit_length_guard_count": int(unit_length_guard_count),
+            "blip2_batch_count": int(1 if unique_items else 0),
+            "coverage_gap_count": int(coverage_gap_count),
+            "text_image_drop_count": int(0),
             "elapsed_sec": float(time.time() - started),
         },
     }
     if out_path is not None:
         write_json_atomic(out_path, payload, indent=2)
         log_info(
-            "semantic states generated: states={} captions={} unit_length_guard_count={} path={}".format(
+            "semantic states generated: states={} captions={} coverage_gap_count={} path={}".format(
                 payload["summary"]["semantic_state_count"],
                 payload["summary"]["blip2_caption_count"],
-                payload["summary"]["unit_length_guard_count"],
+                payload["summary"]["coverage_gap_count"],
                 Path(out_path).resolve(),
             )
         )
@@ -582,6 +655,9 @@ def _build_arg_parser():
     parser.add_argument("--text_image_drop_threshold", type=float, default=DEFAULT_TEXT_IMAGE_DROP_THRESHOLD)
     parser.add_argument("--min_semantic_update_gap", type=int, default=DEFAULT_MIN_SEMANTIC_UPDATE_GAP)
     parser.add_argument("--low_similarity_patience", type=int, default=DEFAULT_LOW_SIMILARITY_PATIENCE)
+    parser.add_argument("--image_novelty_threshold", type=float, default=DEFAULT_IMAGE_NOVELTY_THRESHOLD)
+    parser.add_argument("--turn_image_novelty_threshold", type=float, default=DEFAULT_TURN_IMAGE_NOVELTY_THRESHOLD)
+    parser.add_argument("--coverage_gap_patience", type=int, default=DEFAULT_COVERAGE_GAP_PATIENCE)
     parser.add_argument("--max_unit_span_frames", type=int, default=DEFAULT_MAX_UNIT_SPAN_FRAMES)
     return parser
 
@@ -601,6 +677,9 @@ def main(argv=None):
         text_image_drop_threshold=float(args.text_image_drop_threshold),
         min_semantic_update_gap=int(args.min_semantic_update_gap),
         low_similarity_patience=int(args.low_similarity_patience),
+        image_novelty_threshold=float(args.image_novelty_threshold),
+        turn_image_novelty_threshold=float(args.turn_image_novelty_threshold),
+        coverage_gap_patience=int(args.coverage_gap_patience),
         max_unit_span_frames=int(args.max_unit_span_frames),
     )
 

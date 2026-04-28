@@ -48,13 +48,14 @@ def _build_encode_result(motion_segments, semantic_anchors, generation_units, pr
         "num_motion_states": int(len(list(_as_dict(motion_segments).get("motion_states") or []))),
         "num_semantic_states": int(semantic_summary.get("semantic_state_count", 0) or 0),
         "blip2_caption_count": int(semantic_summary.get("blip2_caption_count", 0) or 0),
+        "blip2_batch_count": int(semantic_summary.get("blip2_batch_count", 0) or 0),
+        "coverage_gap_count": int(semantic_summary.get("coverage_gap_count", 0) or 0),
+        "text_image_drop_count": int(semantic_summary.get("text_image_drop_count", 0) or 0),
         "num_generation_units": int(len(units)),
         "num_prompt_units": int(len(prompt_units)),
         "motion_labels": _motion_label_counts(motion_segments),
         "unit_lengths": [int(item.get("length", item.get("duration_frames", 0)) or 0) for item in units],
-        "unit_length_guard_count": int(
-            unit_summary.get("unit_length_guard_count", semantic_summary.get("unit_length_guard_count", 0)) or 0
-        ),
+        "unit_length_guard_count": int(unit_summary.get("unit_length_guard_count", 0) or 0),
         "max_unit_span_frames": int(semantic_policy.get("max_unit_span_frames", 0) or 0),
         "prompt_schema": "prompts.v2",
         "prompt_source": "prompts.prompt_positive",
@@ -130,18 +131,18 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
         for item in list(_as_dict(group).get("semantic_events") or []):
             idx = int(item.get("frame_idx", 0) or 0)
             event_type = str(item.get("event_type", "") or "semantic_state_start")
-            if event_type == "unit_length_guard":
-                continue
+            reason = str(item.get("reason", "") or "")
+            event_key = reason if reason in semantic_colors else event_type
             score = float(item.get("text_image_similarity", 0.0) or 0.0)
             max_idx = max(max_idx, idx)
-            label = event_type if event_type not in seen_semantic_events else None
-            seen_semantic_events.add(event_type)
-            ax_semantic.axvline(idx, color=semantic_colors.get(event_type, "#17becf"), alpha=0.45, linewidth=1)
+            label = event_key if event_key not in seen_semantic_events else None
+            seen_semantic_events.add(event_key)
+            ax_semantic.axvline(idx, color=semantic_colors.get(event_key, "#17becf"), alpha=0.45, linewidth=1)
             ax_semantic.scatter(
                 [idx],
                 [score],
-                color=semantic_colors.get(event_type, "#17becf"),
-                marker=semantic_markers.get(event_type, "o"),
+                color=semantic_colors.get(event_key, "#17becf"),
+                marker=semantic_markers.get(event_key, "o"),
                 s=45,
                 label=label,
             )
