@@ -245,10 +245,10 @@ def build_generation_tasks_from_paths(
         "encode_result": _relative_path(exp_root, encode_result_path),
     }
     return {
-        "schema": "generation_tasks.v1",
+        "schema": "generation_tasks",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "planner": "generation_units",
-        "prompt_strategy": "base_motion_fixed_prompt_v1",
+        "prompt_profile": "base_motion_prompt",
         "anchor_backend": "image_embedding_visual_anchor",
         "source_inputs": source_inputs,
         "timestamp_source": str(timestamp_key),

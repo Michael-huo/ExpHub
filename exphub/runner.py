@@ -141,7 +141,7 @@ class PipelineRuntime:
                 "seed_base": self.args.seed_base,
                 "gpus": self.args.gpus,
                 "planner": "generation_units",
-                "prompt_strategy": "base_motion_fixed_prompt_v1",
+                "prompt_profile": "base_motion_prompt",
                 "anchor_backend": "image_embedding_visual_anchor",
                 "workflow": "prepare -> encode" if train_mode else "prepare -> encode -> decode -> eval",
                 "decode_backend": COMFYUI_BACKEND,

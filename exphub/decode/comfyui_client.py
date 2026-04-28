@@ -1204,14 +1204,14 @@ def run_comfyui_decode_tasks(
     )
     instances_report = [instance.as_report() for instance in instances]
     report = {
-        "schema": "decode_report.v1",
+        "schema": "decode_report",
         "stage": "decode",
         "substage": "comfyui_decode",
         "status": "success",
         "run_id": str(runtime.spec.exp_name),
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "planner": "generation_units",
-        "prompt_strategy": "base_motion_fixed_prompt_v1",
+        "prompt_profile": "base_motion_prompt",
         "anchor_backend": "image_embedding_visual_anchor",
         "backend_name": COMFYUI_BACKEND,
         "backend_meta": {

@@ -93,14 +93,14 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
     generation_units_path = paths.encode_generation_units_path
     prompts_path = paths.encode_prompts_path
 
-    log_info("encode pass1 motion_state start")
+    log_info("encode motion state start")
     motion_segments = build_motion_segments(
         prepare_result=prepare_result,
         frames_dir=paths.prepare_frames_dir,
         out_path=motion_segments_path,
     )
 
-    log_info("encode pass1 visual anchor tracking start backend=openclip_image_embedding")
+    log_info("encode visual anchor tracking start backend=openclip_image_embedding")
     runtime.step_runner.run_env_python(
         _semantic_anchor_cmd(
             paths,
@@ -116,7 +116,7 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
     if not semantic_anchors:
         raise RuntimeError("invalid semantic anchors: {}".format(semantic_anchors_path))
 
-    log_info("encode pass1 generation_unit start")
+    log_info("encode generation unit start")
     generation_units = build_generation_units(
         prepare_result=prepare_result,
         motion_segments=motion_segments,
@@ -136,16 +136,17 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         )
     )
 
-    log_info("encode pass1 synthetic_prompt start")
+    log_info("encode synthetic prompt start")
     prompts = build_prompts(
         generation_units=generation_units,
         motion_segments=motion_segments,
         semantic_anchors=semantic_anchors,
         frames_dir=paths.prepare_frames_dir,
         out_path=prompts_path,
+        prompt_manifest_path=runtime.exphub_root / "config" / "prompt_manifest.json",
     )
 
-    log_info("encode pass1 result_writer start")
+    log_info("encode result writer start")
     result_path = write_encode_outputs(
         runtime=runtime,
         prepare_result=prepare_result,
@@ -165,7 +166,7 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         (paths.encode_overview_path, "encode overview"),
     ]:
         ensure_file(path, label)
-    log_info("encode pass1 done: {}".format(Path(result_path).resolve()))
+    log_info("encode done: {}".format(Path(result_path).resolve()))
     return {
         "prepare_result": prepare_result,
         "motion_segments": motion_segments,
@@ -182,7 +183,6 @@ def _write_train_encode_index(runtime, sequences):
     failed_count = len([item for item in entries if item.get("status") == "failed"])
     skipped_count = len([item for item in entries if item.get("status") == "skipped"])
     payload = {
-        "version": 1,
         "mode": "train",
         "scope": str(runtime.paths.scope),
         "dataset": str(runtime.spec.dataset),

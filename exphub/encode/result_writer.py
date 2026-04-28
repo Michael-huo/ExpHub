@@ -43,8 +43,7 @@ def _build_encode_result(motion_segments, semantic_anchors, generation_units, pr
     semantic_policy = _as_dict(_as_dict(semantic_anchors).get("policy"))
     unit_summary = _as_dict(_as_dict(generation_units).get("summary"))
     return {
-        "version": 1,
-        "source": "encode.result.v1",
+        "source": "encode.result",
         "num_motion_states": int(len(list(_as_dict(motion_segments).get("motion_states") or []))),
         "num_semantic_states": int(semantic_summary.get("semantic_state_count", 0) or 0),
         "visual_anchor_count": int(semantic_summary.get("visual_anchor_count", 0) or 0),
@@ -55,8 +54,8 @@ def _build_encode_result(motion_segments, semantic_anchors, generation_units, pr
         "unit_lengths": [int(item.get("length", item.get("duration_frames", 0)) or 0) for item in units],
         "unit_length_guard_count": int(unit_summary.get("unit_length_guard_count", 0) or 0),
         "max_unit_span_frames": int(semantic_policy.get("max_unit_span_frames", 0) or 0),
-        "prompt_schema": "prompts.v3",
-        "prompt_strategy": str(_as_dict(prompts).get("prompt_strategy", "base_motion_fixed_prompt_v1") or ""),
+        "prompt_schema": "prompts",
+        "prompt_profile": str(_as_dict(prompts).get("prompt_profile", "base_motion_prompt") or ""),
         "prompt_source": "prompts.prompt_positive",
         "semantic_state_source": str(_as_dict(semantic_anchors).get("source", "") or ""),
         "anchor_backend": "image_embedding_visual_anchor",

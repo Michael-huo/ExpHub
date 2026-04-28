@@ -217,8 +217,7 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
         item["motion_state_id"] = "motion_{:04d}".format(int(idx))
 
     payload = {
-        "version": 1,
-        "source": "encode.motion_state.v1",
+        "source": "encode.motion_state",
         "fps": int(prepare.get("target_fps", legal_grid.get("fps", 0)) or 0),
         "motion_labels": list(MOTION_LABELS),
         "motion_states": motion_states,

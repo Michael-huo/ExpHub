@@ -1,18 +1,25 @@
 {
-  "schema": "prompt_manifest_v3",
-  "prompt_strategy": "base_motion_fixed_prompt_v1",
-  "anchor_backend": {
-    "name": "image_embedding",
-    "source": "semantic_anchors.motion_states.semantic_states"
+  "schema": "prompt_manifest",
+  "prompt_profile": "base_motion_prompt",
+  "positive": {
+    "base_prompt": "first-person viewpoint continuity, stable scene geometry, consistent perspective and camera alignment, stable exposure and white balance, temporal coherence without flicker, stable foreground-background layout",
+    "motion_prompts": {
+      "stop": "near-static camera pose, stable still-scene geometry, preserved fine structure",
+      "forward": "smooth forward egomotion, clear depth progression, stable perspective",
+      "left_turn": "smooth left turn, continuous camera rotation, geometry-aligned motion",
+      "right_turn": "smooth right turn, continuous camera rotation, geometry-aligned motion",
+      "mixed": "coherent mixed egomotion, readable camera movement, stable transition"
+    }
   },
-  "positive_parts": [
-    "prompt_base",
-    "prompt_motion",
-    "prompt_stability"
-  ],
-  "negative_field": "prompt_negative",
-  "notes": [
-    "Positive prompts are fixed base, motion, and stability constraints.",
-    "Visual anchors are used only for generation unit boundary planning."
-  ]
+  "negative": {
+    "negative_prompt": "blurry, low detail, low quality, distorted geometry, warped structure, flicker, temporal inconsistency, drifting objects, duplicated objects, broken perspective, unstable camera, sudden viewpoint change, ghosting, artifacts, oversmoothing"
+  },
+  "composition": {
+    "positive_parts": [
+      "base_prompt",
+      "motion_prompt"
+    ],
+    "negative_field": "negative_prompt",
+    "joiner": ", "
+  }
 }

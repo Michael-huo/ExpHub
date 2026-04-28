@@ -184,7 +184,7 @@ def _build_compression_report(exp_dir, out_dir, inputs, reports, warnings):
 
     report = {
         "version": 1,
-        "source": "eval.compression_report.v1",
+        "source": "eval.compression_report",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "definition": "unique generation unit boundary frames plus native prompt/unit JSON payload",
         "orig_size_bytes": int(orig_size_bytes),

@@ -225,15 +225,14 @@ def merge_units(runtime, tasks_payload, decode_report):
 
     source_inputs = dict(tasks_payload.get("source_inputs") or {})
     report = {
-        "version": 1,
-        "schema": "decode_merge_report.v1",
+        "schema": "decode_merge_report",
         "stage": "decode",
         "substage": "unit_merge",
         "contract": "decode_unit_merge_native",
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "inputs": {
             "planner": "generation_units",
-            "prompt_strategy": "base_motion_fixed_prompt_v1",
+            "prompt_profile": "base_motion_prompt",
             "anchor_backend": "image_embedding_visual_anchor",
             "source_inputs": source_inputs,
             "decode_report": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_report_path),
