@@ -22,6 +22,7 @@ def _motion_state_map(motion_segments):
 
 
 def _states_by_motion_state(semantic_anchors):
+    # semantic_states are image-embedding visual anchors used for unit boundaries.
     out = {}
     for raw_group in list(_as_dict(semantic_anchors).get("motion_states") or []):
         group = _as_dict(raw_group)

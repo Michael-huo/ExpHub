@@ -47,19 +47,19 @@ def _build_encode_result(motion_segments, semantic_anchors, generation_units, pr
         "source": "encode.result.v1",
         "num_motion_states": int(len(list(_as_dict(motion_segments).get("motion_states") or []))),
         "num_semantic_states": int(semantic_summary.get("semantic_state_count", 0) or 0),
-        "blip2_caption_count": int(semantic_summary.get("blip2_caption_count", 0) or 0),
-        "blip2_batch_count": int(semantic_summary.get("blip2_batch_count", 0) or 0),
+        "visual_anchor_count": int(semantic_summary.get("visual_anchor_count", 0) or 0),
         "coverage_gap_count": int(semantic_summary.get("coverage_gap_count", 0) or 0),
-        "text_image_drop_count": int(semantic_summary.get("text_image_drop_count", 0) or 0),
         "num_generation_units": int(len(units)),
         "num_prompt_units": int(len(prompt_units)),
         "motion_labels": _motion_label_counts(motion_segments),
         "unit_lengths": [int(item.get("length", item.get("duration_frames", 0)) or 0) for item in units],
         "unit_length_guard_count": int(unit_summary.get("unit_length_guard_count", 0) or 0),
         "max_unit_span_frames": int(semantic_policy.get("max_unit_span_frames", 0) or 0),
-        "prompt_schema": "prompts.v2",
+        "prompt_schema": "prompts.v3",
+        "prompt_strategy": str(_as_dict(prompts).get("prompt_strategy", "base_motion_fixed_prompt_v1") or ""),
         "prompt_source": "prompts.prompt_positive",
         "semantic_state_source": str(_as_dict(semantic_anchors).get("source", "") or ""),
+        "anchor_backend": "image_embedding_visual_anchor",
         "artifacts": {
             "motion_segments": _artifact_rel(paths, "encode_motion_segments_path"),
             "semantic_anchors": _artifact_rel(paths, "encode_semantic_anchors_path"),
@@ -109,21 +109,14 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
         fontsize=8,
     )
 
-    gap_rows = list(_as_dict(semantic_anchors).get("similarity_rows") or [])
-    if gap_rows:
-        xs = [int(item.get("frame_idx", 0) or 0) for item in gap_rows]
-        ys = [float(item.get("text_image_similarity", 0.0) or 0.0) for item in gap_rows]
-        ax_semantic.plot(xs, ys, color="#444444", linewidth=1.2, label="text-image similarity")
     semantic_colors = {
         "semantic_state_start": "#2ca02c",
         "semantic_update": "#e377c2",
-        "text_image_drop": "#9467bd",
         "coverage_gap": "#8c564b",
     }
     semantic_markers = {
         "semantic_state_start": "^",
         "semantic_update": "o",
-        "text_image_drop": "v",
         "coverage_gap": "s",
     }
     seen_semantic_events = set()
@@ -133,7 +126,7 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
             event_type = str(item.get("event_type", "") or "semantic_state_start")
             reason = str(item.get("reason", "") or "")
             event_key = reason if reason in semantic_colors else event_type
-            score = float(item.get("text_image_similarity", 0.0) or 0.0)
+            score = float(item.get("image_novelty", 0.0) or 0.0)
             max_idx = max(max_idx, idx)
             label = event_key if event_key not in seen_semantic_events else None
             seen_semantic_events.add(event_key)
@@ -146,15 +139,12 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
                 s=45,
                 label=label,
             )
-    ax_semantic.set_ylabel("Similarity")
-    ax_semantic.set_title("Semantic states")
+    ax_semantic.set_ylabel("Image novelty")
+    ax_semantic.set_title("Visual anchor states")
     semantic_handles = []
-    if gap_rows:
-        semantic_handles.append(Line2D([0], [0], color="#444444", linewidth=1.2, label="text-image similarity"))
     for label, marker in [
         ("semantic state start", "^"),
         ("semantic update", "o"),
-        ("text-image drop", "v"),
         ("coverage gap", "s"),
     ]:
         semantic_handles.append(

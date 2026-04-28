@@ -1,19 +1,18 @@
 {
   "schema": "prompt_manifest_v3",
-  "prompt_strategy": "four_part_blip2_semantic_v1",
-  "semantic_backend": {
-    "name": "blip2",
-    "default_model": "Salesforce/blip2-opt-2.7b",
-    "sample_policy": "start_mid_end"
+  "prompt_strategy": "base_motion_fixed_prompt_v1",
+  "anchor_backend": {
+    "name": "image_embedding",
+    "source": "semantic_anchors.motion_states.semantic_states"
   },
   "positive_parts": [
     "prompt_base",
     "prompt_motion",
-    "prompt_semantic"
+    "prompt_stability"
   ],
   "negative_field": "prompt_negative",
   "notes": [
-    "BLIP-2 captions provide semantic scene hints only.",
-    "Motion, base constraints, and negative constraints are owned by ExpHub prompt generation."
+    "Positive prompts are fixed base, motion, and stability constraints.",
+    "Visual anchors are used only for generation unit boundary planning."
   ]
 }
