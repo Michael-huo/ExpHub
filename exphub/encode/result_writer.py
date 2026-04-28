@@ -11,7 +11,7 @@ def _as_dict(value):
 
 def _motion_label_counts(motion_segments):
     counts = {}
-    for item in list(_as_dict(motion_segments).get("segments") or []):
+    for item in list(_as_dict(motion_segments).get("motion_states") or []):
         label = str(_as_dict(item).get("motion_label", "") or "unknown")
         counts[label] = int(counts.get(label, 0)) + 1
     return counts
@@ -40,20 +40,25 @@ def _build_encode_result(motion_segments, semantic_anchors, generation_units, pr
     units = list(_as_dict(generation_units).get("units") or [])
     prompt_units = list(_as_dict(prompts).get("units") or [])
     semantic_summary = _as_dict(_as_dict(semantic_anchors).get("summary"))
+    semantic_policy = _as_dict(_as_dict(semantic_anchors).get("policy"))
+    unit_summary = _as_dict(_as_dict(generation_units).get("summary"))
     return {
         "version": 1,
         "source": "encode.result.v1",
-        "num_motion_segments": int(len(list(_as_dict(motion_segments).get("segments") or []))),
-        "num_semantic_anchor_groups": int(len(list(_as_dict(semantic_anchors).get("segments") or []))),
+        "num_motion_states": int(len(list(_as_dict(motion_segments).get("motion_states") or []))),
         "num_semantic_states": int(semantic_summary.get("semantic_state_count", 0) or 0),
         "blip2_caption_count": int(semantic_summary.get("blip2_caption_count", 0) or 0),
         "num_generation_units": int(len(units)),
         "num_prompt_units": int(len(prompt_units)),
         "motion_labels": _motion_label_counts(motion_segments),
         "unit_lengths": [int(item.get("length", item.get("duration_frames", 0)) or 0) for item in units],
+        "unit_length_guard_count": int(
+            unit_summary.get("unit_length_guard_count", semantic_summary.get("unit_length_guard_count", 0)) or 0
+        ),
+        "max_unit_span_frames": int(semantic_policy.get("max_unit_span_frames", 0) or 0),
         "prompt_schema": "prompts.v2",
         "prompt_source": "prompts.prompt_positive",
-        "semantic_anchor_source": str(_as_dict(semantic_anchors).get("source", "") or ""),
+        "semantic_state_source": str(_as_dict(semantic_anchors).get("source", "") or ""),
         "artifacts": {
             "motion_segments": _artifact_rel(paths, "encode_motion_segments_path"),
             "semantic_anchors": _artifact_rel(paths, "encode_semantic_anchors_path"),
@@ -70,6 +75,7 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
 
     motion_colors = {
         "stop": "#7f8c8d",
@@ -82,52 +88,94 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
     ax_motion, ax_semantic, ax_units = axes
 
     max_idx = 0
-    for segment in list(_as_dict(motion_segments).get("segments") or []):
-        start = int(segment.get("start_idx", 0) or 0)
-        end = int(segment.get("end_idx", start) or start)
-        label = str(segment.get("motion_label", "mixed") or "mixed")
+    for motion_state in list(_as_dict(motion_segments).get("motion_states") or []):
+        start = int(motion_state.get("start_idx", 0) or 0)
+        end = int(motion_state.get("end_idx", start) or start)
+        label = str(motion_state.get("motion_label", "mixed") or "mixed")
         max_idx = max(max_idx, end)
         ax_motion.axvspan(start, end, color=motion_colors.get(label, "#8c564b"), alpha=0.35)
         ax_motion.text((start + end) / 2.0, 0.5, label, ha="center", va="center", fontsize=9)
+        ax_motion.axvline(start, color="#333333", alpha=0.35, linewidth=1)
+    if list(_as_dict(motion_segments).get("motion_states") or []):
+        final_motion_state = _as_dict(list(_as_dict(motion_segments).get("motion_states") or [])[-1])
+        ax_motion.axvline(int(final_motion_state.get("end_idx", 0) or 0), color="#333333", alpha=0.35, linewidth=1)
     ax_motion.set_yticks([])
     ax_motion.set_ylabel("Motion")
-    ax_motion.set_title("Motion segmentation")
+    ax_motion.set_title("Motion states")
+    ax_motion.legend(
+        handles=[Line2D([0], [0], color="#333333", linewidth=1, label="motion boundary")],
+        loc="upper right",
+        fontsize=8,
+    )
 
-    gap_rows = list(_as_dict(semantic_anchors).get("similarity_rows") or _as_dict(semantic_anchors).get("gap_rows") or [])
+    gap_rows = list(_as_dict(semantic_anchors).get("similarity_rows") or [])
     if gap_rows:
         xs = [int(item.get("frame_idx", 0) or 0) for item in gap_rows]
-        ys = [float(item.get("similarity", item.get("score", 0.0)) or 0.0) for item in gap_rows]
+        ys = [float(item.get("text_image_similarity", 0.0) or 0.0) for item in gap_rows]
         ax_semantic.plot(xs, ys, color="#444444", linewidth=1.2, label="text-image similarity")
-    reason_colors = {
-        "segment_start": "#2ca02c",
-        "segment_boundary": "#333333",
-        "semantic_gain": "#e377c2",
-        "duration_fallback": "#ff7f0e",
+    semantic_colors = {
+        "semantic_state_start": "#2ca02c",
+        "semantic_update": "#e377c2",
+        "text_image_drop": "#9467bd",
+        "coverage_gap": "#8c564b",
     }
-    reason_markers = {"segment_start": "^", "segment_boundary": "|", "semantic_gain": "o", "duration_fallback": "s"}
-    seen_reasons = set()
-    for group in list(_as_dict(semantic_anchors).get("segments") or []):
-        for item in list(_as_dict(group).get("anchors") or _as_dict(group).get("anchor_items") or []):
+    semantic_markers = {
+        "semantic_state_start": "^",
+        "semantic_update": "o",
+        "text_image_drop": "v",
+        "coverage_gap": "s",
+    }
+    seen_semantic_events = set()
+    for group in list(_as_dict(semantic_anchors).get("motion_states") or []):
+        for item in list(_as_dict(group).get("semantic_events") or []):
             idx = int(item.get("frame_idx", 0) or 0)
-            reason = str(item.get("reason", "") or "segment_boundary")
-            score = float(item.get("score", 0.0) or 0.0)
+            event_type = str(item.get("event_type", "") or "semantic_state_start")
+            if event_type == "unit_length_guard":
+                continue
+            score = float(item.get("text_image_similarity", 0.0) or 0.0)
             max_idx = max(max_idx, idx)
-            label = reason if reason not in seen_reasons else None
-            seen_reasons.add(reason)
-            ax_semantic.axvline(idx, color=reason_colors.get(reason, "#17becf"), alpha=0.45, linewidth=1)
+            label = event_type if event_type not in seen_semantic_events else None
+            seen_semantic_events.add(event_type)
+            ax_semantic.axvline(idx, color=semantic_colors.get(event_type, "#17becf"), alpha=0.45, linewidth=1)
             ax_semantic.scatter(
                 [idx],
                 [score],
-                color=reason_colors.get(reason, "#17becf"),
-                marker=reason_markers.get(reason, "o"),
-                s=45 if reason != "segment_boundary" else 70,
+                color=semantic_colors.get(event_type, "#17becf"),
+                marker=semantic_markers.get(event_type, "o"),
+                s=45,
                 label=label,
             )
-    ax_semantic.set_ylabel("Anchor score")
-    ax_semantic.set_title("Semantic anchors")
-    if seen_reasons:
-        ax_semantic.legend(loc="upper right", fontsize=8)
+    ax_semantic.set_ylabel("Similarity")
+    ax_semantic.set_title("Semantic states")
+    semantic_handles = []
+    if gap_rows:
+        semantic_handles.append(Line2D([0], [0], color="#444444", linewidth=1.2, label="text-image similarity"))
+    for label, marker in [
+        ("semantic state start", "^"),
+        ("semantic update", "o"),
+        ("text-image drop", "v"),
+        ("coverage gap", "s"),
+    ]:
+        semantic_handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker=marker,
+                color="w",
+                markerfacecolor=semantic_colors[label.replace(" ", "_").replace("-", "_")],
+                markersize=7,
+                label=label,
+            )
+        )
+    ax_semantic.legend(handles=semantic_handles, loc="upper right", fontsize=8)
 
+    unit_boundary_colors = {
+        "unit_boundary": "#17becf",
+        "motion_boundary": "#333333",
+        "semantic_boundary": "#2ca02c",
+        "unit_length_guard": "#ff7f0e",
+    }
+    seen_unit_sources = set()
     for unit_idx, unit in enumerate(list(_as_dict(generation_units).get("units") or [])):
         start = int(unit.get("start_idx", 0) or 0)
         end = int(unit.get("end_idx", start) or start)
@@ -142,11 +190,23 @@ def write_encode_overview(output_path, motion_segments, semantic_anchors, genera
         color = "#17becf" if unit_idx % 2 == 0 else "#bcbd22"
         ax_units.axvspan(start, end, color=color, alpha=0.35)
         ax_units.text((start + end) / 2.0, 0.5, label, ha="center", va="center", fontsize=8)
+        for source in list(unit.get("unit_boundary_sources") or ["unit_boundary"]):
+            source = str(source or "unit_boundary")
+            unit_color = unit_boundary_colors.get(source, unit_boundary_colors["unit_boundary"])
+            ax_units.axvline(end, color=unit_color, alpha=0.65, linewidth=1.2)
+            seen_unit_sources.add(source)
     ax_units.set_yticks([])
     ax_units.set_ylabel("Units")
     ax_units.set_title("Generation units")
     ax_units.set_xlabel("frame_idx")
     ax_units.set_xlim(0, max(1, int(max_idx)))
+    unit_handles = [
+        Line2D([0], [0], color=unit_boundary_colors["unit_boundary"], linewidth=1.2, label="unit boundary"),
+        Line2D([0], [0], color=unit_boundary_colors["motion_boundary"], linewidth=1.2, label="motion boundary"),
+        Line2D([0], [0], color=unit_boundary_colors["semantic_boundary"], linewidth=1.2, label="semantic boundary"),
+        Line2D([0], [0], color=unit_boundary_colors["unit_length_guard"], linewidth=1.2, label="unit length guard"),
+    ]
+    ax_units.legend(handles=unit_handles, loc="upper right", fontsize=8)
     fig.tight_layout()
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(str(output_path), dpi=140)

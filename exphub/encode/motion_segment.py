@@ -194,13 +194,13 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
         )
     windows = _smooth_window_labels(windows)
 
-    segments = []
+    motion_states = []
     current = None
     current_scores = []
     for window in windows:
         if current is None or window["motion_label"] != current["motion_label"]:
             if current is not None:
-                _finish_motion_segment(current, current_scores, segments, prepare)
+                _finish_motion_state(current, current_scores, motion_states, prepare)
             current = {
                 "start_idx": int(window["start_idx"]),
                 "end_idx": int(window["end_idx"]),
@@ -211,38 +211,60 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
             current["end_idx"] = int(window["end_idx"])
             current_scores.append(dict(window["scores"]))
     if current is not None:
-        _finish_motion_segment(current, current_scores, segments, prepare)
+        _finish_motion_state(current, current_scores, motion_states, prepare)
 
-    for idx, item in enumerate(segments):
-        item["seg_id"] = "seg_{:04d}".format(int(idx))
+    for idx, item in enumerate(motion_states):
+        item["motion_state_id"] = "motion_{:04d}".format(int(idx))
 
     payload = {
         "version": 1,
-        "source": "encode.motion_segment.v1",
+        "source": "encode.motion_state.v1",
         "fps": int(prepare.get("target_fps", legal_grid.get("fps", 0)) or 0),
         "motion_labels": list(MOTION_LABELS),
-        "segments": segments,
+        "motion_states": motion_states,
+        "motion_boundaries": [
+            {
+                "frame_idx": int(item["start_idx"]),
+                "motion_state_id": str(item["motion_state_id"]),
+                "boundary_type": "motion_state_start",
+            }
+            for item in motion_states
+        ]
+        + (
+            [
+                {
+                    "frame_idx": int(motion_states[-1]["end_idx"]),
+                    "motion_state_id": str(motion_states[-1]["motion_state_id"]),
+                    "boundary_type": "motion_state_end",
+                }
+            ]
+            if motion_states
+            else []
+        ),
         "summary": {
-            "segment_count": int(len(segments)),
+            "motion_state_count": int(len(motion_states)),
+            "motion_boundary_count": int(len(motion_states) + (1 if motion_states else 0)),
             "legal_position_count": int(len(legal_positions)),
             "elapsed_sec": float(time.time() - started),
         },
     }
     if out_path is not None:
         write_json_atomic(out_path, payload, indent=2)
-        log_info("motion segments generated: count={} path={}".format(len(segments), Path(out_path).resolve()))
+        log_info("motion states generated: count={} path={}".format(len(motion_states), Path(out_path).resolve()))
     return payload
 
 
-def _finish_motion_segment(current, score_rows, segments, prepare_result):
+def _finish_motion_state(current, score_rows, motion_states, prepare_result):
     scores = {}
     for key in ["translational", "directional", "confidence", "radial_diagnostic", "rotational_diagnostic"]:
         scores[key] = float(np.mean([float(row.get(key, 0.0)) for row in score_rows])) if score_rows else 0.0
-    segments.append(
+    motion_states.append(
         {
-            "seg_id": "",
+            "motion_state_id": "",
             "start_idx": int(current["start_idx"]),
             "end_idx": int(current["end_idx"]),
+            "motion_state_start": int(current["start_idx"]),
+            "motion_state_end": int(current["end_idx"]),
             "start_abs_time_sec": _time_at(prepare_result, int(current["start_idx"])),
             "end_abs_time_sec": _time_at(prepare_result, int(current["end_idx"])),
             "motion_label": str(current["motion_label"]),

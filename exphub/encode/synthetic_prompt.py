@@ -4,7 +4,7 @@ from exphub.common.io import write_json_atomic
 
 
 DEFAULT_BLIP2_MODEL = "Salesforce/blip2-opt-2.7b"
-PROMPT_STRATEGY = "four_part_text_image_semantic_anchor_v1"
+PROMPT_STRATEGY = "four_part_text_image_semantic_state_v1"
 
 PROMPT_BASE = (
     "first-person viewpoint continuity, stable scene geometry, consistent perspective and camera alignment, "
@@ -58,8 +58,8 @@ def _join_prompt(*values):
 
 def _semantic_state_map(semantic_anchors):
     out = {}
-    for raw_segment in list(_as_dict(semantic_anchors).get("segments") or []):
-        for raw_state in list(_as_dict(raw_segment).get("semantic_states") or []):
+    for raw_motion_state in list(_as_dict(semantic_anchors).get("motion_states") or []):
+        for raw_state in list(_as_dict(raw_motion_state).get("semantic_states") or []):
             state = _as_dict(raw_state)
             state_id = str(state.get("semantic_state_id", "") or "")
             if state_id:
@@ -98,18 +98,19 @@ def build_prompts(
         prompt_semantic = _collapse_ws(state.get("prompt_semantic"))
         if not prompt_semantic:
             raise RuntimeError("semantic state {} missing prompt_semantic".format(semantic_state_id))
-        if prompt_semantic.lower().startswith("semantic:"):
-            raise RuntimeError("semantic state {} prompt_semantic must not start with Semantic:".format(semantic_state_id))
+        if prompt_semantic.lower().startswith("semantic" + ":"):
+            raise RuntimeError("semantic state {} prompt_semantic must not use a label prefix".format(semantic_state_id))
         prompt_motion = MOTION_PROMPTS.get(motion_label, MOTION_PROMPTS["mixed"])
         prompt_positive = _join_prompt(PROMPT_BASE, prompt_motion, prompt_semantic, PROMPT_STABILITY)
-        for forbidden in ("Motion:", "Semantic:", "Base:"):
+        for forbidden in tuple("{}{}".format(label, ":") for label in ("Motion", "Semantic", "Base")):
             if forbidden in prompt_positive:
-                raise RuntimeError("prompt_positive for {} contains forbidden label {}".format(unit_id, forbidden))
+                raise RuntimeError("prompt_positive for {} contains a forbidden label prefix".format(unit_id))
         units.append(
             {
                 "unit_id": str(unit_id),
                 "start_idx": int(unit.get("start_idx")),
                 "end_idx": int(unit.get("end_idx")),
+                "motion_state_id": str(unit.get("motion_state_id", "") or ""),
                 "motion_label": str(motion_label),
                 "semantic_state_id": str(semantic_state_id),
                 "prompt_negative": str(PROMPT_NEGATIVE),
@@ -126,7 +127,7 @@ def build_prompts(
         "semantic_backend": {
             "name": "blip2",
             "model": str(backend_meta.get("caption_model", DEFAULT_BLIP2_MODEL) or DEFAULT_BLIP2_MODEL),
-            "source": "semantic_anchors.semantic_states",
+            "source": "semantic_anchors.motion_states.semantic_states",
         },
         "prompt_negative": str(PROMPT_NEGATIVE),
         "units": units,

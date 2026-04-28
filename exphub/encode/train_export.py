@@ -305,7 +305,7 @@ class TrainExportSession:
                         "dataset": str(self.runtime.spec.dataset),
                         "sequence": str(sequence),
                         "unit_id": str(unit_id),
-                        "seg_id": str(unit.get("seg_id", "") or ""),
+                        "motion_state_id": str(unit.get("motion_state_id", "") or ""),
                         "start_idx": int(clip_start),
                         "end_idx": int(clip_end),
                         "num_frames": int(self.target_num_frames),

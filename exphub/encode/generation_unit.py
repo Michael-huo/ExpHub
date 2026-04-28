@@ -14,28 +14,31 @@ def _time_at(prepare_result, idx):
     return float(values[int(idx)])
 
 
-def _motion_segment_map(motion_segments):
-    return {str(item.get("seg_id", "") or ""): _as_dict(item) for item in list(_as_dict(motion_segments).get("segments") or [])}
+def _motion_state_map(motion_segments):
+    return {
+        str(item.get("motion_state_id", "") or ""): _as_dict(item)
+        for item in list(_as_dict(motion_segments).get("motion_states") or [])
+    }
 
 
-def _states_by_segment(semantic_anchors):
+def _states_by_motion_state(semantic_anchors):
     out = {}
-    for raw_group in list(_as_dict(semantic_anchors).get("segments") or []):
+    for raw_group in list(_as_dict(semantic_anchors).get("motion_states") or []):
         group = _as_dict(raw_group)
-        seg_id = str(group.get("seg_id", "") or "")
+        motion_state_id = str(group.get("motion_state_id", "") or "")
         states = [_as_dict(item) for item in list(group.get("semantic_states") or [])]
-        states.sort(key=lambda item: int(item.get("start_idx", item.get("anchor_idx", -1))))
-        out[seg_id] = states
+        states.sort(key=lambda item: int(item.get("start_idx", item.get("semantic_state_start_idx", -1))))
+        out[motion_state_id] = states
     return out
 
 
-def _anchors_by_segment(semantic_anchors):
+def _semantic_events_by_motion_state(semantic_anchors):
     out = {}
-    for raw_group in list(_as_dict(semantic_anchors).get("segments") or []):
+    for raw_group in list(_as_dict(semantic_anchors).get("motion_states") or []):
         group = _as_dict(raw_group)
-        seg_id = str(group.get("seg_id", "") or "")
-        anchors = [_as_dict(item) for item in list(group.get("anchors") or group.get("anchor_items") or [])]
-        out[seg_id] = {int(item.get("frame_idx", -1)): item for item in anchors if item.get("frame_idx") is not None}
+        motion_state_id = str(group.get("motion_state_id", "") or "")
+        events = [_as_dict(item) for item in list(group.get("semantic_events") or [])]
+        out[motion_state_id] = {int(item.get("frame_idx", -1)): item for item in events if item.get("frame_idx") is not None}
     return out
 
 
@@ -74,20 +77,28 @@ def _nearest_legal(value, legal_positions, seg_start, seg_end):
     return min(viable, key=lambda idx: (abs(int(idx) - value), int(idx)))
 
 
-def _semantic_cut_candidates(states, legal_positions, legal_set, allowed_deltas, seg_start, seg_end, diagnostics):
+def _semantic_cut_candidates(
+    states,
+    legal_positions,
+    legal_set,
+    allowed_deltas,
+    motion_state_start,
+    motion_state_end,
+    diagnostics,
+):
     grid_step = min(
         [int(b) - int(a) for a, b in zip(legal_positions[:-1], legal_positions[1:]) if int(b) > int(a)] or [1]
     )
     cuts = set()
     for state in states:
-        start_idx = int(state.get("start_idx", state.get("anchor_idx", seg_start)))
-        if start_idx <= int(seg_start) or start_idx >= int(seg_end):
+        start_idx = int(state.get("start_idx"))
+        if start_idx <= int(motion_state_start) or start_idx >= int(motion_state_end):
             continue
         chosen = None
         if start_idx in legal_set:
             chosen = int(start_idx)
         else:
-            snapped = _nearest_legal(start_idx, legal_positions, seg_start, seg_end)
+            snapped = _nearest_legal(start_idx, legal_positions, motion_state_start, motion_state_end)
             if snapped is not None and abs(int(snapped) - int(start_idx)) <= max(1, int(grid_step) // 2):
                 chosen = int(snapped)
                 diagnostics.append(
@@ -107,9 +118,9 @@ def _semantic_cut_candidates(states, legal_positions, legal_set, allowed_deltas,
                 }
             )
             continue
-        if not _can_cover(seg_start, chosen, legal_positions, allowed_deltas) or not _can_cover(
+        if not _can_cover(motion_state_start, chosen, legal_positions, allowed_deltas) or not _can_cover(
             chosen,
-            seg_end,
+            motion_state_end,
             legal_positions,
             allowed_deltas,
         ):
@@ -163,7 +174,7 @@ def _assign_state(unit_start, unit_end, states):
         scored.append(
             (
                 int(overlap),
-                -abs(int(state.get("anchor_idx", state.get("start_idx"))) - int(unit_start)),
+                -abs(int(state.get("semantic_state_start_idx", state.get("start_idx"))) - int(unit_start)),
                 str(state.get("semantic_state_id", "") or ""),
                 state,
             )
@@ -172,6 +183,18 @@ def _assign_state(unit_start, unit_end, states):
     best = scored[0][3]
     best_overlap = int(scored[0][0])
     return best, float(best_overlap) / float(max(1, unit_len))
+
+
+def _unit_boundary_sources(boundary_idx, motion_state_start, motion_state_end, semantic_event):
+    if int(boundary_idx) in (int(motion_state_start), int(motion_state_end)):
+        return ["motion_boundary"]
+    event_type = str(_as_dict(semantic_event).get("event_type", "") or "")
+    reason = str(_as_dict(semantic_event).get("reason", "") or "")
+    if event_type == "unit_length_guard" or reason == "max_unit_span_frames":
+        return ["unit_length_guard"]
+    if event_type in ("semantic_state_start", "semantic_update"):
+        return ["semantic_boundary"]
+    return ["unit_boundary"]
 
 
 def build_generation_units(prepare_result, motion_segments, semantic_anchors, out_path=None):
@@ -184,44 +207,52 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
     if not legal_positions or not allowed_deltas or not allowed_num_frames:
         raise RuntimeError("prepare_result legal_grid missing legal unit constraints")
 
-    segment_by_id = _motion_segment_map(motion_segments)
-    states_by_seg = _states_by_segment(semantic_anchors)
-    anchors_by_seg = _anchors_by_segment(semantic_anchors)
+    motion_state_by_id = _motion_state_map(motion_segments)
+    states_by_motion_state = _states_by_motion_state(semantic_anchors)
+    semantic_events_by_motion_state = _semantic_events_by_motion_state(semantic_anchors)
     units = []
     diagnostics = []
     previous_end = None
-    for seg_index, raw_segment in enumerate(list(_as_dict(motion_segments).get("segments") or [])):
-        segment = _as_dict(raw_segment)
-        seg_id = str(segment.get("seg_id", "") or "")
-        seg_start = int(segment.get("start_idx"))
-        seg_end = int(segment.get("end_idx"))
-        _validate_legal(seg_start, legal_set, "motion segment start")
-        _validate_legal(seg_end, legal_set, "motion segment end")
-        if previous_end is not None and int(seg_start) != int(previous_end):
+    for motion_state_index, raw_motion_state in enumerate(list(_as_dict(motion_segments).get("motion_states") or [])):
+        motion_state = _as_dict(raw_motion_state)
+        motion_state_id = str(motion_state.get("motion_state_id", "") or "")
+        motion_state_start = int(motion_state.get("start_idx"))
+        motion_state_end = int(motion_state.get("end_idx"))
+        _validate_legal(motion_state_start, legal_set, "motion_state start")
+        _validate_legal(motion_state_end, legal_set, "motion_state end")
+        if previous_end is not None and int(motion_state_start) != int(previous_end):
             raise RuntimeError(
-                "motion segments must join with shared endpoints: prev_end={} current_start={}".format(
+                "motion_states must join with shared endpoints: prev_end={} current_start={}".format(
                     int(previous_end),
-                    int(seg_start),
+                    int(motion_state_start),
                 )
             )
 
-        segment_legal = _legal_between(legal_positions, seg_start, seg_end)
-        states = list(states_by_seg.get(seg_id) or [])
+        motion_state_legal = _legal_between(legal_positions, motion_state_start, motion_state_end)
+        states = list(states_by_motion_state.get(motion_state_id) or [])
         if not states:
-            raise RuntimeError("semantic states missing for motion segment {}".format(seg_id))
-        if int(states[0].get("start_idx", states[0].get("anchor_idx", -1))) != int(seg_start):
-            raise RuntimeError("first semantic state must start at motion segment start: {}".format(seg_id))
+            raise RuntimeError("semantic states missing for motion_state {}".format(motion_state_id))
+        if int(states[0].get("start_idx", states[0].get("semantic_state_start_idx", -1))) != int(motion_state_start):
+            raise RuntimeError("first semantic state must start at motion_state start: {}".format(motion_state_id))
 
-        semantic_cuts = _semantic_cut_candidates(states, segment_legal, legal_set, allowed_deltas, seg_start, seg_end, diagnostics)
-        cut_points = _build_cut_points(seg_start, seg_end, segment_legal, allowed_deltas, semantic_cuts)
-        anchor_lookup = dict(anchors_by_seg.get(seg_id) or {})
+        semantic_cuts = _semantic_cut_candidates(
+            states,
+            motion_state_legal,
+            legal_set,
+            allowed_deltas,
+            motion_state_start,
+            motion_state_end,
+            diagnostics,
+        )
+        cut_points = _build_cut_points(motion_state_start, motion_state_end, motion_state_legal, allowed_deltas, semantic_cuts)
+        semantic_event_lookup = dict(semantic_events_by_motion_state.get(motion_state_id) or {})
         for start_idx, end_idx in zip(cut_points[:-1], cut_points[1:]):
             delta = int(end_idx) - int(start_idx)
             length = int(delta + 1)
             if delta not in allowed_deltas or length not in allowed_num_frames:
                 raise RuntimeError(
-                    "generation unit span is not allowed: seg_id={} start={} end={} delta={} length={}".format(
-                        seg_id,
+                    "generation unit span is not allowed: motion_state_id={} start={} end={} delta={} length={}".format(
+                        motion_state_id,
                         start_idx,
                         end_idx,
                         delta,
@@ -241,43 +272,37 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
                     }
                 )
             unit_id = "unit_{:04d}".format(int(len(units)))
-            start_anchor = _as_dict(anchor_lookup.get(int(start_idx)))
-            end_anchor = _as_dict(anchor_lookup.get(int(end_idx)))
+            end_event = _as_dict(semantic_event_lookup.get(int(end_idx)))
+            unit_boundary_sources = _unit_boundary_sources(end_idx, motion_state_start, motion_state_end, end_event)
             units.append(
                 {
                     "unit_id": str(unit_id),
                     "start_idx": int(start_idx),
                     "end_idx": int(end_idx),
-                    "anchor_start_idx": int(start_idx),
-                    "anchor_end_idx": int(end_idx),
+                    "unit_start": int(start_idx),
+                    "unit_end": int(end_idx),
                     "length": int(length),
                     "duration_frames": int(length),
                     "duration_sec": float(delta) / float(max(int(prepare.get("target_fps", legal_grid.get("fps", 1)) or 1), 1)),
                     "start_abs_time_sec": _time_at(prepare, int(start_idx)),
                     "end_abs_time_sec": _time_at(prepare, int(end_idx)),
-                    "motion_label": str(segment.get("motion_label", "") or "mixed"),
-                    "seg_id": str(seg_id),
-                    "motion_segment_index": int(seg_index),
+                    "motion_state_id": str(motion_state_id),
+                    "motion_label": str(motion_state.get("motion_label", "") or "mixed"),
+                    "motion_state_index": int(motion_state_index),
                     "semantic_state_id": str(semantic_state_id),
-                    "semantic_anchor_idx": int(state.get("anchor_idx", state.get("start_idx"))),
-                    "semantic_state_anchor_idx": int(state.get("anchor_idx", state.get("start_idx"))),
+                    "semantic_state_start_idx": int(state.get("semantic_state_start_idx", state.get("start_idx"))),
                     "semantic_state_overlap_ratio": float(overlap_ratio),
-                    "anchor_span": {
-                        "start_anchor": int(start_idx),
-                        "end_anchor": int(end_idx),
-                        "start_reason": str(start_anchor.get("reason", "legal_grid") or "legal_grid"),
-                        "end_reason": str(end_anchor.get("reason", "legal_grid") or "legal_grid"),
-                    },
+                    "unit_boundary_sources": list(unit_boundary_sources),
                     "prompt_ref": {
                         "artifact_path": "encode/prompts.json",
                         "unit_id": str(unit_id),
                     },
-                    "scene_label": "motion_segment_{:04d}".format(int(seg_index)),
+                    "scene_label": "motion_state_{:04d}".format(int(motion_state_index)),
                     "is_valid_for_decode": True,
-                    "source_segment_ids": [int(seg_index)],
+                    "source_motion_state_ids": [str(motion_state_id)],
                 }
             )
-        previous_end = int(seg_end)
+        previous_end = int(motion_state_end)
 
     if not units:
         raise RuntimeError("generation unit builder produced zero units")
@@ -291,10 +316,10 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
                     units[idx]["start_idx"],
                 )
             )
-        if str(units[idx - 1]["seg_id"]) != str(units[idx]["seg_id"]):
-            prev_seg = segment_by_id[str(units[idx - 1]["seg_id"])]
-            if int(units[idx - 1]["end_idx"]) != int(prev_seg.get("end_idx")):
-                raise RuntimeError("generation unit segment transition does not land on motion segment boundary")
+        if str(units[idx - 1]["motion_state_id"]) != str(units[idx]["motion_state_id"]):
+            prev_motion_state = motion_state_by_id[str(units[idx - 1]["motion_state_id"])]
+            if int(units[idx - 1]["end_idx"]) != int(prev_motion_state.get("end_idx")):
+                raise RuntimeError("generation unit motion_state transition does not land on motion_boundary")
 
     payload = {
         "version": 2,
@@ -308,9 +333,12 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
         "summary": {
             "unit_count": int(len(units)),
             "decode_valid_unit_count": int(len([item for item in units if item.get("is_valid_for_decode")])),
-            "motion_segment_count": int(len(list(_as_dict(motion_segments).get("segments") or []))),
-            "semantic_state_count": int(sum(len(items) for items in states_by_seg.values())),
-            "shared_anchor_count": int(max(0, len(units) - 1)),
+            "motion_state_count": int(len(list(_as_dict(motion_segments).get("motion_states") or []))),
+            "semantic_state_count": int(sum(len(items) for items in states_by_motion_state.values())),
+            "unit_length_guard_count": int(
+                len([item for item in units if "unit_length_guard" in list(item.get("unit_boundary_sources") or [])])
+            ),
+            "shared_unit_boundary_count": int(max(0, len(units) - 1)),
         },
     }
     if out_path is not None:
