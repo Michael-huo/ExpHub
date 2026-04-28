@@ -97,14 +97,14 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
     generation_units_path = paths.encode_generation_units_path
     prompts_path = paths.encode_prompts_path
 
-    log_info("encode pass1 motion_segment start")
+    log_info("encode pass1 motion_state start")
     motion_segments = build_motion_segments(
         prepare_result=prepare_result,
         frames_dir=paths.prepare_frames_dir,
         out_path=motion_segments_path,
     )
 
-    log_info("encode pass1 semantic_anchor start backend=semantic_openclip")
+    log_info("encode pass1 semantic state tracking start backend=semantic_openclip caption_backend=blip2")
     runtime.step_runner.run_env_python(
         _semantic_anchor_cmd(
             paths,
@@ -128,6 +128,18 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         motion_segments=motion_segments,
         semantic_anchors=semantic_anchors,
         out_path=generation_units_path,
+    )
+    log_info(
+        "generation units generated count={} unit_length_guard_count={}".format(
+            int(len(list(dict(generation_units).get("units") or []))),
+            int(
+                dict(dict(generation_units).get("summary") or {}).get(
+                    "unit_length_guard_count",
+                    0,
+                )
+                or 0
+            ),
+        )
     )
 
     log_info("encode pass1 synthetic_prompt start")

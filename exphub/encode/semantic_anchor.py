@@ -19,9 +19,9 @@ DEFAULT_BLIP2_MODEL = "Salesforce/blip2-opt-2.7b"
 CAPTION_INSTRUCTION = "Briefly describe the visible scene for first-person video generation."
 DEFAULT_CANDIDATE_STRIDE = 24
 DEFAULT_TEXT_IMAGE_DROP_THRESHOLD = 0.05
-DEFAULT_MIN_ANCHOR_GAP = 24
+DEFAULT_MIN_SEMANTIC_UPDATE_GAP = 24
 DEFAULT_LOW_SIMILARITY_PATIENCE = 2
-DEFAULT_MAX_STATE_DURATION = 96
+DEFAULT_MAX_UNIT_SPAN_FRAMES = 96
 
 _LOW_VALUE_PREFIXES = (
     "the scene is",
@@ -146,7 +146,7 @@ class _OpenClipSession:
             "embedding_pretrained": self.pretrained,
             "embedding_device": self.device,
             "embedding_dim": int(embedding_dim),
-            "anchor_policy": "text_image_similarity_drop",
+            "semantic_state_policy": "text_image_similarity_drop",
         }
 
 
@@ -215,26 +215,44 @@ def _candidate_positions(candidates, start_idx, end_idx, stride):
     return out
 
 
-def _choose_duration_anchor(candidates, current_idx, end_idx, max_state_duration):
-    limit = min(int(end_idx), int(current_idx) + int(max_state_duration))
+def _choose_unit_length_guard_boundary(candidates, current_idx, end_idx, max_unit_span_frames):
+    limit = min(int(end_idx), int(current_idx) + int(max_unit_span_frames))
     viable = [int(idx) for idx in candidates if int(current_idx) < int(idx) < int(end_idx) and int(idx) <= limit]
     if not viable:
         return None
     return int(max(viable))
 
 
-def _plan_state_anchors_for_segment(seg_id, seg_start, seg_end, candidates, policy):
-    if not candidates or int(candidates[0]) != int(seg_start) or int(candidates[-1]) != int(seg_end):
-        raise RuntimeError("motion segment boundaries must be legal: {}".format(seg_id))
-    anchors = [{"frame_idx": int(seg_start), "reason": "segment_start", "score": 0.0}]
-    current = int(seg_start)
-    while int(seg_end) - int(current) > int(policy["max_state_duration"]):
-        chosen = _choose_duration_anchor(candidates, current, seg_end, policy["max_state_duration"])
+def _plan_semantic_events_for_motion_state(motion_state_id, motion_state_start, motion_state_end, candidates, policy):
+    if (
+        not candidates
+        or int(candidates[0]) != int(motion_state_start)
+        or int(candidates[-1]) != int(motion_state_end)
+    ):
+        raise RuntimeError("motion_state boundaries must be legal: {}".format(motion_state_id))
+    events = [
+        {
+            "frame_idx": int(motion_state_start),
+            "event_type": "semantic_state_start",
+            "reason": "semantic_state_start",
+            "score": 0.0,
+        }
+    ]
+    current = int(motion_state_start)
+    while int(motion_state_end) - int(current) > int(policy["max_unit_span_frames"]):
+        chosen = _choose_unit_length_guard_boundary(candidates, current, motion_state_end, policy["max_unit_span_frames"])
         if chosen is None:
             break
-        anchors.append({"frame_idx": int(chosen), "reason": "duration_fallback", "score": 0.0})
+        events.append(
+            {
+                "frame_idx": int(chosen),
+                "event_type": "unit_length_guard",
+                "reason": "max_unit_span_frames",
+                "score": 0.0,
+            }
+        )
         current = int(chosen)
-    return anchors
+    return events
 
 
 def _run_blip2_caption_backend(unique_items, prompt_python, prompt_blip2_model, exphub_root):
@@ -251,8 +269,8 @@ def _run_blip2_caption_backend(unique_items, prompt_python, prompt_blip2_model, 
     env["PYTHONPATH"] = str(repo_root) if not old_pythonpath else "{}:{}".format(repo_root, old_pythonpath)
 
     with tempfile.TemporaryDirectory(prefix="exphub_blip2_") as tmp_dir:
-        input_json = Path(tmp_dir) / "semantic_anchor_blip2_input.json"
-        output_json = Path(tmp_dir) / "semantic_anchor_blip2_output.json"
+        input_json = Path(tmp_dir) / "semantic_state_blip2_input.json"
+        output_json = Path(tmp_dir) / "semantic_state_blip2_output.json"
         write_json_atomic(
             input_json,
             {
@@ -278,7 +296,7 @@ def _run_blip2_caption_backend(unique_items, prompt_python, prompt_blip2_model, 
             "--num-beams",
             "3",
         ]
-        log_info("BLIP-2 caption backend start semantic_anchor_frames={} model={}".format(len(unique_items), prompt_blip2_model))
+        log_info("BLIP-2 caption backend start semantic_state_frames={} model={}".format(len(unique_items), prompt_blip2_model))
         proc = subprocess.run(
             cmd,
             cwd=str(repo_root),
@@ -310,7 +328,7 @@ def _run_blip2_caption_backend(unique_items, prompt_python, prompt_blip2_model, 
     return payload, caption_by_path
 
 
-def _similarity_rows(candidates, normalized_images, pos_to_embed, text_emb, reference_sim, current_anchor_idx):
+def _similarity_rows(candidates, normalized_images, pos_to_embed, text_emb, reference_sim, semantic_state_start_idx):
     rows = []
     min_similarity = float(reference_sim)
     if text_emb is None:
@@ -324,9 +342,9 @@ def _similarity_rows(candidates, normalized_images, pos_to_embed, text_emb, refe
         rows.append(
             {
                 "frame_idx": int(frame_idx),
-                "similarity": float(sim),
-                "drop": float(reference_sim - sim),
-                "frames_from_anchor": int(frame_idx) - int(current_anchor_idx),
+                "text_image_similarity": float(sim),
+                "text_image_drop": float(reference_sim - sim),
+                "frames_from_semantic_state_start": int(frame_idx) - int(semantic_state_start_idx),
             }
         )
     return rows, float(min_similarity)
@@ -341,9 +359,9 @@ def build_semantic_anchors(
     prompt_blip2_model=DEFAULT_BLIP2_MODEL,
     candidate_stride=DEFAULT_CANDIDATE_STRIDE,
     text_image_drop_threshold=DEFAULT_TEXT_IMAGE_DROP_THRESHOLD,
-    min_anchor_gap=DEFAULT_MIN_ANCHOR_GAP,
+    min_semantic_update_gap=DEFAULT_MIN_SEMANTIC_UPDATE_GAP,
     low_similarity_patience=DEFAULT_LOW_SIMILARITY_PATIENCE,
-    max_state_duration=DEFAULT_MAX_STATE_DURATION,
+    max_unit_span_frames=DEFAULT_MAX_UNIT_SPAN_FRAMES,
     exphub_root=None,
 ):
     started = time.time()
@@ -358,9 +376,9 @@ def build_semantic_anchors(
     policy = {
         "candidate_stride": int(candidate_stride),
         "text_image_drop_threshold": float(text_image_drop_threshold),
-        "min_anchor_gap": int(min_anchor_gap),
+        "min_semantic_update_gap": int(min_semantic_update_gap),
         "low_similarity_patience": int(low_similarity_patience),
-        "max_state_duration": int(max_state_duration),
+        "max_unit_span_frames": int(max_unit_span_frames),
     }
 
     clip = _OpenClipSession()
@@ -371,27 +389,34 @@ def build_semantic_anchors(
     backend_meta = clip.meta(image_embeddings.shape[1] if image_embeddings.ndim == 2 else 0)
     backend_meta["caption_model"] = str(prompt_blip2_model or DEFAULT_BLIP2_MODEL)
 
-    planned_segments = []
+    planned_motion_states = []
     unique_by_path = {}
     unique_items = []
-    for raw_segment in list(_as_dict(motion_segments).get("segments") or []):
-        segment = _as_dict(raw_segment)
-        seg_id = str(segment.get("seg_id", "") or "")
-        seg_start = int(segment.get("start_idx"))
-        seg_end = int(segment.get("end_idx"))
-        candidates = _legal_between(legal_positions, seg_start, seg_end)
-        state_anchors = _plan_state_anchors_for_segment(seg_id, seg_start, seg_end, candidates, policy)
-        planned_segments.append(
+    for raw_motion_state in list(_as_dict(motion_segments).get("motion_states") or []):
+        motion_state = _as_dict(raw_motion_state)
+        motion_state_id = str(motion_state.get("motion_state_id", "") or "")
+        motion_state_start = int(motion_state.get("start_idx"))
+        motion_state_end = int(motion_state.get("end_idx"))
+        candidates = _legal_between(legal_positions, motion_state_start, motion_state_end)
+        semantic_events = _plan_semantic_events_for_motion_state(
+            motion_state_id,
+            motion_state_start,
+            motion_state_end,
+            candidates,
+            policy,
+        )
+        planned_motion_states.append(
             {
-                "seg_id": str(seg_id),
-                "start_idx": int(seg_start),
-                "end_idx": int(seg_end),
+                "motion_state_id": str(motion_state_id),
+                "motion_label": str(motion_state.get("motion_label", "") or "mixed"),
+                "start_idx": int(motion_state_start),
+                "end_idx": int(motion_state_end),
                 "candidates": candidates,
-                "state_anchors": state_anchors,
+                "semantic_events": semantic_events,
             }
         )
-        for anchor in state_anchors:
-            frame_idx = int(anchor["frame_idx"])
+        for event in semantic_events:
+            frame_idx = int(event["frame_idx"])
             frame_path = Path(frames[frame_idx]).resolve()
             abs_path = str(frame_path)
             if abs_path not in unique_by_path:
@@ -413,110 +438,131 @@ def build_semantic_anchors(
     text_by_path = {str(item["frame_path"]): text_embeddings[idx] for idx, item in enumerate(unique_items)}
     semantic_by_path = {str(item["frame_path"]): prompt_semantics[idx] for idx, item in enumerate(unique_items)}
 
-    segment_payloads = []
+    motion_state_payloads = []
     all_similarity_rows = []
+    unit_length_guard_count = 0
     state_counter = 0
-    for planned in planned_segments:
-        seg_id = str(planned["seg_id"])
-        seg_start = int(planned["start_idx"])
-        seg_end = int(planned["end_idx"])
+    for planned in planned_motion_states:
+        motion_state_id = str(planned["motion_state_id"])
+        motion_state_start = int(planned["start_idx"])
+        motion_state_end = int(planned["end_idx"])
         candidates = list(planned["candidates"])
-        candidate_rows = _candidate_positions(candidates, seg_start, seg_end, policy["candidate_stride"])
-        state_anchors = list(planned["state_anchors"])
+        candidate_rows = _candidate_positions(candidates, motion_state_start, motion_state_end, policy["candidate_stride"])
+        semantic_events = list(planned["semantic_events"])
         semantic_states = []
-        anchor_items = []
-        for local_idx, anchor in enumerate(state_anchors):
-            anchor_idx = int(anchor["frame_idx"])
-            next_anchor_idx = int(state_anchors[local_idx + 1]["frame_idx"]) if local_idx + 1 < len(state_anchors) else int(seg_end)
-            frame_path = str(Path(frames[anchor_idx]).resolve())
+        event_items = []
+        for local_idx, event in enumerate(semantic_events):
+            semantic_state_start_idx = int(event["frame_idx"])
+            semantic_state_end_idx = (
+                int(semantic_events[local_idx + 1]["frame_idx"])
+                if local_idx + 1 < len(semantic_events)
+                else int(motion_state_end)
+            )
+            frame_path = str(Path(frames[semantic_state_start_idx]).resolve())
             caption = caption_by_path.get(frame_path, "")
             prompt_semantic = semantic_by_path.get(frame_path, normalize_caption_to_semantic(caption))
             text_emb = text_by_path.get(frame_path)
-            image_pos = pos_to_embed[int(anchor_idx)]
-            anchor_sim = float(np.dot(normalized_images[image_pos], text_emb)) if text_emb is not None else 0.0
-            scan_candidates = [idx for idx in candidate_rows if int(anchor_idx) <= int(idx) <= int(next_anchor_idx)]
-            rows, min_similarity = _similarity_rows(scan_candidates, normalized_images, pos_to_embed, text_emb, anchor_sim, anchor_idx)
-            for row in rows:
-                all_similarity_rows.append({"seg_id": str(seg_id), "semantic_state_id": "sem_{:04d}".format(state_counter), **row})
             state_id = "sem_{:04d}".format(state_counter)
+            image_pos = pos_to_embed[int(semantic_state_start_idx)]
+            text_image_similarity = float(np.dot(normalized_images[image_pos], text_emb)) if text_emb is not None else 0.0
+            scan_candidates = [
+                idx for idx in candidate_rows if int(semantic_state_start_idx) <= int(idx) <= int(semantic_state_end_idx)
+            ]
+            rows, min_similarity = _similarity_rows(
+                scan_candidates,
+                normalized_images,
+                pos_to_embed,
+                text_emb,
+                text_image_similarity,
+                semantic_state_start_idx,
+            )
+            for row in rows:
+                all_similarity_rows.append(
+                    {"motion_state_id": str(motion_state_id), "semantic_state_id": str(state_id), **row}
+                )
             state_counter += 1
+            event_type = str(event.get("event_type", "semantic_state_start") or "semantic_state_start")
+            state_reason = "unit_length_guard_refresh" if event_type == "unit_length_guard" else "semantic_state_start"
+            if event_type == "unit_length_guard":
+                unit_length_guard_count += 1
             semantic_states.append(
                 {
                     "semantic_state_id": str(state_id),
-                    "seg_id": str(seg_id),
-                    "start_idx": int(anchor_idx),
-                    "end_idx": int(next_anchor_idx),
-                    "anchor_idx": int(anchor_idx),
+                    "motion_state_id": str(motion_state_id),
+                    "start_idx": int(semantic_state_start_idx),
+                    "end_idx": int(semantic_state_end_idx),
+                    "semantic_state_start_idx": int(semantic_state_start_idx),
                     "caption": str(caption),
                     "prompt_semantic": str(prompt_semantic),
-                    "reason": str(anchor.get("reason", "segment_start") or "segment_start"),
-                    "similarity_at_anchor": float(anchor_sim),
-                    "min_similarity": float(min_similarity),
+                    "reason": str(state_reason),
+                    "text_image_similarity_at_start": float(text_image_similarity),
+                    "min_text_image_similarity": float(min_similarity),
                     "caption_frame": {
-                        "frame_idx": int(anchor_idx),
-                        "frame_path": _display_frame_path(frames[anchor_idx], out_path),
+                        "frame_idx": int(semantic_state_start_idx),
+                        "frame_path": _display_frame_path(frames[semantic_state_start_idx], out_path),
                     },
                     "diagnostics": {
                         "candidate_count": int(len(scan_candidates)),
-                        "reference_similarity": float(anchor_sim),
+                        "reference_text_image_similarity": float(text_image_similarity),
                         "low_similarity_count": int(
-                            len([row for row in rows if float(row["drop"]) > float(policy["text_image_drop_threshold"])])
+                            len(
+                                [
+                                    row
+                                    for row in rows
+                                    if float(row["text_image_drop"]) > float(policy["text_image_drop_threshold"])
+                                ]
+                            )
                         ),
                     },
                 }
             )
-            anchor_items.append(
+            event_items.append(
                 {
-                    "frame_idx": int(anchor_idx),
-                    "abs_time_sec": _abs_time_at(prepare, int(anchor_idx)),
-                    "reason": str(anchor.get("reason", "segment_start") or "segment_start"),
+                    "frame_idx": int(semantic_state_start_idx),
+                    "abs_time_sec": _abs_time_at(prepare, int(semantic_state_start_idx)),
+                    "event_type": str(event_type),
+                    "reason": str(event.get("reason", state_reason) or state_reason),
                     "semantic_state_id": str(state_id),
-                    "score": float(anchor_sim),
+                    "text_image_similarity": float(text_image_similarity),
                 }
             )
-        anchor_items.append(
+        motion_state_payloads.append(
             {
-                "frame_idx": int(seg_end),
-                "abs_time_sec": _abs_time_at(prepare, int(seg_end)),
-                "reason": "segment_boundary",
-            }
-        )
-        segment_payloads.append(
-            {
-                "seg_id": str(seg_id),
-                "start_idx": int(seg_start),
-                "end_idx": int(seg_end),
+                "motion_state_id": str(motion_state_id),
+                "start_idx": int(motion_state_start),
+                "end_idx": int(motion_state_end),
+                "motion_label": str(planned.get("motion_label", "") or "mixed"),
                 "semantic_states": semantic_states,
-                "anchors": anchor_items,
-                "anchor_indices": [int(item["frame_idx"]) for item in anchor_items],
-                "anchor_items": anchor_items,
-                "similarity_rows": [row for row in all_similarity_rows if str(row.get("seg_id")) == str(seg_id)],
+                "semantic_events": event_items,
+                "similarity_rows": [row for row in all_similarity_rows if str(row.get("motion_state_id")) == str(motion_state_id)],
             }
         )
 
     payload = {
         "version": 2,
-        "source": "encode.semantic_anchor.text_image.v1",
+        "source": "encode.semantic_state.text_image.v1",
         "backend_meta": {
             **backend_meta,
             "caption_model": str(blip2_payload.get("model", prompt_blip2_model or DEFAULT_BLIP2_MODEL)),
         },
         "policy": policy,
-        "segments": segment_payloads,
+        "motion_states": motion_state_payloads,
         "similarity_rows": all_similarity_rows,
         "summary": {
-            "motion_segment_count": int(len(segment_payloads)),
-            "semantic_state_count": int(sum(len(item.get("semantic_states") or []) for item in segment_payloads)),
+            "motion_state_count": int(len(motion_state_payloads)),
+            "semantic_state_count": int(sum(len(item.get("semantic_states") or []) for item in motion_state_payloads)),
             "blip2_caption_count": int(len(unique_items)),
+            "unit_length_guard_count": int(unit_length_guard_count),
             "elapsed_sec": float(time.time() - started),
         },
     }
     if out_path is not None:
         write_json_atomic(out_path, payload, indent=2)
         log_info(
-            "semantic states generated: states={} captions={} path={}".format(
+            "semantic states generated: states={} captions={} unit_length_guard_count={} path={}".format(
                 payload["summary"]["semantic_state_count"],
                 payload["summary"]["blip2_caption_count"],
+                payload["summary"]["unit_length_guard_count"],
                 Path(out_path).resolve(),
             )
         )
@@ -534,9 +580,9 @@ def _build_arg_parser():
     parser.add_argument("--prompt_blip2_model", default=os.environ.get("EXPHUB_BLIP2_MODEL", DEFAULT_BLIP2_MODEL))
     parser.add_argument("--candidate_stride", type=int, default=DEFAULT_CANDIDATE_STRIDE)
     parser.add_argument("--text_image_drop_threshold", type=float, default=DEFAULT_TEXT_IMAGE_DROP_THRESHOLD)
-    parser.add_argument("--min_anchor_gap", type=int, default=DEFAULT_MIN_ANCHOR_GAP)
+    parser.add_argument("--min_semantic_update_gap", type=int, default=DEFAULT_MIN_SEMANTIC_UPDATE_GAP)
     parser.add_argument("--low_similarity_patience", type=int, default=DEFAULT_LOW_SIMILARITY_PATIENCE)
-    parser.add_argument("--max_state_duration", type=int, default=DEFAULT_MAX_STATE_DURATION)
+    parser.add_argument("--max_unit_span_frames", type=int, default=DEFAULT_MAX_UNIT_SPAN_FRAMES)
     return parser
 
 
@@ -553,9 +599,9 @@ def main(argv=None):
         prompt_blip2_model=str(args.prompt_blip2_model or DEFAULT_BLIP2_MODEL),
         candidate_stride=int(args.candidate_stride),
         text_image_drop_threshold=float(args.text_image_drop_threshold),
-        min_anchor_gap=int(args.min_anchor_gap),
+        min_semantic_update_gap=int(args.min_semantic_update_gap),
         low_similarity_patience=int(args.low_similarity_patience),
-        max_state_duration=int(args.max_state_duration),
+        max_unit_span_frames=int(args.max_unit_span_frames),
     )
 
 
