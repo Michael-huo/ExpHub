@@ -2,7 +2,7 @@
   "schema": "prompt_manifest",
   "prompt_profile": "base_motion_prompt",
   "positive": {
-    "base_prompt": "first-person viewpoint continuity, stable scene geometry, consistent perspective and camera alignment, stable exposure and white balance, temporal coherence without flicker, stable foreground-background layout",
+    "base_prompt": "continuous viewpoint, stable scene geometry, coherent depth structure, stable foreground-background layout, consistent object scale, repeatable local edges and corner-like details, stable exposure and white balance, temporal coherence",
     "motion_prompts": {
       "stop": "near-static camera pose, stable still-scene geometry, preserved fine structure",
       "forward": "smooth forward egomotion, clear depth progression, stable perspective",
@@ -12,7 +12,7 @@
     }
   },
   "negative": {
-    "negative_prompt": "blurry, low detail, low quality, distorted geometry, warped structure, flicker, temporal inconsistency, drifting objects, duplicated objects, broken perspective, unstable camera, sudden viewpoint change, ghosting, artifacts, oversmoothing"
+    "negative_prompt": "blurry, low detail, low quality, distorted geometry, warped structure, broken perspective, inconsistent scale, flicker, temporal inconsistency, unstable edges, drifting textures, texture swimming, drifting objects, duplicated objects, hallucinated objects, unstable camera, camera shake, sudden viewpoint change, ghosting, motion smear, artifacts, oversmoothing"
   },
   "composition": {
     "positive_parts": [
