@@ -275,6 +275,7 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
     total_time = sum(float(x) for x in step_times.values())
 
     eval_dir = exp_dir / "eval"
+    encode_result = _read_json_dict(exp_dir / "encode" / "encode_result.json")
     traj_metrics = _read_json_dict(eval_dir / "eval_traj_report.json")
     decode_generation = _decode_generation_summary(exp_dir)
 
@@ -301,6 +302,7 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
         "exp_dir": str(exp_dir),
         "total_time": float(total_time),
         "phase_times": phase_times,
+        "encode_profile": encode_result.get("profile") if isinstance(encode_result.get("profile"), dict) else {},
         "decode_generation": decode_generation,
         "quality": {
             "ape_rmse": _pick_float(traj_metrics, ["ape_trans", "rmse"]),
@@ -339,6 +341,8 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     report = _load_experiment_report(exp_dir, step_times)
     total_time = float(report.get("total_time") or 0.0)
     phase_times = dict(report.get("phase_times") or {})
+    encode_profile = dict(report.get("encode_profile") or {})
+    encode_motion_profile = dict(encode_profile.get("motion") or {})
     decode_generation = dict(report.get("decode_generation") or {})
     quality = dict(report.get("quality") or {})
     compression = dict(report.get("compression") or {})
@@ -351,6 +355,30 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
         value = _as_float_or_none(phase_times.get(phase_name))
         if value is not None:
             time_rows.append((phase_name, _fmt_phase_seconds(value, total_time)))
+
+    encode_rows = []
+    _add_row(encode_rows, "encode.motion_segment_sec", _as_float_or_none(encode_profile.get("motion_segment_sec")), _fmt_seconds)
+    _add_row(encode_rows, "encode.motion.read_gray_sec", _as_float_or_none(encode_motion_profile.get("read_gray_sec")), _fmt_seconds)
+    _add_row(
+        encode_rows,
+        "encode.motion.motion_estimation_sec",
+        _as_float_or_none(encode_motion_profile.get("motion_estimation_sec")),
+        _fmt_seconds,
+    )
+    _add_row(
+        encode_rows,
+        "encode.motion.phase_correlation_sec",
+        _as_float_or_none(encode_motion_profile.get("phase_correlation_sec")),
+        _fmt_seconds,
+    )
+    _add_row(
+        encode_rows,
+        "encode.motion.orb_tracking_sec",
+        _as_float_or_none(encode_motion_profile.get("orb_tracking_sec")),
+        _fmt_seconds,
+    )
+    _add_row(encode_rows, "encode.semantic_anchor_sec", _as_float_or_none(encode_profile.get("semantic_anchor_sec")), _fmt_seconds)
+    _add_row(encode_rows, "encode.result_writer_sec", _as_float_or_none(encode_profile.get("result_writer_sec")), _fmt_seconds)
 
     detail_rows = []
     backend = str(decode_generation.get("backend") or "").strip()
@@ -393,6 +421,10 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     _info(sep)
     _info("[Time]")
     _print_rows(time_rows)
+    if encode_rows:
+        _info(div)
+        _info("[Encode]")
+        _print_rows(encode_rows)
     if detail_rows:
         _info(div)
         _print_rows(detail_rows)
