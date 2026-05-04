@@ -74,8 +74,38 @@ def _semantic_anchor_cmd(paths, motion_segments_path, semantic_anchors_path):
     ]
 
 
+def _patch_encode_result_profile(result_path, encode_profile):
+    payload = read_json_dict(result_path)
+    if not payload:
+        return
+    incoming_profile = dict(encode_profile or {})
+    existing_profile = payload.get("profile")
+    existing_motion = {}
+    if isinstance(existing_profile, dict) and isinstance(existing_profile.get("motion"), dict):
+        for key in [
+            "version",
+            "read_gray_sec",
+            "motion_estimation_sec",
+            "phase_correlation_sec",
+            "orb_tracking_sec",
+            "write_json_sec",
+            "total_sec",
+        ]:
+            if key in existing_profile["motion"]:
+                existing_motion[key] = existing_profile["motion"][key]
+    profile = {}
+    for key in ["version", "total_sec", "motion_segment_sec", "semantic_anchor_sec", "result_writer_sec"]:
+        if key in incoming_profile:
+            profile[key] = incoming_profile[key]
+    if existing_motion:
+        profile["motion"] = existing_motion
+    payload["profile"] = profile
+    write_json_atomic(result_path, payload, indent=2)
+
+
 def _run_single_encode(runtime, paths, log_name="encode.log"):
-    total_started = time.time()
+    total_started_wall = time.time()
+    total_started_perf = time.perf_counter()
     ensure_file(paths.prepare_result_path, "prepare result")
     ensure_dir(paths.prepare_frames_dir, "prepare frames dir")
     runtime.write_meta_snapshot()
@@ -94,13 +124,16 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
     prompts_path = paths.encode_prompts_path
 
     log_info("encode motion state start")
+    phase_started = time.perf_counter()
     motion_segments = build_motion_segments(
         prepare_result=prepare_result,
         frames_dir=paths.prepare_frames_dir,
         out_path=motion_segments_path,
     )
+    motion_segment_sec = float(time.perf_counter() - phase_started)
 
     log_info("encode visual anchor tracking start backend=openclip_image_embedding")
+    phase_started = time.perf_counter()
     runtime.step_runner.run_env_python(
         _semantic_anchor_cmd(
             paths,
@@ -111,6 +144,7 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         log_name=log_name,
         cwd=runtime.exphub_root,
     )
+    semantic_anchor_sec = float(time.perf_counter() - phase_started)
     ensure_file(semantic_anchors_path, "semantic anchors")
     semantic_anchors = read_json_dict(semantic_anchors_path)
     if not semantic_anchors:
@@ -147,6 +181,14 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
     )
 
     log_info("encode result writer start")
+    encode_profile = {
+        "version": 1,
+        "total_sec": float(time.perf_counter() - total_started_perf),
+        "motion_segment_sec": float(motion_segment_sec),
+        "semantic_anchor_sec": float(semantic_anchor_sec),
+        "result_writer_sec": 0.0,
+    }
+    phase_started = time.perf_counter()
     result_path = write_encode_outputs(
         runtime=runtime,
         prepare_result=prepare_result,
@@ -154,9 +196,15 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         semantic_anchors=semantic_anchors,
         generation_units=generation_units,
         prompts=prompts,
-        elapsed_sec=float(time.time() - total_started),
+        elapsed_sec=float(time.time() - total_started_wall),
         paths=paths,
+        encode_profile=encode_profile,
     )
+    result_writer_sec = float(time.perf_counter() - phase_started)
+    total_sec = float(time.perf_counter() - total_started_perf)
+    encode_profile["result_writer_sec"] = float(result_writer_sec)
+    encode_profile["total_sec"] = float(total_sec)
+    _patch_encode_result_profile(result_path, encode_profile)
     for path, label in [
         (paths.encode_motion_segments_path, "motion segments"),
         (paths.encode_semantic_anchors_path, "semantic anchors"),
@@ -166,6 +214,14 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         (paths.encode_overview_path, "encode overview"),
     ]:
         ensure_file(path, label)
+    log_info(
+        "encode profile: motion={:.2f}s semantic={:.2f}s writer={:.2f}s total={:.2f}s".format(
+            float(motion_segment_sec),
+            float(semantic_anchor_sec),
+            float(result_writer_sec),
+            float(total_sec),
+        )
+    )
     log_info("encode done: {}".format(Path(result_path).resolve()))
     return {
         "prepare_result": prepare_result,

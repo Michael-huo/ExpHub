@@ -1413,6 +1413,15 @@ def _validate_motion_states(motion_states, legal_positions, num_frames):
 
 def build_motion_segments(prepare_result, frames_dir, out_path=None):
     started = time.time()
+    profile = {
+        "version": 1,
+        "read_gray_sec": 0.0,
+        "motion_estimation_sec": 0.0,
+        "phase_correlation_sec": 0.0,
+        "orb_tracking_sec": 0.0,
+        "write_json_sec": 0.0,
+        "total_sec": 0.0,
+    }
     prepare = _as_dict(prepare_result)
     frame_dir = ensure_dir(frames_dir, "prepare frames dir")
     frames = list_frames_sorted(frame_dir)
@@ -1435,10 +1444,20 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
         )
 
     log_info("motion estimation backend=phase_correlation tracking_backend=orb_quality")
+    phase_started = time.perf_counter()
     grays = [_read_gray(frame) for frame in frames]
+    profile["read_gray_sec"] = float(time.perf_counter() - phase_started)
+    orb_started = time.perf_counter()
     orb_rows = _orb_pairs(grays)
+    profile["orb_tracking_sec"] = float(time.perf_counter() - orb_started)
     loss_intervals = _loss_intervals(orb_rows)
+    phase_started = time.perf_counter()
     pc_rows = _pc_evidence(grays)
+    motion_estimation_sec = float(time.perf_counter() - phase_started)
+    profile["motion_estimation_sec"] = float(motion_estimation_sec)
+    # PC timing is the full phase-correlation evidence stage, including block statistics
+    # and response smoothing; it is not the pure cv2.phaseCorrelate kernel time.
+    profile["phase_correlation_sec"] = float(motion_estimation_sec)
     pair_states = _estimate_states(pc_rows, loss_intervals)
     windows = _project_legal(pair_states, orb_rows, loss_intervals, legal_positions)
     projected_window_count = int(len(windows))
@@ -1466,30 +1485,32 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
         "strong_turn_short_segment_count": int(consolidation_meta.get("strong_turn_short_segment_count", 0)),
     }
 
+    motion_boundaries = [
+        {
+            "frame_idx": int(item["start_idx"]),
+            "motion_state_id": str(item["motion_state_id"]),
+            "boundary_type": "motion_state_start",
+        }
+        for item in motion_states
+    ] + (
+        [
+            {
+                "frame_idx": int(motion_states[-1]["end_idx"]),
+                "motion_state_id": str(motion_states[-1]["motion_state_id"]),
+                "boundary_type": "motion_state_end",
+            }
+        ]
+        if motion_states
+        else []
+    )
+    summary_elapsed_sec = float(time.time() - started)
+    profile["total_sec"] = float(summary_elapsed_sec)
     payload = {
         "source": "encode.motion_state",
         "fps": int(fps_value),
         "motion_labels": list(MOTION_LABELS),
         "motion_states": motion_states,
-        "motion_boundaries": [
-            {
-                "frame_idx": int(item["start_idx"]),
-                "motion_state_id": str(item["motion_state_id"]),
-                "boundary_type": "motion_state_start",
-            }
-            for item in motion_states
-        ]
-        + (
-            [
-                {
-                    "frame_idx": int(motion_states[-1]["end_idx"]),
-                    "motion_state_id": str(motion_states[-1]["motion_state_id"]),
-                    "boundary_type": "motion_state_end",
-                }
-            ]
-            if motion_states
-            else []
-        ),
+        "motion_boundaries": motion_boundaries,
         "motion_backend": "phase_correlation",
         "tracking_backend": "orb_quality",
         "tracking_quality": [
@@ -1536,10 +1557,17 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
             "loss_interval_count": int(len(loss_intervals)),
             "diagnostic_figure_count": int(len(diagnostic_figures)),
             "motion_overview_figure": str(motion_overview_figure),
-            "elapsed_sec": float(time.time() - started),
+            "elapsed_sec": float(summary_elapsed_sec),
+            "profile": dict(profile),
         },
     }
     if out_path is not None:
+        write_started = time.perf_counter()
+        write_json_atomic(out_path, payload, indent=2)
+        write_json_sec = float(time.perf_counter() - write_started)
+        payload["summary"]["profile"]["write_json_sec"] = float(write_json_sec)
+        payload["summary"]["profile"]["total_sec"] = float(time.time() - started)
+        payload["summary"]["elapsed_sec"] = float(payload["summary"]["profile"]["total_sec"])
         write_json_atomic(out_path, payload, indent=2)
         log_info(
             "motion states generated: backend=phase_correlation count={} loss_intervals={} path={}".format(

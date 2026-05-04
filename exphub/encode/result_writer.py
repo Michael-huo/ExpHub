@@ -17,6 +17,21 @@ def _motion_label_counts(motion_segments):
     return counts
 
 
+def _build_profile(encode_profile, motion_segments):
+    profile = {}
+    if isinstance(encode_profile, dict):
+        for key in ["version", "total_sec", "motion_segment_sec", "semantic_anchor_sec", "result_writer_sec"]:
+            if key in encode_profile:
+                profile[key] = encode_profile[key]
+    if profile or isinstance(encode_profile, dict):
+        profile["version"] = int(profile.get("version", 1) or 1)
+
+    motion_profile = _as_dict(_as_dict(_as_dict(motion_segments).get("summary")).get("profile"))
+    if motion_profile:
+        profile["motion"] = dict(motion_profile)
+    return profile
+
+
 def _artifact_rel(paths, attr_name):
     if paths is None:
         defaults = {
@@ -36,13 +51,13 @@ def _artifact_rel(paths, attr_name):
         return path.name
 
 
-def _build_encode_result(motion_segments, semantic_anchors, generation_units, prompts, paths=None):
+def _build_encode_result(motion_segments, semantic_anchors, generation_units, prompts, paths=None, encode_profile=None):
     units = list(_as_dict(generation_units).get("units") or [])
     prompt_units = list(_as_dict(prompts).get("units") or [])
     semantic_summary = _as_dict(_as_dict(semantic_anchors).get("summary"))
     semantic_policy = _as_dict(_as_dict(semantic_anchors).get("policy"))
     unit_summary = _as_dict(_as_dict(generation_units).get("summary"))
-    return {
+    result = {
         "source": "encode.result",
         "num_motion_states": int(len(list(_as_dict(motion_segments).get("motion_states") or []))),
         "num_semantic_states": int(semantic_summary.get("semantic_state_count", 0) or 0),
@@ -68,6 +83,10 @@ def _build_encode_result(motion_segments, semantic_anchors, generation_units, pr
             "overview": _artifact_rel(paths, "encode_overview_path"),
         },
     }
+    profile = _build_profile(encode_profile, motion_segments)
+    if profile:
+        result["profile"] = profile
+    return result
 
 
 def write_encode_overview(output_path, motion_segments, semantic_anchors, generation_units):
@@ -212,12 +231,20 @@ def write_encode_outputs(
     prompts,
     elapsed_sec=0.0,
     paths=None,
+    encode_profile=None,
 ):
     del prepare_result, elapsed_sec
     out_paths = paths or runtime.paths
     out_paths.encode_dir.mkdir(parents=True, exist_ok=True)
 
-    encode_result = _build_encode_result(motion_segments, semantic_anchors, generation_units, prompts, paths=out_paths)
+    encode_result = _build_encode_result(
+        motion_segments,
+        semantic_anchors,
+        generation_units,
+        prompts,
+        paths=out_paths,
+        encode_profile=encode_profile,
+    )
 
     write_json_atomic(out_paths.encode_motion_segments_path, motion_segments, indent=2)
     write_json_atomic(out_paths.encode_semantic_anchors_path, semantic_anchors, indent=2)
