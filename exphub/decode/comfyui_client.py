@@ -80,6 +80,7 @@ NODE_SAVE_IMAGE = "75"
 COMFYUI_BACKEND = "comfyui_wan2_2_5b_inp"
 REPORT_FILENAME = "decode_report.json"
 _SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+SHARED_DECODE_SEED_POLICY = "shared_decode_seed"
 
 
 @dataclass
@@ -171,6 +172,15 @@ def _task_cfg(task: dict[str, Any]) -> float:
     if value is None or str(value).strip() == "":
         return 6.0
     return float(value)
+
+
+def _resolve_shared_decode_seed(seed_base: int) -> int:
+    seed_value = int(seed_base)
+    if seed_value == -1:
+        return int(random.SystemRandom().randint(1, 2**31 - 1))
+    if seed_value <= 0:
+        raise ValueError("seed must be a positive integer or -1, got: {}".format(seed_value))
+    return seed_value
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -346,6 +356,9 @@ def _write_comfyui_params(
     fps: int,
     steps: int,
     cfg: float,
+    seed_base: int,
+    seed_policy: str,
+    resolved_seed: int,
     backend_name: str = COMFYUI_BACKEND,
 ) -> dict[str, Any]:
     run_root = Path(run_dir).resolve()
@@ -374,8 +387,11 @@ def _write_comfyui_params(
         "execution_backend": str(backend_name),
         "num_inference_steps": int(steps),
         "guidance_scale": float(cfg),
-        "seed": int(result.actual_seed),
-        "actual_seed": int(result.actual_seed),
+        "seed": int(resolved_seed),
+        "actual_seed": int(resolved_seed),
+        "seed_base": int(seed_base),
+        "resolved_seed": int(resolved_seed),
+        "seed_policy": str(seed_policy),
         "prompt": str(task["prompt"]),
         "negative_prompt": str(task.get("negative_prompt", "") or ""),
         "prompt_source": str(task.get("prompt_source", "prompts.prompt_positive") or "prompts.prompt_positive"),
@@ -980,15 +996,16 @@ def _run_comfyui_unit(
     runtime: Any,
     cfg: dict[str, Any],
     instance: ComfyUIInstance,
-    seed_policy: str,
     seed_base: int,
+    seed_policy: str,
+    resolved_decode_seed: int,
 ) -> dict[str, Any]:
     run_dir = Path(task["output_dir"]).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     width, height = _image_size(task["start_frame_path"])
     steps = _task_steps(task)
     cfg_scale = _task_cfg(task)
-    requested_seed = -1 if seed_policy == "random_per_unit" else seed_base
+    requested_seed = int(resolved_decode_seed)
 
     log_prog(
         "decode generate comfyui: unit={}/{} id={} frames={} seed_request={} instance={} base_url={}".format(
@@ -1012,7 +1029,7 @@ def _run_comfyui_unit(
         height=int(height),
         length=int(task["length"]),
         fps=int(float(runtime.fps_arg)),
-        seed=int(requested_seed),
+        seed=int(resolved_decode_seed),
         steps=int(steps),
         cfg=float(cfg_scale),
     )
@@ -1046,9 +1063,17 @@ def _run_comfyui_unit(
             fps=int(float(runtime.fps_arg)),
             steps=steps,
             cfg=cfg_scale,
+            seed_base=seed_base,
+            seed_policy=seed_policy,
+            resolved_seed=resolved_decode_seed,
             backend_name=COMFYUI_BACKEND,
         )
         actual = _validate_run_output(task, run_dir)
+        params = dict(actual.get("params") or {})
+        report_seed = params.get("seed", task.get("seed"))
+        if report_seed is None or str(report_seed).strip() == "":
+            report_seed = resolved_decode_seed
+        report_seed = int(report_seed)
         return {
             "unit_id": str(task["unit_id"]),
             "status": "success",
@@ -1056,9 +1081,11 @@ def _run_comfyui_unit(
             "start_idx": int(task["start_idx"]),
             "end_idx": int(task["end_idx"]),
             "length": int(task["length"]),
-            "seed": int(result.actual_seed),
-            "actual_seed": int(result.actual_seed),
+            "seed": int(report_seed),
+            "actual_seed": int(report_seed),
             "requested_seed": int(requested_seed),
+            "seed_base": int(seed_base),
+            "resolved_seed": int(resolved_decode_seed),
             "seed_policy": str(seed_policy),
             "instance_name": str(result.instance_name),
             "instance_base_url": str(result.instance_base_url),
@@ -1106,18 +1133,25 @@ def run_comfyui_decode_tasks(
         )
 
     seed_base = int(getattr(runtime.args, "seed_base", -1))
-    seed_policy = "random_per_unit" if seed_base == -1 else "fixed"
-    if seed_base <= 0 and seed_base != -1:
-        raise ValueError("seed must be a positive integer or -1, got: {}".format(seed_base))
+    resolved_decode_seed = _resolve_shared_decode_seed(seed_base)
+    seed_policy = SHARED_DECODE_SEED_POLICY
 
     _check_comfyui_instances_health(instances)
 
+    log_info(
+        "decode seed policy: seed_base={} resolved_seed={} unit_policy=shared".format(
+            int(seed_base),
+            int(resolved_decode_seed),
+        )
+    )
+
     log_prog(
-        "decode generate: backend={} tasks={} fps={} seed_policy={} parallel={} instances={} schedule={}".format(
+        "decode generate: backend={} tasks={} fps={} seed_policy={} resolved_seed={} parallel={} instances={} schedule={}".format(
             COMFYUI_BACKEND,
             len(execution_segments),
             int(float(runtime.fps_arg)),
             seed_policy,
+            int(resolved_decode_seed),
             str(parallel_active).lower(),
             len(instances),
             schedule,
@@ -1142,8 +1176,9 @@ def run_comfyui_decode_tasks(
                     runtime=runtime,
                     cfg=cfg,
                     instance=instance,
-                    seed_policy=seed_policy,
                     seed_base=seed_base,
+                    seed_policy=seed_policy,
+                    resolved_decode_seed=resolved_decode_seed,
                 )
                 return idx, report_item
             finally:
@@ -1183,8 +1218,9 @@ def run_comfyui_decode_tasks(
                 runtime=runtime,
                 cfg=cfg,
                 instance=instance,
-                seed_policy=seed_policy,
                 seed_base=seed_base,
+                seed_policy=seed_policy,
+                resolved_decode_seed=resolved_decode_seed,
             )
 
     missing = [idx for idx, item in enumerate(unit_reports_by_index) if item is None]
@@ -1229,6 +1265,8 @@ def run_comfyui_decode_tasks(
             "execution_segments": int(len(execution_segments)),
             "seed_policy": str(seed_policy),
             "requested_seed": int(seed_base),
+            "seed_base": int(seed_base),
+            "resolved_seed": int(resolved_decode_seed),
             "total_runtime_sec": float(elapsed),
             "wall_generate_sec": float(elapsed),
             "sum_unit_generate_sec": float(sum_unit_generate_sec),
@@ -1247,6 +1285,8 @@ def run_comfyui_decode_tasks(
         "parallel_speedup": parallel_speedup,
         "seed_policy": str(seed_policy),
         "requested_seed": int(seed_base),
+        "seed_base": int(seed_base),
+        "resolved_seed": int(resolved_decode_seed),
         "num_tasks": int(len(unit_reports)),
         "source_inputs": dict(tasks_payload.get("source_inputs") or {}),
         "task_summary": dict(tasks_payload.get("summary") or {}),
@@ -1266,6 +1306,13 @@ def run_comfyui_decode_tasks(
 def main() -> int:
     args = parse_args()
     runtime_cfg = resolve_runtime_config(args)
+    resolved_seed = _resolve_shared_decode_seed(int(args.seed))
+    log_info(
+        "decode seed policy: seed_base={} resolved_seed={} unit_policy=shared".format(
+            int(args.seed),
+            int(resolved_seed),
+        )
+    )
 
     req = DecodeRequest(
         segment_id=args.segment_id,
@@ -1277,7 +1324,7 @@ def main() -> int:
         height=args.height,
         length=args.length,
         fps=args.fps,
-        seed=args.seed,
+        seed=resolved_seed,
         steps=args.steps,
         cfg=args.cfg,
         sampler_name=args.sampler_name,
