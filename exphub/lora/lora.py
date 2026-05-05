@@ -249,62 +249,24 @@ def _checkpoint_step(path: Path) -> int:
         return -1
 
 
-def _make_top_level_compatible_links(lora_dir: Path, compatible: List[Path]) -> None:
-    for path in compatible:
-        if path.parent == lora_dir:
-            continue
-        step = _checkpoint_step(path)
-        if step < 0:
-            continue
-        link_path = lora_dir / "checkpoint-{}-compatible_with_comfyui.safetensors".format(step)
-        if link_path.exists() or link_path.is_symlink():
-            try:
-                current = link_path.resolve()
-                if current == path.resolve():
-                    continue
-            except Exception:
-                pass
-            link_path.unlink()
-        target = os.path.relpath(str(path.resolve()), str(lora_dir.resolve()))
-        link_path.symlink_to(target)
+def _is_real_checkpoint_file(path: Path) -> bool:
+    return path.is_file() and not path.is_symlink() and path.parent.name.startswith("checkpoint-")
 
 
 def _scan_outputs(lora_dir: Path) -> Tuple[List[str], List[str], Optional[str]]:
     checkpoints = [
         p.absolute()
-        for pattern in ("checkpoint-*.safetensors", "lora_diffusion_pytorch_model.safetensors")
-        for p in lora_dir.rglob(pattern)
-        if (p.is_file() or p.is_symlink()) and "compatible_with_comfyui" not in p.name
+        for p in lora_dir.rglob("lora_diffusion_pytorch_model.safetensors")
+        if _is_real_checkpoint_file(p)
     ]
     compatible = [
         p.absolute()
-        for pattern in (
-            "checkpoint-*-compatible_with_comfyui.safetensors",
-            "lora_diffusion_pytorch_model_compatible_with_comfyui.safetensors",
-        )
-        for p in lora_dir.rglob(pattern)
-        if p.is_file() or p.is_symlink()
-    ]
-    _make_top_level_compatible_links(lora_dir, compatible)
-    checkpoints = [
-        p.absolute()
-        for pattern in ("checkpoint-*.safetensors", "lora_diffusion_pytorch_model.safetensors")
-        for p in lora_dir.rglob(pattern)
-        if (p.is_file() or p.is_symlink()) and "compatible_with_comfyui" not in p.name
-    ]
-    compatible = [
-        p.absolute()
-        for pattern in (
-            "checkpoint-*-compatible_with_comfyui.safetensors",
-            "lora_diffusion_pytorch_model_compatible_with_comfyui.safetensors",
-        )
-        for p in lora_dir.rglob(pattern)
-        if p.is_file() or p.is_symlink()
+        for p in lora_dir.rglob("lora_diffusion_pytorch_model_compatible_with_comfyui.safetensors")
+        if _is_real_checkpoint_file(p)
     ]
     checkpoints = sorted(set(checkpoints), key=lambda p: (_checkpoint_step(p), str(p)))
     compatible = sorted(set(compatible), key=lambda p: (_checkpoint_step(p), str(p)))
-    top_level_compatible = [p for p in compatible if p.parent == lora_dir]
-    latest_pool = top_level_compatible or compatible or checkpoints
+    latest_pool = compatible or checkpoints
     latest = str(latest_pool[-1]) if latest_pool else None
     return [str(p) for p in checkpoints], [str(p) for p in compatible], latest
 
