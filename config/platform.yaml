@@ -14,9 +14,13 @@ environments:
     slam:
       python: "/home/hx/anaconda3/envs/droid/bin/python"
       conda: "droid"
+    lora:
+      python: "/home/hx/anaconda3/envs/videox/bin/python"
+      conda: "videox"
 
 repos:
   droid_slam: "/data/hx/DROID-SLAM"
+  videox_fun: "/data/hx/VideoX-Fun"
 
 services:
   comfyui:

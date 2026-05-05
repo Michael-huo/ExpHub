@@ -144,6 +144,26 @@ class ExperimentPaths:
         return self.trainset_dir / "stats.json"
 
     @property
+    def lora_dir(self) -> Path:
+        return self.exp_dir / "lora"
+
+    @property
+    def lora_config_path(self) -> Path:
+        return self.lora_dir / "lora_config.json"
+
+    @property
+    def lora_command_path(self) -> Path:
+        return self.lora_dir / "train_command.sh"
+
+    @property
+    def lora_log_path(self) -> Path:
+        return self.lora_dir / "lora.log"
+
+    @property
+    def lora_result_path(self) -> Path:
+        return self.lora_dir / "lora_result.json"
+
+    @property
     def decode_dir(self) -> Path:
         return self.exp_dir / "decode"
 

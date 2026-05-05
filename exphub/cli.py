@@ -461,7 +461,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument(
         "--step",
         required=True,
-        choices=["prepare", "encode", "decode", "eval", "all"],
+        choices=["prepare", "encode", "decode", "eval", "lora", "all"],
         help="pipeline step",
     )
     ap.add_argument("--exphub", default=os.environ.get("EXPHUB", ""), help="ExpHub root (default: $EXPHUB or cwd)")
@@ -483,6 +483,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--train_clip_stride", type=int, default=36)
     ap.add_argument("--seed", type=int, default=-1, dest="seed_base")
     ap.add_argument("--gpus", type=int, default=2)
+    ap.add_argument("--lora-profile", default="")
+    ap.add_argument("--lora-gpus", default="")
+    ap.add_argument("--lora-epochs", type=int, default=None)
+    ap.add_argument("--lora-resume", default="none", choices=["none", "latest"])
 
     ap.add_argument("--infer_extra", default="", help="extra args passed through the formal infer service (quoted string)")
 
@@ -530,9 +534,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         _die("--train_clip_num_frames must be > 0")
     if int(args.train_clip_stride) <= 0:
         _die("--train_clip_stride must be > 0")
+    if args.lora_epochs is not None and int(args.lora_epochs) <= 0:
+        _die("--lora-epochs must be > 0")
     args.mode = str(args.mode or "").strip().lower()
     args.step = str(args.step or "").strip().lower()
     if args.mode == "infer":
+        if args.step == "lora":
+            _die("infer mode does not support --step lora")
         if not args.sequence:
             _die("--sequence is required for --mode infer")
         if args.start is None or str(args.start).strip() == "":
