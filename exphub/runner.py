@@ -18,6 +18,7 @@ from .decode.comfyui_client import COMFYUI_BACKEND
 from .decode import decode as decode_pipeline
 from .encode import encode as encode_pipeline
 from .eval import eval as eval_pipeline
+from .lora import lora as lora_pipeline
 from .prepare import prepare as prepare_pipeline
 
 
@@ -143,7 +144,7 @@ class PipelineRuntime:
                 "planner": "generation_units",
                 "prompt_profile": "base_motion_prompt",
                 "anchor_backend": "image_embedding_visual_anchor",
-                "workflow": "prepare -> encode" if train_mode else "prepare -> encode -> decode -> eval",
+                "workflow": "prepare -> encode -> lora" if train_mode else "prepare -> encode -> decode -> eval",
                 "decode_backend": COMFYUI_BACKEND,
                 "droid_seq": self.args.droid_seq,
                 "viz_enable": self.viz_enable,
@@ -163,8 +164,14 @@ class PipelineRuntime:
                 "trainset_dir": str(self.paths.trainset_dir),
                 "trainset_metadata": str(self.paths.trainset_metadata_path),
                 "trainset_stats": str(self.paths.trainset_stats_path),
+                "lora_dir": str(self.paths.lora_dir),
+                "lora_config": str(self.paths.lora_config_path),
+                "lora_command": str(self.paths.lora_command_path),
+                "lora_log": str(self.paths.lora_log_path),
+                "lora_result": str(self.paths.lora_result_path),
                 "logs_dir": str(self.paths.logs_dir),
                 "semantic_openclip_python": get_phase_python_config("semantic_openclip"),
+                "lora_python": get_phase_python_config("lora"),
                 "droid_repo": self.args.droid_repo,
             },
             "prepare": {
@@ -180,6 +187,7 @@ class PipelineRuntime:
 _SERVICE_BY_STAGE = {
     "prepare": prepare_pipeline,
     "encode": encode_pipeline,
+    "lora": lora_pipeline,
     "decode": decode_pipeline,
     "eval": eval_pipeline,
 }
@@ -351,6 +359,8 @@ def _validate_scripts(runtime: PipelineRuntime) -> None:
                 (runtime.exphub_root / "exphub" / "eval" / "eval.py").resolve(),
             ]
         )
+    if mode == "train":
+        required.append((runtime.exphub_root / "exphub" / "lora" / "lora.py").resolve())
     for path in required:
         if not path.is_file():
             raise RuntimeError("file not found: {}".format(path))
@@ -367,7 +377,7 @@ def run_runtime(runtime: PipelineRuntime) -> OrchestrationResult:
         runtime.dataset()
 
     if step == "all":
-        stages = list(STAGE_ORDER if mode == "infer" else ("prepare", "encode"))
+        stages = list(STAGE_ORDER if mode == "infer" else ("prepare", "encode", "lora"))
     else:
         stages = [step]
 
@@ -375,6 +385,10 @@ def run_runtime(runtime: PipelineRuntime) -> OrchestrationResult:
         forbidden = [item for item in stages if item in ("decode", "eval")]
         if forbidden:
             raise RuntimeError("train mode does not support stage(s): {}".format(", ".join(forbidden)))
+    if mode == "infer":
+        forbidden = [item for item in stages if item == "lora"]
+        if forbidden:
+            raise RuntimeError("infer mode does not support stage(s): {}".format(", ".join(forbidden)))
 
     last_out_hint = runtime.paths.exp_dir
     for stage_name in stages:

@@ -50,7 +50,7 @@ def _prune_dir_keep_names(root: Path, d: Path, keep_names) -> None:
 
 
 def _cleanup_min(exp_dir: Path) -> None:
-    root_keep = {"prepare", "encode", "decode", "eval", "trainset", "logs"}
+    root_keep = {"prepare", "encode", "decode", "eval", "trainset", "lora", "logs"}
     if exp_dir.is_dir():
         for child in list(exp_dir.iterdir()):
             if child.name in root_keep or child.name == "run_meta.json":
