@@ -29,6 +29,10 @@ MOTION_COLORS = {
 }
 TRACKING_LINE_COLOR = "#7A3E9D"
 PC_LINE_COLOR = "#1F77B4"
+PC_GRID_ROWS = 4
+PC_GRID_COLS = 6
+PC_MIN_BLOCK_SIZE = 24
+PC_EPS = 1e-6
 
 
 def _as_dict(value):
@@ -118,6 +122,35 @@ def _robust_scale(values, eps=1e-6):
     if p90 > eps:
         return p90
     return max(float(np.max(np.abs(finite))), eps)
+
+
+def _weighted_mean(values, weights, default=0.0):
+    arr = np.asarray(values, dtype=np.float32)
+    weight_arr = np.asarray(weights, dtype=np.float32)
+    if arr.size == 0 or weight_arr.size == 0:
+        return float(default)
+    weight_sum = float(np.sum(weight_arr))
+    if weight_sum <= PC_EPS:
+        return float(default)
+    return float(np.sum(arr * weight_arr) / weight_sum)
+
+
+def _weighted_percentile(values, weights, percentile, default=1.0):
+    arr = np.asarray(values, dtype=np.float32)
+    weight_arr = np.asarray(weights, dtype=np.float32)
+    mask = np.isfinite(arr) & np.isfinite(weight_arr) & (weight_arr > 0.0)
+    if not np.any(mask):
+        return float(default)
+    arr = arr[mask]
+    weight_arr = weight_arr[mask]
+    order = np.argsort(arr)
+    arr = arr[order]
+    weight_arr = weight_arr[order]
+    cumulative = np.cumsum(weight_arr)
+    cutoff = float(percentile) / 100.0 * float(cumulative[-1])
+    idx = int(np.searchsorted(cumulative, cutoff, side="left"))
+    idx = int(np.clip(idx, 0, len(arr) - 1))
+    return float(arr[idx])
 
 
 def _regions(mask):
@@ -359,65 +392,137 @@ def _loss_intervals(orb_rows):
     return merged
 
 
-def _pc_block(prev_gray, curr_gray, top_ratio=0.6, grid_rows=2, grid_cols=4, min_block_size=24):
+def _pc_empty_result(block_count=0):
+    return {
+        "yaw_coeff": 0.0,
+        "forward_x_coeff": 0.0,
+        "vertical_coeff": 0.0,
+        "forward_y_coeff": 0.0,
+        "expansion_coeff": 0.0,
+        "same_sign_consistency": 0.0,
+        "expansion_consistency": 0.0,
+        "motion_intensity": 0.0,
+        "state_confidence": 0.0,
+        "block_count": int(block_count),
+        "reliable_block_count": 0,
+        "_magnitude_samples": [],
+        "_magnitude_weights": [],
+    }
+
+
+def _pc_row_weight(row, grid_rows):
+    row = int(row)
+    grid_rows = max(int(grid_rows), 1)
+    if row >= grid_rows - 1:
+        return 0.70
+    return 1.0
+
+
+def _pc_block_records(prev_gray, curr_gray, grid_rows=PC_GRID_ROWS, grid_cols=PC_GRID_COLS, min_block_size=PC_MIN_BLOCK_SIZE):
     import cv2
 
     h, w = prev_gray.shape
-    top_h = max(int(h * top_ratio), int(min_block_size) * int(grid_rows))
-    top_h = min(top_h, h)
-    prev = prev_gray[:top_h, :]
-    curr = curr_gray[:top_h, :]
-    block_h = top_h // int(grid_rows)
+    grid_rows = int(grid_rows)
+    grid_cols = int(grid_cols)
+    block_h = h // grid_rows
     block_w = w // int(grid_cols)
     if block_h < min_block_size or block_w < min_block_size:
-        return {
-            "motion_intensity": 0.0,
-            "steering_response": 0.0,
-            "forward_response": 0.0,
-            "state_confidence": 0.0,
-            "block_count": 0,
-        }
+        return []
 
     records = []
     hann = cv2.createHanningWindow((block_w, block_h), cv2.CV_32F)
-    for row in range(int(grid_rows)):
-        for col in range(int(grid_cols)):
+    for row in range(grid_rows):
+        for col in range(grid_cols):
             y0 = row * block_h
             x0 = col * block_w
-            p = prev[y0 : y0 + block_h, x0 : x0 + block_w].astype(np.float32)
-            q = curr[y0 : y0 + block_h, x0 : x0 + block_w].astype(np.float32)
+            p = prev_gray[y0 : y0 + block_h, x0 : x0 + block_w].astype(np.float32)
+            q = curr_gray[y0 : y0 + block_h, x0 : x0 + block_w].astype(np.float32)
             texture = float(np.std(p))
-            if texture < 2.0:
-                continue
             (dx, dy), response = cv2.phaseCorrelate(p, q, hann)
-            weight = max(0.0, float(response)) * max(texture, 1e-3)
-            if weight <= 0.0:
-                continue
+            if not (np.isfinite(dx) and np.isfinite(dy) and np.isfinite(response)):
+                dx, dy, response = 0.0, 0.0, 0.0
+            response = max(0.0, float(response))
+            texture_factor = float(np.clip((texture - 1.0) / 14.0, 0.0, 1.0))
+            response_factor = float(np.clip(response, 0.0, 1.0))
+            reliability = float(response_factor * texture_factor)
+            row_weight = float(_pc_row_weight(row, grid_rows))
+            weight = float(reliability * row_weight)
             center_x = float(x0) + 0.5 * float(block_w)
-            horizontal_pos = (center_x - 0.5 * float(w)) / max(0.5 * float(w), 1.0)
-            records.append((float(dx), float(dy), float(response), float(weight), float(horizontal_pos)))
+            center_y = float(y0) + 0.5 * float(block_h)
+            x_pos = (center_x - 0.5 * float(w)) / max(0.5 * float(w), 1.0)
+            y_pos = (center_y - 0.5 * float(h)) / max(0.5 * float(h), 1.0)
+            records.append(
+                {
+                    "row": int(row),
+                    "col": int(col),
+                    "x0": int(x0),
+                    "y0": int(y0),
+                    "bw": int(block_w),
+                    "bh": int(block_h),
+                    "x_pos": float(x_pos),
+                    "y_pos": float(y_pos),
+                    "dx": float(dx),
+                    "dy": float(dy),
+                    "response": float(response),
+                    "texture": float(texture),
+                    "reliability": float(reliability),
+                    "weight": float(weight),
+                }
+            )
+    return records
+
+
+def _pc_block(prev_gray, curr_gray, grid_rows=PC_GRID_ROWS, grid_cols=PC_GRID_COLS, min_block_size=PC_MIN_BLOCK_SIZE):
+    records = _pc_block_records(prev_gray, curr_gray, grid_rows, grid_cols, min_block_size)
 
     if not records:
-        return {
-            "motion_intensity": 0.0,
-            "steering_response": 0.0,
-            "forward_response": 0.0,
-            "state_confidence": 0.0,
-            "block_count": 0,
-        }
+        return _pc_empty_result(0)
 
-    dxs = np.asarray([item[0] for item in records], dtype=np.float32)
-    dys = np.asarray([item[1] for item in records], dtype=np.float32)
-    responses = np.asarray([item[2] for item in records], dtype=np.float32)
-    weights = np.asarray([item[3] for item in records], dtype=np.float32)
-    positions = np.asarray([item[4] for item in records], dtype=np.float32)
-    weight_sum = float(np.sum(weights)) + 1e-6
+    dxs = np.asarray([item["dx"] for item in records], dtype=np.float32)
+    dys = np.asarray([item["dy"] for item in records], dtype=np.float32)
+    responses = np.asarray([item["response"] for item in records], dtype=np.float32)
+    weights = np.asarray([item["weight"] for item in records], dtype=np.float32)
+    x_pos = np.asarray([item["x_pos"] for item in records], dtype=np.float32)
+    y_pos = np.asarray([item["y_pos"] for item in records], dtype=np.float32)
+    magnitudes = np.sqrt(dxs * dxs + dys * dys).astype(np.float32)
+    weight_sum = float(np.sum(weights))
+    reliable_count = int(np.sum(weights > PC_EPS))
+    if weight_sum <= PC_EPS:
+        result = _pc_empty_result(len(records))
+        result["_magnitude_samples"] = [float(item) for item in magnitudes]
+        result["_magnitude_weights"] = [1.0 for _ in records]
+        return result
+
+    x_center = _weighted_mean(x_pos, weights)
+    y_center = _weighted_mean(y_pos, weights)
+    x_c = x_pos - float(x_center)
+    y_c = y_pos - float(y_center)
+    forward_x = float(np.sum(weights * x_c * dxs) / (np.sum(weights * x_c * x_c) + PC_EPS))
+    forward_y = float(np.sum(weights * y_c * dys) / (np.sum(weights * y_c * y_c) + PC_EPS))
+    residual_dx = dxs - float(forward_x) * x_c
+    yaw = _weighted_mean(residual_dx, weights)
+    vertical = _weighted_mean(dys - float(forward_y) * y_c, weights)
+    radial_projection = x_c * dxs + y_c * dys
+    radial_norm = x_c * x_c + y_c * y_c
+    expansion = float(np.sum(weights * radial_projection) / (np.sum(weights * radial_norm) + PC_EPS))
+    expansion_consistency = float(np.sum(weights[radial_projection > 0.0]) / (weight_sum + PC_EPS))
+    same_pos = float(np.sum(weights[residual_dx >= 0.0]))
+    same_neg = float(np.sum(weights[residual_dx < 0.0]))
+    same_sign = float(max(same_pos, same_neg) / (weight_sum + PC_EPS))
     return {
-        "motion_intensity": float(np.sum(np.sqrt(dxs * dxs + dys * dys) * weights) / weight_sum),
-        "steering_response": float(np.sum(dxs * weights) / weight_sum),
-        "forward_response": float(np.sum(np.maximum(0.0, positions * dxs) * weights) / weight_sum),
+        "yaw_coeff": float(yaw),
+        "forward_x_coeff": float(forward_x),
+        "vertical_coeff": float(vertical),
+        "forward_y_coeff": float(forward_y),
+        "expansion_coeff": float(expansion),
+        "same_sign_consistency": float(np.clip(same_sign, 0.0, 1.0)),
+        "expansion_consistency": float(np.clip(expansion_consistency, 0.0, 1.0)),
+        "motion_intensity": float(np.sum(magnitudes * weights) / (weight_sum + PC_EPS)),
         "state_confidence": float(np.clip(np.mean(np.maximum(responses, 0.0)), 0.0, 1.0)),
         "block_count": int(len(records)),
+        "reliable_block_count": int(reliable_count),
+        "_magnitude_samples": [float(item) for item in magnitudes],
+        "_magnitude_weights": [float(max(item["weight"], PC_EPS)) for item in records],
     }
 
 
@@ -426,23 +531,56 @@ def _pc_evidence(grays):
     if pair_count <= 0:
         return []
     raw_rows = [_pc_block(grays[idx], grays[idx + 1]) for idx in range(pair_count)]
+    magnitude_samples = []
+    magnitude_weights = []
+    for row in raw_rows:
+        magnitude_samples.extend(list(row.get("_magnitude_samples") or []))
+        magnitude_weights.extend(list(row.get("_magnitude_weights") or []))
+    robust_scale = max(_weighted_percentile(magnitude_samples, magnitude_weights, 75, default=1.0), PC_EPS)
     motion = _smooth([row["motion_intensity"] for row in raw_rows], 5, 9)
-    steering = _smooth([row["steering_response"] for row in raw_rows], 5, 9)
-    forward = _smooth([row["forward_response"] for row in raw_rows], 5, 9)
+    yaw = _smooth([row["yaw_coeff"] for row in raw_rows], 5, 9)
+    forward_x = _smooth([row["forward_x_coeff"] for row in raw_rows], 5, 9)
+    vertical = _smooth([row["vertical_coeff"] for row in raw_rows], 5, 9)
+    forward_y = _smooth([row["forward_y_coeff"] for row in raw_rows], 5, 9)
+    expansion = _smooth([row["expansion_coeff"] for row in raw_rows], 5, 9)
+    same_sign = np.clip(_smooth([row["same_sign_consistency"] for row in raw_rows], 3, 5), 0.0, 1.0)
+    expansion_consistency = np.clip(_smooth([row["expansion_consistency"] for row in raw_rows], 3, 5), 0.0, 1.0)
     confidence = _smooth([row["state_confidence"] for row in raw_rows], 5, 9)
     out = []
     for idx, row in enumerate(raw_rows):
+        yaw_norm = abs(float(yaw[idx])) / robust_scale
+        expansion_norm = max(float(expansion[idx]), 0.0) / robust_scale
+        turn_score = float(yaw_norm * float(same_sign[idx]))
+        forward_score = float(expansion_norm * float(expansion_consistency[idx]))
+        left_score = float(turn_score if float(yaw[idx]) > 0.0 else 0.0)
+        right_score = float(turn_score if float(yaw[idx]) < 0.0 else 0.0)
+        signed_yaw_score = float(math.copysign(yaw_norm, float(yaw[idx]))) if abs(float(yaw[idx])) > PC_EPS else 0.0
         out.append(
             {
                 "pair_index": int(idx),
                 "frame_start_idx": int(idx),
                 "frame_end_idx": int(idx + 1),
-                "steering_response": float(steering[idx]),
-                "forward_response": float(forward[idx]),
+                "yaw_coeff": float(yaw[idx]),
+                "forward_x_coeff": float(forward_x[idx]),
+                "vertical_coeff": float(vertical[idx]),
+                "forward_y_coeff": float(forward_y[idx]),
+                "expansion_coeff": float(expansion[idx]),
+                "same_sign_consistency": float(same_sign[idx]),
+                "expansion_consistency": float(expansion_consistency[idx]),
+                "yaw_norm": float(yaw_norm),
+                "expansion_norm": float(expansion_norm),
+                "turn_score": float(turn_score),
+                "forward_score": float(forward_score),
+                "left_score": float(left_score),
+                "right_score": float(right_score),
+                "steering_response": float(signed_yaw_score),
+                "forward_response": float(forward_score),
                 "motion_intensity": float(motion[idx]),
                 "state_confidence": float(confidence[idx]),
+                "robust_scale": float(robust_scale),
                 "block_count": int(row.get("block_count", 0)),
-                "motion_state": "mixed",
+                "reliable_block_count": int(row.get("reliable_block_count", 0)),
+                "motion_state": "forward",
             }
         )
     return out
@@ -474,229 +612,55 @@ def _turn_label(steering):
     return "left_turn" if float(steering) > 0.0 else "right_turn"
 
 
-def _state_from_response(steering, forward, s_scale, f_scale, in_loss=False):
-    s_norm = abs(float(steering)) / max(float(s_scale), 1e-6)
-    f_norm = max(float(forward), 0.0) / max(float(f_scale), 1e-6)
-    turn_label = _turn_label(steering)
-    if s_norm >= 0.45 and s_norm >= 0.80 * max(f_norm, 1e-6):
-        return turn_label
-    if f_norm >= 0.18 and f_norm >= 0.75 * max(s_norm, 1e-6):
-        return "forward"
-    if s_norm >= 0.32 and s_norm >= 0.80 * max(f_norm, 1e-6):
-        return turn_label if s_norm >= f_norm else "forward"
-    return "forward"
-
-
-def _switch_allowed(current, candidate, steering_strength, forward_strength, confidence, block_count):
-    if candidate == current:
-        return True
-    if int(block_count) <= 0 or float(confidence) < 0.04:
-        return False
-    steering_strength = float(steering_strength)
-    forward_strength = float(forward_strength)
-    if candidate == "forward":
-        if current in ("left_turn", "right_turn"):
-            return forward_strength >= 0.18 and (
-                forward_strength >= 1.05 * max(steering_strength, 1e-6) or steering_strength < 0.22
-            )
-        return True
-    if candidate in ("left_turn", "right_turn"):
-        if current == "forward":
-            return steering_strength >= 0.45 and steering_strength >= 0.80 * max(forward_strength, 1e-6)
-        return steering_strength >= 0.45 and steering_strength >= 0.90 * max(forward_strength, 1e-6)
-    return False
-
-
-def _stabilize_candidates(candidates, strengths, confirm_pairs=8):
-    if not candidates:
-        return []
-    current = str(candidates[0] or "forward")
-    if current not in MAIN_MOTION_LABELS:
-        current = "forward"
-    pending = None
-    pending_count = 0
-    out = []
-    for idx, candidate in enumerate(candidates):
-        candidate = str(candidate or "forward")
-        if candidate not in MAIN_MOTION_LABELS:
-            candidate = "forward"
-        meta = strengths[idx] if idx < len(strengths) else {}
-        if candidate == current:
-            pending = None
-            pending_count = 0
-            out.append(current)
-            continue
-        if _switch_allowed(
-            current,
-            candidate,
-            meta.get("steering_strength", 0.0),
-            meta.get("forward_strength", 0.0),
-            meta.get("state_confidence", 0.0),
-            meta.get("block_count", 0),
-        ):
-            if pending == candidate:
-                pending_count += 1
-            else:
-                pending = candidate
-                pending_count = 1
-            if pending_count >= int(confirm_pairs):
-                current = candidate
-                pending = None
-                pending_count = 0
-        else:
-            pending = None
-            pending_count = 0
-        out.append(current)
-    return out
-
-
-def _replace_range(states, start, end, value):
-    for idx in range(max(0, int(start)), min(len(states) - 1, int(end)) + 1):
-        states[idx] = str(value)
-
-
-def _absorb_short(states, loss_intervals, min_len=8):
-    states = list(states)
-    ranges = []
-    if loss_intervals:
-        ranges = [(int(item["pair_start"]), int(item["pair_end"])) for item in loss_intervals]
-    else:
-        ranges = [(0, len(states) - 1)] if states else []
-    for _ in range(2):
-        changed = False
-        for start, end in ranges:
-            idx = max(0, start)
-            end = min(len(states) - 1, end)
-            while idx <= end:
-                current = states[idx]
-                run_end = idx
-                while run_end + 1 <= end and states[run_end + 1] == current:
-                    run_end += 1
-                if current != "mixed" and run_end - idx + 1 < int(min_len):
-                    left = states[idx - 1] if idx - 1 >= start else None
-                    right = states[run_end + 1] if run_end + 1 <= end else None
-                    if left == right and left not in (None, "mixed"):
-                        new_state = left
-                    elif right not in (None, "mixed"):
-                        new_state = right
-                    elif left not in (None, "mixed"):
-                        new_state = left
-                    else:
-                        new_state = "forward"
-                    _replace_range(states, idx, run_end, new_state)
-                    changed = True
-                idx = run_end + 1
-        if not changed:
-            break
-    return states
-
-
 def _estimate_states(pc_rows, loss_intervals):
+    del loss_intervals
     if not pc_rows:
         return []
-    steering = np.asarray([float(row["steering_response"]) for row in pc_rows], dtype=np.float32)
-    forward = np.asarray([float(row["forward_response"]) for row in pc_rows], dtype=np.float32)
     motion = np.asarray([float(row["motion_intensity"]) for row in pc_rows], dtype=np.float32)
-    confidence = np.asarray([float(row["state_confidence"]) for row in pc_rows], dtype=np.float32)
-    loss_mask = _in_loss_mask(len(pc_rows), loss_intervals)
-    s_scale = _robust_scale(np.abs(steering))
-    f_scale = _robust_scale(forward)
     m_scale = _robust_scale(motion)
 
-    raw_states = []
-    strengths = []
-    for idx, row in enumerate(pc_rows):
-        m_norm = float(motion[idx]) / max(float(m_scale), 1e-6)
-        conf = float(confidence[idx])
-        steering_strength = abs(float(steering[idx])) / max(float(s_scale), 1e-6)
-        forward_strength = max(float(forward[idx]), 0.0) / max(float(f_scale), 1e-6)
-        block_count = int(row.get("block_count", 0) or 0)
-        if conf < 0.04 or block_count <= 0:
-            state = raw_states[-1] if raw_states else "forward"
-        else:
-            state = _state_from_response(steering[idx], forward[idx], s_scale, f_scale, bool(loss_mask[idx]))
-            if m_norm < 0.08 and state != (raw_states[-1] if raw_states else "forward"):
-                state = raw_states[-1] if raw_states else "forward"
-        if state not in MAIN_MOTION_LABELS:
-            state = "forward"
-        raw_states.append(state)
-        strengths.append(
-            {
-                "steering_strength": float(steering_strength),
-                "forward_strength": float(forward_strength),
-                "motion_strength": float(m_norm),
-                "state_confidence": float(conf),
-                "block_count": int(block_count),
-            }
-        )
-
-    states = _stabilize_candidates(raw_states, strengths, confirm_pairs=8)
-    states = _absorb_short(states, loss_intervals, min_len=8)
     out = []
     for idx, row in enumerate(pc_rows):
         item = dict(row)
-        item["raw_motion_state"] = str(raw_states[idx])
-        item["steering_strength"] = float(strengths[idx]["steering_strength"])
-        item["forward_strength"] = float(strengths[idx]["forward_strength"])
-        item["motion_strength"] = float(strengths[idx]["motion_strength"])
-        item["motion_state"] = str(states[idx])
+        left_score = float(item.get("left_score", 0.0) or 0.0)
+        right_score = float(item.get("right_score", 0.0) or 0.0)
+        forward_score = float(item.get("forward_score", 0.0) or 0.0)
+        turn_score = max(left_score, right_score)
+        candidate = "forward"
+        if turn_score > max(forward_score * 1.4, 0.10) and float(item.get("same_sign_consistency", 0.0) or 0.0) >= 0.62:
+            candidate = "left_turn" if left_score >= right_score else "right_turn"
+        item["raw_motion_state"] = str(candidate)
+        item["steering_strength"] = float(turn_score)
+        item["forward_strength"] = float(forward_score)
+        item["motion_strength"] = float(motion[idx]) / max(float(m_scale), PC_EPS)
+        item["motion_state"] = str(candidate)
         out.append(item)
     return out
 
 
-def _dominant_label(rows, loss_overlap, scales):
-    if not rows:
+def _dominant_label(scores):
+    scores = _as_dict(scores)
+    if not scores:
         return "forward"
-    scales = _as_dict(scales)
-    motion_scale = max(float(scales.get("motion", 1.0) or 1.0), 1e-6)
-    steering_scale = max(float(scales.get("steering", 1.0) or 1.0), 1e-6)
-    forward_scale = max(float(scales.get("forward", 1.0) or 1.0), 1e-6)
-    mean_steering = _mean_score(rows, "steering_response")
-    mean_forward = max(_mean_score(rows, "forward_response"), 0.0)
-    mean_steering_strength = abs(float(mean_steering)) / steering_scale
-    mean_forward_strength = float(mean_forward) / forward_scale
-    turn_label = _turn_label(mean_steering)
-    turn_fraction = float(
-        len(
-            [
-                row
-                for row in rows
-                if str(row.get("raw_motion_state", row.get("motion_state", "")) or "") == turn_label
-                or str(row.get("motion_state", "") or "") == turn_label
-            ]
-        )
-    ) / float(max(1, len(rows)))
-    if mean_steering_strength >= 0.55 and mean_steering_strength >= 0.70 * max(mean_forward_strength, 1e-6) and turn_fraction >= 0.40:
+    left_score = float(scores.get("left_score", 0.0) or 0.0)
+    right_score = float(scores.get("right_score", 0.0) or 0.0)
+    forward_score = float(scores.get("forward_score", 0.0) or 0.0)
+    same_sign = float(scores.get("same_sign_consistency", 0.0) or 0.0)
+    ok_fraction = float(scores.get("ok_pair_fraction", 0.0) or 0.0)
+    lost_fraction = float(scores.get("lost_pair_fraction", 0.0) or 0.0)
+    turn_score = max(left_score, right_score)
+    turn_label = "left_turn" if left_score >= right_score else "right_turn"
+    if ok_fraction >= 0.67 and lost_fraction <= 0.05:
+        same_min = 0.70
+        score_min = 0.12
+        dominance = 1.60
+    else:
+        same_min = 0.60
+        score_min = 0.10
+        dominance = 1.25
+    if same_sign >= same_min and turn_score >= score_min and turn_score >= dominance * max(forward_score, PC_EPS):
         return turn_label
-    if mean_forward_strength >= 0.20 and mean_forward_strength >= 1.25 * max(mean_steering_strength, 1e-6):
-        return "forward"
-    if mean_steering_strength >= 0.45 and mean_steering_strength >= 0.85 * max(mean_forward_strength, 1e-6):
-        return turn_label
-
-    weights = {label: 0.0 for label in MAIN_MOTION_LABELS}
-    for row in rows:
-        label = str(row.get("motion_state", "forward") or "forward")
-        if label not in MAIN_MOTION_LABELS:
-            label = "forward"
-        weight = max(float(row.get("state_confidence", 0.0) or 0.0), 0.05)
-        weight += min(float(row.get("motion_intensity", 0.0) or 0.0) / motion_scale, 1.0) * 0.20
-        weights[label] = float(weights.get(label, 0.0) + weight)
-
-        steering = float(row.get("steering_response", 0.0) or 0.0)
-        forward = max(float(row.get("forward_response", 0.0) or 0.0), 0.0)
-        steering_score = abs(steering) / steering_scale
-        forward_score = forward / forward_scale
-        if steering > 0.0:
-            weights["left_turn"] += steering_score * 0.75
-        elif steering < 0.0:
-            weights["right_turn"] += steering_score * 0.75
-        weights["forward"] += forward_score * 0.55
-
-    ranked = sorted(weights.items(), key=lambda item: (item[1], item[0]), reverse=True)
-    best_label = str(ranked[0][0])
-    if bool(loss_overlap) and best_label not in MAIN_MOTION_LABELS:
-        return "forward"
-    return best_label if best_label in MAIN_MOTION_LABELS else "forward"
+    return "forward"
 
 
 def _mean_score(rows, key):
@@ -705,22 +669,26 @@ def _mean_score(rows, key):
 
 
 def _window_scores(pc_rows, orb_rows, scales=None):
-    scales = _as_dict(scales)
-    steering_scale = max(float(scales.get("steering", 1.0) or 1.0), 1e-6)
-    forward_scale = max(float(scales.get("forward", 1.0) or 1.0), 1e-6)
-    motion_scale = max(float(scales.get("motion", 1.0) or 1.0), 1e-6)
+    del scales
     tracking_values = [float(row.get("tracking_quality", 0.0) or 0.0) for row in orb_rows]
+    ok_count = len([row for row in orb_rows if str(row.get("tracking_state", "") or "") == "ok"])
+    weak_count = len([row for row in orb_rows if str(row.get("tracking_state", "") or "") == "weak"])
     lost_count = len([row for row in orb_rows if str(row.get("tracking_state", "") or "") == "lost"])
     total = max(1, len(orb_rows))
     motion = _mean_score(pc_rows, "motion_intensity")
     steering = _mean_score(pc_rows, "steering_response")
     forward = _mean_score(pc_rows, "forward_response")
     confidence = _mean_score(pc_rows, "state_confidence")
-    if steering >= 0.0:
-        sign_count = len([row for row in pc_rows if float(row.get("steering_response", 0.0) or 0.0) >= 0.0])
-    else:
-        sign_count = len([row for row in pc_rows if float(row.get("steering_response", 0.0) or 0.0) < 0.0])
-    sign_fraction = float(sign_count) / float(max(1, len(pc_rows)))
+    yaw = _mean_score(pc_rows, "yaw_coeff")
+    expansion = _mean_score(pc_rows, "expansion_coeff")
+    yaw_norm = _mean_score(pc_rows, "yaw_norm")
+    expansion_norm = _mean_score(pc_rows, "expansion_norm")
+    same_sign = _mean_score(pc_rows, "same_sign_consistency")
+    expansion_consistency = _mean_score(pc_rows, "expansion_consistency")
+    left_score = _mean_score(pc_rows, "left_score")
+    right_score = _mean_score(pc_rows, "right_score")
+    turn_score = max(float(left_score), float(right_score))
+    forward_score = _mean_score(pc_rows, "forward_score")
     return {
         "translational": float(motion),
         "directional": float(steering),
@@ -728,21 +696,28 @@ def _window_scores(pc_rows, orb_rows, scales=None):
         "motion_intensity": float(motion),
         "steering_response": float(steering),
         "forward_response": float(forward),
-        "motion_strength": float(motion) / motion_scale,
-        "steering_strength": abs(float(steering)) / steering_scale,
-        "forward_strength": max(float(forward), 0.0) / forward_scale,
-        "steering_sign_fraction": float(sign_fraction),
+        "yaw_coeff": float(yaw),
+        "expansion_coeff": float(expansion),
+        "yaw_norm": float(yaw_norm),
+        "expansion_norm": float(expansion_norm),
+        "same_sign_consistency": float(same_sign),
+        "expansion_consistency": float(expansion_consistency),
+        "left_score": float(left_score),
+        "right_score": float(right_score),
+        "turn_score": float(turn_score),
+        "forward_score": float(forward_score),
+        "motion_strength": float(_mean_score(pc_rows, "motion_strength")),
+        "steering_strength": float(turn_score),
+        "forward_strength": float(forward_score),
+        "steering_sign_fraction": float(same_sign),
         "tracking_quality": float(np.mean(tracking_values)) if tracking_values else 0.0,
+        "ok_pair_fraction": float(ok_count) / float(total),
+        "weak_pair_fraction": float(weak_count) / float(total),
         "lost_pair_fraction": float(lost_count) / float(total),
     }
 
 
 def _project_legal(pc_rows, orb_rows, loss_intervals, legal_positions):
-    scales = {
-        "motion": _robust_scale([float(row.get("motion_intensity", 0.0)) for row in pc_rows]),
-        "steering": _robust_scale([abs(float(row.get("steering_response", 0.0))) for row in pc_rows]),
-        "forward": _robust_scale([float(row.get("forward_response", 0.0)) for row in pc_rows]),
-    }
     loss_mask = _in_loss_mask(len(pc_rows), loss_intervals)
     windows = []
     for win_idx in range(len(legal_positions) - 1):
@@ -753,7 +728,9 @@ def _project_legal(pc_rows, orb_rows, loss_intervals, legal_positions):
         pc_slice = pc_rows[pair_start : pair_end + 1] if pair_end >= pair_start else []
         orb_slice = orb_rows[pair_start : pair_end + 1] if pair_end >= pair_start else []
         loss_overlap = bool(np.any(loss_mask[pair_start : pair_end + 1])) if pair_end >= pair_start else False
-        label = _dominant_label(pc_slice, loss_overlap, scales)
+        scores = _window_scores(pc_slice, orb_slice)
+        scores["loss_overlap"] = bool(loss_overlap)
+        label = _dominant_label(scores)
         windows.append(
             {
                 "window_index": int(win_idx),
@@ -762,7 +739,7 @@ def _project_legal(pc_rows, orb_rows, loss_intervals, legal_positions):
                 "pair_start": int(pair_start),
                 "pair_end": int(pair_end),
                 "motion_label": str(label),
-                "scores": _window_scores(pc_slice, orb_slice, scales),
+                "scores": scores,
             }
         )
 
@@ -827,7 +804,7 @@ def _strong_turn_run(windows, run):
     steering_strength = _run_score(rows, "steering_strength")
     forward_strength = _run_score(rows, "forward_strength")
     sign_fraction = _run_score(rows, "steering_sign_fraction")
-    return bool(steering_strength >= 0.35 and sign_fraction >= 0.62 and steering_strength >= 0.75 * max(forward_strength, 1e-6))
+    return bool(steering_strength >= 0.12 and sign_fraction >= 0.65 and steering_strength >= 1.25 * max(forward_strength, PC_EPS))
 
 
 def _neighbor_choice(windows, run, left_run, right_run):
@@ -923,11 +900,23 @@ def _finish_motion_state(current, score_rows, motion_states, prepare_result):
         "motion_intensity",
         "steering_response",
         "forward_response",
+        "yaw_coeff",
+        "expansion_coeff",
+        "yaw_norm",
+        "expansion_norm",
+        "same_sign_consistency",
+        "expansion_consistency",
+        "left_score",
+        "right_score",
+        "turn_score",
+        "forward_score",
         "motion_strength",
         "steering_strength",
         "forward_strength",
         "steering_sign_fraction",
         "tracking_quality",
+        "ok_pair_fraction",
+        "weak_pair_fraction",
         "lost_pair_fraction",
     ]
     scores = {}
@@ -1003,40 +992,7 @@ def _resize_pad(image, target_w, target_h, pad_value=255):
 
 
 def _pc_details(prev_gray, curr_gray):
-    import cv2
-
-    h, w = prev_gray.shape
-    top_h = min(max(int(h * 0.6), 48), h)
-    block_h = top_h // 2
-    block_w = w // 4
-    if block_h < 24 or block_w < 24:
-        return []
-    details = []
-    hann = cv2.createHanningWindow((block_w, block_h), cv2.CV_32F)
-    for row in range(2):
-        for col in range(4):
-            y0 = row * block_h
-            x0 = col * block_w
-            p = prev_gray[y0 : y0 + block_h, x0 : x0 + block_w].astype(np.float32)
-            q = curr_gray[y0 : y0 + block_h, x0 : x0 + block_w].astype(np.float32)
-            texture = float(np.std(p))
-            if texture < 2.0:
-                continue
-            (dx, dy), response = cv2.phaseCorrelate(p, q, hann)
-            if max(0.0, float(response)) * max(texture, 1e-3) <= 0.0:
-                continue
-            details.append(
-                {
-                    "x0": int(x0),
-                    "y0": int(y0),
-                    "bw": int(block_w),
-                    "bh": int(block_h),
-                    "dx": float(dx),
-                    "dy": float(dy),
-                    "response": float(response),
-                }
-            )
-    return details
+    return [item for item in _pc_block_records(prev_gray, curr_gray) if float(item.get("weight", 0.0) or 0.0) > PC_EPS]
 
 
 def _pc_thumb(grays, pair_index, thumb_w=160, thumb_h=100):
@@ -1046,26 +1002,25 @@ def _pc_thumb(grays, pair_index, thumb_w=160, thumb_h=100):
     prev_gray = grays[pair_index]
     curr_gray = grays[pair_index + 1]
     h, w = prev_gray.shape
-    top_h = min(max(int(h * 0.6), 48), h)
     canvas = np.full((thumb_h, thumb_w, 3), 244, dtype=np.uint8)
     cv2.rectangle(canvas, (0, 0), (thumb_w - 1, thumb_h - 1), (223, 226, 229), 1, cv2.LINE_AA)
-    for row in range(3):
-        y = int(round(row * thumb_h / 2.0))
+    for row in range(PC_GRID_ROWS + 1):
+        y = int(round(row * thumb_h / float(PC_GRID_ROWS)))
         cv2.line(canvas, (0, min(thumb_h - 1, y)), (thumb_w - 1, min(thumb_h - 1, y)), (232, 235, 238), 1, cv2.LINE_AA)
-    for col in range(5):
-        x = int(round(col * thumb_w / 4.0))
+    for col in range(PC_GRID_COLS + 1):
+        x = int(round(col * thumb_w / float(PC_GRID_COLS)))
         cv2.line(canvas, (min(thumb_w - 1, x), 0), (min(thumb_w - 1, x), thumb_h - 1), (232, 235, 238), 1, cv2.LINE_AA)
     for item in _pc_details(prev_gray, curr_gray):
         x1 = int(round(float(item["x0"]) / max(1, w) * thumb_w))
         x2 = int(round(float(item["x0"] + item["bw"]) / max(1, w) * thumb_w))
-        y1 = int(round(float(item["y0"]) / max(1, top_h) * thumb_h))
-        y2 = int(round(float(item["y0"] + item["bh"]) / max(1, top_h) * thumb_h))
+        y1 = int(round(float(item["y0"]) / max(1, h) * thumb_h))
+        y2 = int(round(float(item["y0"] + item["bh"]) / max(1, h) * thumb_h))
         x1, x2 = int(np.clip(x1, 0, thumb_w - 1)), int(np.clip(x2, x1 + 1, thumb_w))
         y1, y2 = int(np.clip(y1, 0, thumb_h - 1)), int(np.clip(y2, y1 + 1, thumb_h))
         dx = float(item["dx"])
         dy = float(item["dy"])
         base = np.asarray((215, 188, 179), dtype=np.float32) if dx >= 0 else np.asarray((173, 202, 217), dtype=np.float32)
-        strength = float(np.clip(0.20 + 0.08 * abs(dx) + 0.30 * max(float(item["response"]), 0.0), 0.16, 0.72))
+        strength = float(np.clip(0.16 + 0.10 * float(item.get("reliability", 0.0) or 0.0) + 0.08 * abs(dx), 0.14, 0.72))
         fill = np.clip((1.0 - strength) * 244.0 + strength * base, 0, 255).astype(np.uint8)
         cv2.rectangle(canvas, (x1, y1), (x2 - 1, y2 - 1), tuple(int(v) for v in fill), -1, cv2.LINE_AA)
         cv2.rectangle(canvas, (x1, y1), (x2 - 1, y2 - 1), (240, 242, 244), 1, cv2.LINE_AA)
@@ -1251,10 +1206,10 @@ def _plot_loss_interval(path, frames, grays, interval, orb_rows, pair_states, lo
 
     local_pc = pair_states[pair_start : pair_end + 1]
     steering = _normalize01(np.abs([float(row.get("steering_response", 0.0)) for row in local_pc]))
-    forward = _normalize01([float(row.get("forward_response", 0.0)) for row in local_pc])
+    forward = _normalize01([float(row.get("forward_score", row.get("forward_response", 0.0)) or 0.0) for row in local_pc])
     _plot_background(ax2, [str(row.get("motion_state", "mixed") or "mixed") for row in local_pc], pair_start, MOTION_COLORS, 0.42)
-    ax2.plot(x, steering, color=PC_LINE_COLOR, linewidth=2.0, alpha=0.95, label="PC steering_response")
-    ax2.plot(x, forward, color=PC_LINE_COLOR, linewidth=1.6, alpha=0.72, linestyle="--", label="PC forward_response")
+    ax2.plot(x, steering, color=PC_LINE_COLOR, linewidth=2.0, alpha=0.95, label="PC normalized yaw")
+    ax2.plot(x, forward, color=PC_LINE_COLOR, linewidth=1.6, alpha=0.72, linestyle="--", label="PC normalized expansion")
     ax2.set_ylim(-0.05, 1.05)
     ax2.set_title("Motion Responses with Estimated PC State Background", pad=6, loc="left")
     _style_axis(ax2, "Response")
@@ -1267,8 +1222,8 @@ def _plot_loss_interval(path, frames, grays, interval, orb_rows, pair_states, lo
     handles += [Patch(color=MOTION_COLORS[label], label=label) for label in ("forward", "left_turn", "right_turn", "stop", "mixed")]
     handles += [
         Line2D([0], [0], color=TRACKING_LINE_COLOR, lw=2.0, label="tracking_quality"),
-        Line2D([0], [0], color=PC_LINE_COLOR, lw=2.0, label="PC steering_response"),
-        Line2D([0], [0], color=PC_LINE_COLOR, lw=1.6, linestyle="--", label="PC forward_response"),
+        Line2D([0], [0], color=PC_LINE_COLOR, lw=2.0, label="PC normalized yaw"),
+        Line2D([0], [0], color=PC_LINE_COLOR, lw=1.6, linestyle="--", label="PC normalized expansion"),
     ]
     legend = fig.legend(handles=handles, loc="upper center", ncol=6, bbox_to_anchor=(0.5, 0.992), frameon=True)
     frame = legend.get_frame()
@@ -1333,7 +1288,7 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
 
     x = np.arange(len(pair_states))
     steering = _normalize01(np.abs([float(row.get("steering_response", 0.0) or 0.0) for row in pair_states]))
-    forward = _normalize01([float(row.get("forward_response", 0.0) or 0.0) for row in pair_states])
+    forward = _normalize01([float(row.get("forward_score", row.get("forward_response", 0.0)) or 0.0) for row in pair_states])
     state_labels = ["mixed" for _ in range(len(pair_states))]
     for state in motion_states:
         label = str(state.get("motion_label", "forward") or "forward")
@@ -1346,8 +1301,8 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
         start = int(state.get("start_idx", 0) or 0)
         ax1.axvline(start, color="#333333", linewidth=0.75, alpha=0.35)
     ax1.axvline(int(motion_states[-1].get("end_idx", x_max)), color="#333333", linewidth=0.75, alpha=0.35)
-    ax1.plot(x, steering, color=PC_LINE_COLOR, linewidth=2.0, alpha=0.95, label="PC abs(steering_response)")
-    ax1.plot(x, forward, color=PC_LINE_COLOR, linewidth=1.7, alpha=0.72, linestyle="--", label="PC forward_response")
+    ax1.plot(x, steering, color=PC_LINE_COLOR, linewidth=2.0, alpha=0.95, label="PC normalized yaw")
+    ax1.plot(x, forward, color=PC_LINE_COLOR, linewidth=1.7, alpha=0.72, linestyle="--", label="PC normalized expansion")
     ax1.set_ylim(-0.05, 1.05)
     ax1.set_title("Phase Correlation Motion Responses", pad=7, loc="left")
     _style_axis(ax1, "Response")
@@ -1357,8 +1312,8 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
 
     handles = [Patch(color=MOTION_COLORS[label], label=label) for label in MAIN_MOTION_LABELS]
     handles += [
-        Line2D([0], [0], color=PC_LINE_COLOR, lw=2.0, label="PC abs(steering_response)"),
-        Line2D([0], [0], color=PC_LINE_COLOR, lw=1.7, linestyle="--", label="PC forward_response"),
+        Line2D([0], [0], color=PC_LINE_COLOR, lw=2.0, label="PC normalized yaw"),
+        Line2D([0], [0], color=PC_LINE_COLOR, lw=1.7, linestyle="--", label="PC normalized expansion"),
     ]
     legend = fig.legend(handles=handles, loc="upper center", ncol=5, bbox_to_anchor=(0.5, 0.975), frameon=True)
     frame = legend.get_frame()
@@ -1535,14 +1490,17 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
                 "pair_index": int(row["pair_index"]),
                 "frame_start_idx": int(row["frame_start_idx"]),
                 "frame_end_idx": int(row["frame_end_idx"]),
+                "yaw_coeff": float(row.get("yaw_coeff", 0.0)),
+                "expansion_coeff": float(row.get("expansion_coeff", 0.0)),
+                "same_sign_consistency": float(row.get("same_sign_consistency", 0.0)),
+                "expansion_consistency": float(row.get("expansion_consistency", 0.0)),
+                "forward_score": float(row.get("forward_score", 0.0)),
+                "left_score": float(row.get("left_score", 0.0)),
+                "right_score": float(row.get("right_score", 0.0)),
                 "steering_response": float(row["steering_response"]),
                 "forward_response": float(row["forward_response"]),
                 "motion_intensity": float(row["motion_intensity"]),
                 "state_confidence": float(row["state_confidence"]),
-                "raw_motion_state": str(row.get("raw_motion_state", row["motion_state"])),
-                "steering_strength": float(row.get("steering_strength", 0.0)),
-                "forward_strength": float(row.get("forward_strength", 0.0)),
-                "motion_strength": float(row.get("motion_strength", 0.0)),
                 "motion_state": str(row["motion_state"]),
             }
             for row in pair_states
