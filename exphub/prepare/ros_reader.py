@@ -24,6 +24,7 @@ class DatasetPrepareConfig:
 class RosFrame:
     source_index: int
     time_sec: float
+    ros_time_sec: float
     image_bgr: Any
 
 
@@ -33,6 +34,7 @@ class SampledFrames:
     prepared_to_source: List[int]
     prepared_to_time_sec: List[float]
     prepared_to_abs_time_sec: List[float]
+    prepared_to_ros_time_sec: List[float]
     start_sec: float
     end_sec: float
     dur_sec: float
@@ -254,7 +256,14 @@ def read_ros_frames(dataset_config, start_sec=None, dur_sec=None):
             if end_value is not None and rel_sec > end_value + 1e-9:
                 break
             image_bgr = _decode_ros_image_to_bgr(msg)
-            frames.append(RosFrame(source_index=int(source_index), time_sec=float(rel_sec), image_bgr=image_bgr))
+            frames.append(
+                RosFrame(
+                    source_index=int(source_index),
+                    time_sec=float(rel_sec),
+                    ros_time_sec=float(stamp_sec),
+                    image_bgr=image_bgr,
+                )
+            )
 
     if first_stamp is None:
         raise RuntimeError(
@@ -311,6 +320,7 @@ def sample_frames_to_target_fps(frames, target_fps, start_sec=None, dur_sec=None
     prepared_to_source = []
     prepared_to_time_sec = []
     prepared_to_abs_time_sec = []
+    prepared_to_ros_time_sec = []
     for prepared_idx, target_time in enumerate(target_times):
         pos = bisect_left(times, float(target_time))
         if pos <= 0:
@@ -329,6 +339,7 @@ def sample_frames_to_target_fps(frames, target_fps, start_sec=None, dur_sec=None
         prepared_to_source.append(int(chosen_frame.source_index))
         prepared_to_time_sec.append(float(prepared_idx) / float(fps))
         prepared_to_abs_time_sec.append(float(source_start) + float(prepared_idx) / float(fps))
+        prepared_to_ros_time_sec.append(float(chosen_frame.ros_time_sec))
 
     actual_dur = float(prepared_to_time_sec[-1]) if prepared_to_time_sec else 0.0
     return SampledFrames(
@@ -336,6 +347,7 @@ def sample_frames_to_target_fps(frames, target_fps, start_sec=None, dur_sec=None
         prepared_to_source=prepared_to_source,
         prepared_to_time_sec=prepared_to_time_sec,
         prepared_to_abs_time_sec=prepared_to_abs_time_sec,
+        prepared_to_ros_time_sec=prepared_to_ros_time_sec,
         start_sec=float(source_start),
         end_sec=float(source_start + actual_dur),
         dur_sec=float(actual_dur),

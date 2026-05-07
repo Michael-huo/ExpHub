@@ -13,7 +13,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, write_json_atomic
+from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic
 from exphub.common.logging import log_info, log_prog, log_warn
 
 try:
@@ -211,7 +211,7 @@ def _quat_xyzw_from_rot(rotation):
     return q
 
 
-def _save_trajectory(traj_est, timestamps_sec, tum_path, npz_path):
+def _save_trajectory(traj_est, timestamps_sec, tum_path, npz_path, track_name):
     import lietorch
     import numpy as np
     import torch
@@ -227,7 +227,13 @@ def _save_trajectory(traj_est, timestamps_sec, tum_path, npz_path):
 
     timestamps = np.asarray(timestamps_sec, dtype=float)
     if matrices.shape[0] != timestamps.shape[0]:
-        raise RuntimeError("pose count {} does not match timestamp count {}".format(matrices.shape[0], timestamps.shape[0]))
+        raise RuntimeError(
+            "cannot assign absolute timestamps to {} trajectory: traj rows={}, source timestamps={}".format(
+                track_name,
+                int(matrices.shape[0]),
+                int(timestamps.shape[0]),
+            )
+        )
 
     Path(tum_path).parent.mkdir(parents=True, exist_ok=True)
     Path(npz_path).parent.mkdir(parents=True, exist_ok=True)
@@ -283,7 +289,57 @@ def _track_args(config):
     return args
 
 
-def _run_track(exp_dir, track_name, frames_dir, args):
+def _as_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _load_prepare_ros_timestamps(prepare_result_path):
+    prepare_result = read_json_dict(prepare_result_path)
+    frame_index_map = _as_dict(prepare_result.get("frame_index_map"))
+    values = frame_index_map.get("prepared_to_ros_time_sec")
+    if not values:
+        raise RuntimeError(
+            "missing prepare_result.frame_index_map.prepared_to_ros_time_sec; rerun prepare with the updated version"
+        )
+    out = []
+    try:
+        for item in list(values):
+            out.append(float(item))
+    except Exception as exc:
+        raise RuntimeError(
+            "invalid prepare_result.frame_index_map.prepared_to_ros_time_sec: {}".format(prepare_result_path)
+        ) from exc
+    if not out:
+        raise RuntimeError(
+            "missing prepare_result.frame_index_map.prepared_to_ros_time_sec; rerun prepare with the updated version"
+        )
+    return out
+
+
+def _timestamp_range(timestamps):
+    values = [float(item) for item in list(timestamps or [])]
+    if not values:
+        return {"first": None, "last": None}
+    return {"first": float(values[0]), "last": float(values[-1])}
+
+
+def _timestamps_for_files(files, source_timestamps, track_name):
+    out = []
+    for path_obj in list(files or []):
+        frame_idx = _parse_frame_index(Path(path_obj).name)
+        if frame_idx < 0 or frame_idx >= len(source_timestamps):
+            raise RuntimeError(
+                "cannot assign absolute timestamps to {} trajectory: frame index {} outside source timestamps count {}".format(
+                    track_name,
+                    int(frame_idx),
+                    int(len(source_timestamps)),
+                )
+            )
+        out.append(float(source_timestamps[frame_idx]))
+    return out
+
+
+def _run_track(exp_dir, track_name, frames_dir, args, source_timestamps):
     import torch
 
     started = time.time()
@@ -302,7 +358,7 @@ def _run_track(exp_dir, track_name, frames_dir, args):
         raise RuntimeError("no frames available for slam track {}: {}".format(track_name, frames_dir))
 
     fx, fy, cx, cy, dist = _load_calib(calib_path)
-    timestamps = _load_timestamps_list(timestamps_path)
+    timestamps = _timestamps_for_files(files, source_timestamps, track_name)
 
     _setup_droid_import(args.droid_repo)
     from droid import Droid  # noqa
@@ -366,7 +422,7 @@ def _run_track(exp_dir, track_name, frames_dir, args):
 
     tum_path = (track_dir / "traj_est.tum").resolve()
     npz_path = (track_dir / "traj_est.npz").resolve()
-    _save_trajectory(traj_est, timestamps_used, tum_path=tum_path, npz_path=npz_path)
+    _save_trajectory(traj_est, timestamps_used, tum_path=tum_path, npz_path=npz_path, track_name=track_name)
 
     run_meta = {
         "version": 1,
@@ -377,7 +433,8 @@ def _run_track(exp_dir, track_name, frames_dir, args):
         "num_frames": int(len(files)),
         "frames_processed": int(len(timestamps_used)),
         "calib_source": _relative_path(exp_dir, calib_path),
-        "timestamps_source": _relative_path(exp_dir, timestamps_path),
+        "timestamps_source": "prepare_result.frame_index_map.prepared_to_ros_time_sec",
+        "timestamp_source": "prepare_ros_time",
         "trajectory_path": _relative_path(exp_dir, tum_path),
         "npz_path": _relative_path(exp_dir, npz_path),
         "runtime_sec": float(time.time() - started),
@@ -386,6 +443,8 @@ def _run_track(exp_dir, track_name, frames_dir, args):
         "weights": str(weights_path.resolve()),
         "timestamp_first": float(timestamps_used[0]) if timestamps_used else None,
         "timestamp_last": float(timestamps_used[-1]) if timestamps_used else None,
+        "assigned_timestamp_first": float(timestamps_used[0]) if timestamps_used else None,
+        "assigned_timestamp_last": float(timestamps_used[-1]) if timestamps_used else None,
     }
     run_meta_path = (track_dir / "run_meta.json").resolve()
     write_json_atomic(run_meta_path, run_meta, indent=2)
@@ -396,13 +455,17 @@ def _run_track(exp_dir, track_name, frames_dir, args):
         "num_frames": int(len(files)),
         "frames_processed": int(len(timestamps_used)),
         "calib_source": _relative_path(exp_dir, calib_path),
-        "timestamps_source": _relative_path(exp_dir, timestamps_path),
+        "timestamps_source": "prepare_result.frame_index_map.prepared_to_ros_time_sec",
+        "timestamp_source": "prepare_ros_time",
         "trajectory_path": _relative_path(exp_dir, tum_path),
         "npz_path": _relative_path(exp_dir, npz_path),
         "run_meta_path": _relative_path(exp_dir, run_meta_path),
         "runtime_sec": float(run_meta["runtime_sec"]),
         "status": "success",
         "termination_mode": termination_mode,
+        "assigned_timestamp_first": float(timestamps_used[0]) if timestamps_used else None,
+        "assigned_timestamp_last": float(timestamps_used[-1]) if timestamps_used else None,
+        "time_range_after_rewrite": _timestamp_range(timestamps_used),
     }
 
 
@@ -424,11 +487,12 @@ def run_slam(config):
     if seq not in ("ori", "gen", "both"):
         raise RuntimeError("unsupported slam seq: {}".format(seq))
 
+    source_timestamps = _load_prepare_ros_timestamps(prepare_result_path)
     tracks = {}
     if seq in ("ori", "both"):
-        tracks["ori"] = _run_track(exp_dir, "ori", args.prepare_frames_dir, args)
+        tracks["ori"] = _run_track(exp_dir, "ori", args.prepare_frames_dir, args, source_timestamps)
     if seq in ("gen", "both"):
-        tracks["gen"] = _run_track(exp_dir, "gen", args.decode_frames_dir, args)
+        tracks["gen"] = _run_track(exp_dir, "gen", args.decode_frames_dir, args, source_timestamps)
 
     inputs = {
         "prepare_result": _relative_path(exp_dir, prepare_result_path),
@@ -450,6 +514,10 @@ def run_slam(config):
         "input_source_kind": "native",
         "native_inputs": list(inputs.values()),
         "fallback_used": False,
+        "timestamp_source": "prepare_ros_time",
+        "source_timestamp_count": int(len(source_timestamps)),
+        "ori_time_range_after_rewrite": _as_dict(tracks.get("ori")).get("time_range_after_rewrite"),
+        "gen_time_range_after_rewrite": _as_dict(tracks.get("gen")).get("time_range_after_rewrite"),
         "inputs": inputs,
         "ori": dict(tracks.get("ori") or {}),
         "gen": dict(tracks.get("gen") or {}),

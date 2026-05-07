@@ -305,12 +305,14 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
         "encode_profile": encode_result.get("profile") if isinstance(encode_result.get("profile"), dict) else {},
         "decode_generation": decode_generation,
         "quality": {
-            "ape_rmse": _pick_float(traj_metrics, ["ape_trans", "rmse"]),
-            "rpe_trans": _pick_float(traj_metrics, ["rpe_trans", "rmse"]),
-            "rpe_rot": _pick_float(traj_metrics, ["rpe_rot", "rmse"]),
-            "ori_len": _pick_float(traj_metrics, ["ori_path_length_m"]),
-            "gen_len": _pick_float(traj_metrics, ["gen_path_length_m"]),
-            "poses": _pick_int(traj_metrics, ["matched_pose_count"]),
+            "ori_vs_gt_rmse": _pick_float(traj_metrics, ["comparisons", "ori_vs_gt", "rmse"]),
+            "gen_vs_gt_rmse": _pick_float(traj_metrics, ["comparisons", "gen_vs_gt", "rmse"]),
+            "rmse_delta_gen_minus_ori": _pick_float(traj_metrics, ["overview", "rmse_delta_gen_minus_ori"]),
+            "common_matched_samples": _pick_int(traj_metrics, ["association", "common_matched_samples"]),
+            "better": _get_nested(traj_metrics, ["overview", "better"]),
+            "alignment_mode": _get_nested(traj_metrics, ["alignment", "mode"]),
+            "ori_scale": _pick_float(traj_metrics, ["overview", "ori_scale"]),
+            "gen_scale": _pick_float(traj_metrics, ["overview", "gen_scale"]),
         },
         "compression": {
             "ratio": ratio_bytes,
@@ -402,12 +404,23 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
         detail_rows.append(("total", _fmt_seconds(total_time)))
 
     quality_rows = []
-    _add_row(quality_rows, "ape_rmse", _as_float_or_none(quality.get("ape_rmse")), lambda v: _fmt_metric(v, unit="m"))
-    _add_row(quality_rows, "rpe_trans", _as_float_or_none(quality.get("rpe_trans")), lambda v: _fmt_metric(v, unit="m"))
-    _add_row(quality_rows, "rpe_rot", _as_float_or_none(quality.get("rpe_rot")), lambda v: _fmt_metric(v, unit="deg"))
-    _add_row(quality_rows, "ori_len", _as_float_or_none(quality.get("ori_len")), lambda v: _fmt_metric(v, unit="m"))
-    _add_row(quality_rows, "gen_len", _as_float_or_none(quality.get("gen_len")), lambda v: _fmt_metric(v, unit="m"))
-    _add_row(quality_rows, "poses", _as_int_or_none(quality.get("poses")), _fmt_count)
+    _add_row(quality_rows, "ori_vs_gt_rmse", _as_float_or_none(quality.get("ori_vs_gt_rmse")), lambda v: _fmt_metric(v, unit="m"))
+    _add_row(quality_rows, "gen_vs_gt_rmse", _as_float_or_none(quality.get("gen_vs_gt_rmse")), lambda v: _fmt_metric(v, unit="m"))
+    _add_row(
+        quality_rows,
+        "rmse_delta_gen_minus_ori",
+        _as_float_or_none(quality.get("rmse_delta_gen_minus_ori")),
+        lambda v: _fmt_metric(v, unit="m"),
+    )
+    _add_row(quality_rows, "common_matched_samples", _as_int_or_none(quality.get("common_matched_samples")), _fmt_count)
+    better = str(quality.get("better") or "").strip()
+    if better:
+        quality_rows.append(("better", better.upper() if better in {"ori", "gen"} else better))
+    alignment_mode = str(quality.get("alignment_mode") or "").strip()
+    if alignment_mode:
+        quality_rows.append(("alignment_mode", alignment_mode))
+    _add_row(quality_rows, "ori_scale", _as_float_or_none(quality.get("ori_scale")), lambda v: "{:.6f}".format(float(v)))
+    _add_row(quality_rows, "gen_scale", _as_float_or_none(quality.get("gen_scale")), lambda v: "{:.6f}".format(float(v)))
 
     compression_rows = []
     _add_row(compression_rows, "ratio", _as_float_or_none(compression.get("ratio")), _fmt_ratio)
