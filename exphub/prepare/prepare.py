@@ -166,6 +166,7 @@ def _run_single_prepare(
             "prepared_to_time_sec": [float(item) for item in sampled.prepared_to_time_sec],
             "prepared_to_rel_time_sec": [float(item) for item in sampled.prepared_to_time_sec],
             "prepared_to_abs_time_sec": [float(item) for item in sampled.prepared_to_abs_time_sec],
+            "prepared_to_ros_time_sec": [float(item) for item in sampled.prepared_to_ros_time_sec],
         },
     )
     save_prepare_result(result, result_path)

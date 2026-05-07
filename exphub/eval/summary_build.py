@@ -216,15 +216,16 @@ def _build_compression_report(exp_dir, out_dir, inputs, reports, warnings):
 
 def _detail_fieldnames():
     return [
-        "pose_idx",
-        "timestamp",
-        "ape_trans_m",
-        "ref_x",
-        "ref_y",
-        "ref_z",
-        "est_x",
-        "est_y",
-        "est_z",
+        "comparison",
+        "alignment_mode",
+        "scale",
+        "rmse",
+        "mean",
+        "median",
+        "min",
+        "max",
+        "std",
+        "matched_samples",
     ]
 
 
@@ -240,20 +241,23 @@ def _write_csv(path_obj, fieldnames, rows):
     os.replace(str(tmp_path), str(path))
 
 
-def _write_details(out_dir, traj_records):
+def _write_details(out_dir, traj_report):
     rows = []
-    for item in list(traj_records or []):
+    comparisons = _as_dict(_as_dict(traj_report).get("comparisons"))
+    for name in ["ori_vs_gt", "gen_vs_gt"]:
+        item = _as_dict(comparisons.get(name))
         rows.append(
             {
-                "pose_idx": item.get("pose_idx", ""),
-                "timestamp": item.get("timestamp", ""),
-                "ape_trans_m": item.get("ape_trans_m", ""),
-                "ref_x": item.get("ref_x", ""),
-                "ref_y": item.get("ref_y", ""),
-                "ref_z": item.get("ref_z", ""),
-                "est_x": item.get("est_x", ""),
-                "est_y": item.get("est_y", ""),
-                "est_z": item.get("est_z", ""),
+                "comparison": name,
+                "alignment_mode": item.get("alignment_mode", ""),
+                "scale": item.get("scale", ""),
+                "rmse": item.get("rmse", ""),
+                "mean": item.get("mean", ""),
+                "median": item.get("median", ""),
+                "min": item.get("min", ""),
+                "max": item.get("max", ""),
+                "std": item.get("std", ""),
+                "matched_samples": item.get("matched_samples", ""),
             }
         )
     details_path = Path(out_dir).resolve() / "eval_details.csv"
@@ -280,34 +284,37 @@ def _curve_xy(curve):
     return list(curve.get("x") or []), list(curve.get("y") or [])
 
 
-def _save_metrics_overview(out_dir, traj_overview):
+def _save_metrics_overview(out_dir, traj_report):
     plt = _setup_matplotlib()
     plot_path = Path(out_dir).resolve() / "eval_metrics_overview.png"
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.8), dpi=180)
+    comparisons = _as_dict(_as_dict(traj_report).get("comparisons"))
+    labels = ["ORI vs GT", "GEN vs GT"]
+    values = [
+        _pick_float(comparisons, ["ori_vs_gt", "rmse"]),
+        _pick_float(comparisons, ["gen_vs_gt", "rmse"]),
+    ]
+    numeric_values = [0.0 if value is None else float(value) for value in values]
+
+    fig, ax = plt.subplots(figsize=(7.2, 4.8), dpi=180)
     fig.patch.set_facecolor("white")
-
-    ape_x, ape_y = _curve_xy((traj_overview or {}).get("ape_curve"))
-    if ape_x and ape_y:
-        axes[0].plot(ape_x, ape_y, color="#1f4e79", linewidth=1.6)
-    axes[0].set_title("APE Curve")
-    axes[0].set_xlabel("pose")
-    axes[0].set_ylabel("m")
-
-    rpe_tx, rpe_ty = _curve_xy((traj_overview or {}).get("rpe_trans_curve"))
-    rpe_rx, rpe_ry = _curve_xy((traj_overview or {}).get("rpe_rot_curve"))
-    if rpe_tx and rpe_ty:
-        axes[1].plot(rpe_tx, rpe_ty, color="#c56a2d", linewidth=1.5, label="rpe_trans")
-    if rpe_rx and rpe_ry:
-        axes[1].plot(rpe_rx, rpe_ry, color="#546d8c", linewidth=1.5, label="rpe_rot")
-    if rpe_tx or rpe_rx:
-        axes[1].legend(loc="upper right", fontsize=8)
-    axes[1].set_title("RPE Curves")
-    axes[1].set_xlabel("pose")
-
-    for ax in axes:
-        ax.grid(True, alpha=0.3)
-        ax.set_facecolor("white")
+    ax.set_facecolor("white")
+    bars = ax.bar(labels, numeric_values, color=["#c56a2d", "#2f7d5c"], width=0.56)
+    ax.set_title("GT Trajectory RMSE (Sim3 aligned)")
+    ax.set_ylabel("RMSE (m)")
+    ax.grid(True, axis="y", alpha=0.3)
+    ymax = max(numeric_values) if numeric_values else 0.0
+    ax.set_ylim(0.0, ymax * 1.22 if ymax > 0.0 else 1.0)
+    for bar, value in zip(bars, values):
+        label = "n/a" if value is None else "{:.4f} m".format(float(value))
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            bar.get_height(),
+            label,
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
 
     fig.tight_layout()
     fig.savefig(str(plot_path), bbox_inches="tight", pad_inches=0.05)
@@ -322,6 +329,14 @@ def _summary_lines(exp_dir, inputs, reports, compression_report, warnings):
     traj_report = reports["eval_traj_report"]
 
     units = list(_as_dict(generation_units).get("units") or [])
+    comparisons = _as_dict(traj_report.get("comparisons"))
+    overview = _as_dict(traj_report.get("overview"))
+    association = _as_dict(traj_report.get("association"))
+    alignment = _as_dict(traj_report.get("alignment"))
+    alignment_mode = str(alignment.get("mode") or overview.get("alignment_mode") or "sim3").strip().lower()
+    alignment_text = "Sim3" if alignment_mode == "sim3" else (alignment_mode or "n/a")
+    better = str(overview.get("better", "") or "")
+    better_text = better.upper() if better in {"ori", "gen"} else (better or "n/a")
     lines = [
         "=== ExpHub Eval Native Summary ===",
         "created_at: {}".format(datetime.now().isoformat(timespec="seconds")),
@@ -346,18 +361,22 @@ def _summary_lines(exp_dir, inputs, reports, compression_report, warnings):
             "",
             "[Headline Metrics]",
             "status: {}".format(str(traj_report.get("eval_status", "failed") or "failed")),
-            "matched_poses: {}".format(int(traj_report.get("num_matches", traj_report.get("matched_pose_count", 0)) or 0)),
-            "APE RMSE: {}".format(_fmt_value(traj_report.get("ape_rmse_m"), "m")),
-            "RPE trans RMSE: {}".format(_fmt_value(traj_report.get("rpe_trans_rmse_m"), "m")),
-            "RPE rot RMSE: {}".format(_fmt_value(traj_report.get("rpe_rot_rmse_deg"), "deg")),
-            "ori_path_length: {}".format(_fmt_value(traj_report.get("ori_path_length_m"), "m")),
-            "gen_path_length: {}".format(_fmt_value(traj_report.get("gen_path_length_m"), "m")),
+            "",
+            "[Trajectory vs GT]",
+            "Alignment: {}".format(alignment_text),
+            "ORI vs GT RMSE: {}".format(_fmt_value(_pick_float(comparisons, ["ori_vs_gt", "rmse"]), "m")),
+            "GEN vs GT RMSE: {}".format(_fmt_value(_pick_float(comparisons, ["gen_vs_gt", "rmse"]), "m")),
+            "Delta GEN-ORI: {}".format(_fmt_value(overview.get("rmse_delta_gen_minus_ori"), "m")),
+            "Ratio GEN/ORI: {}".format(_fmt_value(overview.get("rmse_ratio_gen_over_ori"))),
+            "Better: {}".format(better_text),
+            "ORI scale: {}".format(_fmt_value(overview.get("ori_scale"))),
+            "GEN scale: {}".format(_fmt_value(overview.get("gen_scale"))),
+            "Common matched samples: {}".format(int(association.get("common_matched_samples", 0) or 0)),
             "",
             "[Generation Units]",
-            "unit_count: {}".format(int(traj_report.get("unit_count", 0) or 0)),
-            "unit_boundaries: {}".format(list(traj_report.get("unit_boundaries") or [])),
-            "boundary_source: {}".format(str(traj_report.get("boundary_source", "") or "")),
-            "boundary_time_source_kind: {}".format(str(traj_report.get("boundary_time_source_kind", "") or "")),
+            "unit_count: {}".format(int(len(units))),
+            "unit_boundaries: {}".format(_boundary_indices(generation_units)),
+            "boundary_source: {}".format(_relative_path(exp_dir, inputs["generation_units"])),
             "",
             "[Compression]",
             "orig_size: {} bytes".format(int(compression_report.get("orig_size_bytes", 0) or 0)),
@@ -408,8 +427,8 @@ def build_eval_summary(config):
     compression_path, compression_report = _build_compression_report(exp_dir, out_dir, inputs, reports, warnings)
     summary_text = "\n".join(_summary_lines(exp_dir, inputs, reports, compression_report, warnings))
     summary_path = out_dir / "eval_summary.txt"
-    details_path = _write_details(out_dir, _get_arg(config, "traj_records", []))
-    overview_path = _save_metrics_overview(out_dir, _get_arg(config, "traj_overview", {}))
+    details_path = _write_details(out_dir, reports["eval_traj_report"])
+    overview_path = _save_metrics_overview(out_dir, reports["eval_traj_report"])
     write_text_atomic(summary_path, summary_text + "\n")
 
     log_prog("eval summary generated")

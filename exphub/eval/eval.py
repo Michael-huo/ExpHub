@@ -54,6 +54,13 @@ def run_native_mainline(args):
     exp_dir = Path(args.exp_dir).resolve()
     out_dir = Path(args.out_dir).resolve()
     inputs = _validate_native_inputs(args)
+    gt_traj_path = Path(args.gt_traj).resolve()
+    if not gt_traj_path.is_file():
+        raise RuntimeError(
+            "ground truth trajectory not found: {}; expected same directory/name as rosbag with .tum suffix".format(
+                gt_traj_path
+            )
+        )
     _clean_eval_outputs(out_dir)
 
     log_prog("eval native mainline: slam")
@@ -107,15 +114,9 @@ def run_native_mainline(args):
             "out_dir": str(out_dir),
             "prepare_result": str(inputs["prepare_result"]),
             "generation_units": str(inputs["generation_units"]),
-            "reference": str((out_dir / "ori" / "traj_est.tum").resolve()),
-            "estimate": str((out_dir / "gen" / "traj_est.tum").resolve()),
-            "reference_name": "ori",
-            "estimate_name": "gen",
-            "alignment_mode": "se3",
-            "delta": 1.0,
-            "delta_unit": "frames",
-            "t_max_diff": 0.01,
-            "t_offset": 0.0,
+            "gt_traj": str(gt_traj_path),
+            "ori_traj": str((out_dir / "ori" / "traj_est.tum").resolve()),
+            "gen_traj": str((out_dir / "gen" / "traj_est.tum").resolve()),
             "skip_plots": bool(args.skip_plots),
         }
     )
@@ -160,6 +161,15 @@ def run(runtime):
     ensure_file(runtime.paths.decode_report_path, "decode report")
     ensure_file(runtime.paths.decode_merge_report_path, "decode merge report")
 
+    dataset = runtime.dataset()
+    gt_traj_path = dataset.bag.with_suffix(".tum")
+    if not gt_traj_path.is_file():
+        raise RuntimeError(
+            "ground truth trajectory not found: {}; expected same directory/name as rosbag with .tum suffix".format(
+                gt_traj_path
+            )
+        )
+
     runtime.paths.eval_dir.mkdir(parents=True, exist_ok=True)
     for name in _STALE_EVAL_OUTPUTS:
         runtime.remove_in_exp(runtime.paths.eval_dir / name)
@@ -192,6 +202,8 @@ def run(runtime):
         str(runtime.paths.decode_report_path),
         "--decode_merge_report",
         str(runtime.paths.decode_merge_report_path),
+        "--gt_traj",
+        str(gt_traj_path),
         "--seq",
         str(runtime.args.droid_seq),
         "--droid_repo",
@@ -247,6 +259,7 @@ def _build_arg_parser():
     parser.add_argument("--decode_timestamps", required=True)
     parser.add_argument("--decode_report", required=True)
     parser.add_argument("--decode_merge_report", required=True)
+    parser.add_argument("--gt_traj", required=True)
     parser.add_argument("--seq", default="both", choices=["auto", "ori", "gen", "both"])
     parser.add_argument("--droid_repo", required=True)
     parser.add_argument("--weights", required=True)
