@@ -24,7 +24,42 @@ repos:
 
 services:
   comfyui:
-    workflow_json: "/path/to/ExpHub/config/video_wan2_2_5B_fun_inpaint.json"
+    active_profile: "base"
+    profiles:
+      base:
+        workflow_json: "/path/to/ExpHub/config/workflows/wan2_2_5b_inp_base.json"
+        lora:
+          enabled: false
+        nodes:
+          ksampler: "3"
+          positive_prompt: "6"
+          negative_prompt: "7"
+          vae_decode: "8"
+          create_video: "57"
+          save_video: "58"
+          start_image: "70"
+          video_spec: "73"
+          end_image: "74"
+          save_image: "75"
+      lora_gdut:
+        workflow_json: "/path/to/ExpHub/config/workflows/wan2_2_5b_inp_lora_gdut.json"
+        lora:
+          enabled: true
+          name: "wan22_fun_5b_inp_gdut.safetensors"
+          strength_model: 1.0
+          strength_clip: 1.0
+        nodes:
+          ksampler: "11"
+          positive_prompt: "16"
+          negative_prompt: "12"
+          vae_decode: "6"
+          create_video: "7"
+          save_video: "8"
+          start_image: "4"
+          video_spec: "9"
+          end_image: "5"
+          save_image: "10"
+          lora_loader: "15"
     timeout_sec: 1800
     poll_interval_sec: 2.0
     parallel: true

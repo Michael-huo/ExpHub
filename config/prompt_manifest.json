@@ -2,24 +2,21 @@
   "schema": "prompt_manifest",
   "prompt_profile": "base_motion_prompt",
   "positive": {
-    "base_prompt": "continuous viewpoint, stable scene geometry, coherent depth structure, stable foreground-background layout, consistent object scale, repeatable local edges and corner-like details, stable exposure and white balance, temporal coherence",
+    "base_prompt": "场景几何结构稳定，透视关系一致，视角朝向连续，前景与背景布局稳定，物体尺度与位置保持一致，时间连续性良好",
     "motion_prompts": {
-      "stop": "near-static camera pose, stable still-scene geometry, preserved fine structure",
-      "forward": "smooth forward egomotion, clear depth progression, stable perspective",
-      "left_turn": "smooth left turn, continuous camera rotation, geometry-aligned motion",
-      "right_turn": "smooth right turn, continuous camera rotation, geometry-aligned motion",
-      "mixed": "coherent mixed egomotion, readable camera movement, stable transition"
+      "stop": "视角基本静止，位姿稳定，物体位置稳定，细节结构保持清晰，背景对齐稳定",
+      "forward": "视角平稳向前运动，景深逐渐展开，透视尺度变化平滑稳定",
+      "left_turn": "视角平滑连续向左转，地平线稳定，消失方向一致，视角变化连续自然",
+      "right_turn": "视角平滑连续向右转，地平线稳定，消失方向一致，视角变化连续自然",
+      "mixed": "视角混合运动，相机运动连贯，在前进与转向之间平滑过渡，视角连续稳定"
     }
   },
   "negative": {
-    "negative_prompt": "blurry, low detail, low quality, distorted geometry, warped structure, broken perspective, inconsistent scale, flicker, temporal inconsistency, unstable edges, drifting textures, texture swimming, drifting objects, duplicated objects, hallucinated objects, unstable camera, camera shake, sudden viewpoint change, ghosting, motion smear, artifacts, oversmoothing"
+    "negative_prompt": "模糊，低清晰度，低质量，几何结构扭曲，透视错误，尺度不一致，边缘不稳定，纹理漂移，纹理游动，画面闪烁，时间不连续，物体漂移，物体重复，虚构物体，镜头抖动，视角突变，鬼影，拖影，伪影，过度平滑，曝光闪烁"
   },
   "composition": {
-    "positive_parts": [
-      "base_prompt",
-      "motion_prompt"
-    ],
+    "positive_parts": ["base_prompt", "motion_prompt"],
     "negative_field": "negative_prompt",
-    "joiner": ", "
+    "joiner": "，"
   }
 }

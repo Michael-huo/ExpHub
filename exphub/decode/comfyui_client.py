@@ -66,17 +66,6 @@ from exphub.common.logging import log_info, log_prog
 from exphub.config import get_platform_config
 
 
-# Node IDs in the exported API workflow template.
-NODE_KSAMPLER = "3"
-NODE_POSITIVE_PROMPT = "6"
-NODE_NEGATIVE_PROMPT = "7"
-NODE_CREATE_VIDEO = "57"
-NODE_SAVE_VIDEO = "58"
-NODE_START_IMAGE = "70"
-NODE_VIDEO_SPEC = "73"
-NODE_END_IMAGE = "74"
-NODE_SAVE_IMAGE = "75"
-
 COMFYUI_BACKEND = "comfyui_wan2_2_5b_inp"
 REPORT_FILENAME = "decode_report.json"
 _SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -121,6 +110,59 @@ class DecodeResult:
     instance_base_url: str = ""
     instance_output_root: str = ""
     generate_sec: float | None = None
+
+
+@dataclass(frozen=True)
+class WorkflowNodes:
+    ksampler: str
+    positive_prompt: str
+    negative_prompt: str
+    vae_decode: str
+    create_video: str
+    save_video: str
+    start_image: str
+    video_spec: str
+    end_image: str
+    save_image: str
+    lora_loader: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkflowProfile:
+    name: str
+    workflow_json: Path
+    nodes: WorkflowNodes
+    lora_enabled: bool = False
+    lora_name: str = ""
+    lora_strength_model: float | None = None
+    lora_strength_clip: float | None = None
+
+
+DEFAULT_WORKFLOW_NODES = WorkflowNodes(
+    ksampler="3",
+    positive_prompt="6",
+    negative_prompt="7",
+    vae_decode="8",
+    create_video="57",
+    save_video="58",
+    start_image="70",
+    video_spec="73",
+    end_image="74",
+    save_image="75",
+)
+
+WORKFLOW_CONTRACT_NODE_ROLES = (
+    "ksampler",
+    "positive_prompt",
+    "negative_prompt",
+    "vae_decode",
+    "create_video",
+    "save_video",
+    "start_image",
+    "video_spec",
+    "end_image",
+    "save_image",
+)
 
 
 @dataclass(frozen=True)
@@ -196,6 +238,114 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     raise ValueError("invalid boolean value: {!r}".format(value))
 
 
+def _as_optional_float(value: Any) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return float(value)
+
+
+def _workflow_profile_metadata(profile: WorkflowProfile) -> dict[str, Any]:
+    return {
+        "decode_profile": str(profile.name),
+        "workflow_json": str(profile.workflow_json),
+        "lora_enabled": bool(profile.lora_enabled),
+        "lora_name": str(profile.lora_name or ""),
+        "lora_strength_model": profile.lora_strength_model,
+        "lora_strength_clip": profile.lora_strength_clip,
+    }
+
+
+def _parse_workflow_nodes(raw_nodes: Any, profile_name: str) -> WorkflowNodes:
+    if not isinstance(raw_nodes, dict):
+        raise RuntimeError("ComfyUI decode profile {} missing nodes mapping".format(profile_name))
+
+    missing = [
+        role
+        for role in WORKFLOW_CONTRACT_NODE_ROLES
+        if raw_nodes.get(role) is None or str(raw_nodes.get(role)).strip() == ""
+    ]
+    if missing:
+        raise RuntimeError(
+            "ComfyUI decode profile {} missing required node field(s): {}".format(
+                profile_name,
+                ", ".join(missing),
+            )
+        )
+
+    lora_loader = raw_nodes.get("lora_loader")
+    return WorkflowNodes(
+        ksampler=str(raw_nodes["ksampler"]).strip(),
+        positive_prompt=str(raw_nodes["positive_prompt"]).strip(),
+        negative_prompt=str(raw_nodes["negative_prompt"]).strip(),
+        vae_decode=str(raw_nodes["vae_decode"]).strip(),
+        create_video=str(raw_nodes["create_video"]).strip(),
+        save_video=str(raw_nodes["save_video"]).strip(),
+        start_image=str(raw_nodes["start_image"]).strip(),
+        video_spec=str(raw_nodes["video_spec"]).strip(),
+        end_image=str(raw_nodes["end_image"]).strip(),
+        save_image=str(raw_nodes["save_image"]).strip(),
+        lora_loader=str(lora_loader).strip() if lora_loader is not None and str(lora_loader).strip() else None,
+    )
+
+
+def _resolve_workflow_profile(comfyui: dict[str, Any], decode_profile: str | None = None) -> WorkflowProfile:
+    profiles = comfyui.get("profiles")
+    profile_override = str(decode_profile or "").strip()
+
+    if profiles is None:
+        workflow_value = comfyui.get("workflow_json")
+        if workflow_value is None or str(workflow_value).strip() == "":
+            raise RuntimeError("Missing services.comfyui.workflow_json in config/platform.yaml")
+        workflow_json = Path(str(workflow_value)).expanduser().resolve()
+        return WorkflowProfile(
+            name=profile_override or "legacy",
+            workflow_json=workflow_json,
+            nodes=DEFAULT_WORKFLOW_NODES,
+            lora_enabled=False,
+        )
+
+    if not isinstance(profiles, dict) or not profiles:
+        raise RuntimeError("services.comfyui.profiles must be a non-empty mapping when configured")
+
+    active_profile = profile_override or str(comfyui.get("active_profile") or "base").strip() or "base"
+    if active_profile not in profiles:
+        raise RuntimeError("Unknown ComfyUI decode profile: {}".format(active_profile))
+
+    raw_profile = profiles.get(active_profile)
+    if not isinstance(raw_profile, dict):
+        raise RuntimeError("services.comfyui.profiles.{} must be a mapping".format(active_profile))
+
+    workflow_value = raw_profile.get("workflow_json")
+    if workflow_value is None or str(workflow_value).strip() == "":
+        raise RuntimeError("ComfyUI decode profile {} missing workflow_json".format(active_profile))
+    workflow_json = Path(str(workflow_value)).expanduser().resolve()
+    if not workflow_json.is_file():
+        raise RuntimeError(
+            "ComfyUI decode profile {} workflow_json not found: {}".format(
+                active_profile,
+                workflow_json,
+            )
+        )
+
+    nodes = _parse_workflow_nodes(raw_profile.get("nodes"), active_profile)
+    lora_cfg = raw_profile.get("lora") or {}
+    if not isinstance(lora_cfg, dict):
+        raise RuntimeError("services.comfyui.profiles.{}.lora must be a mapping".format(active_profile))
+    lora_enabled = _as_bool(lora_cfg.get("enabled"), False)
+    if lora_enabled and not nodes.lora_loader:
+        raise RuntimeError("ComfyUI decode profile {} has lora_enabled=true but no lora_loader node".format(active_profile))
+
+    return WorkflowProfile(
+        name=str(active_profile),
+        workflow_json=workflow_json,
+        nodes=nodes,
+        lora_enabled=bool(lora_enabled),
+        lora_name=str(lora_cfg.get("name") or "").strip(),
+        lora_strength_model=_as_optional_float(lora_cfg.get("strength_model")),
+        lora_strength_clip=_as_optional_float(lora_cfg.get("strength_clip")),
+    )
+
+
 def _platform_path_from_root(exphub_root: str | Path | None = None) -> Path:
     if exphub_root:
         return Path(exphub_root).resolve() / "config" / "platform.yaml"
@@ -206,6 +356,7 @@ def resolve_comfyui_platform_config(
     platform_cfg: dict[str, Any] | None = None,
     *,
     exphub_root: str | Path | None = None,
+    decode_profile: str | None = None,
 ) -> dict[str, Any]:
     cfg = platform_cfg if platform_cfg is not None else get_platform_config(exphub_root=exphub_root)
     services = cfg.get("services", {}) if isinstance(cfg, dict) else {}
@@ -252,9 +403,15 @@ def resolve_comfyui_platform_config(
             )
         )
 
+    workflow_profile = _resolve_workflow_profile(comfyui, decode_profile=decode_profile)
+    workflow_meta = _workflow_profile_metadata(workflow_profile)
+
     return {
         "base_url": str(instances[0].base_url),
-        "workflow_json": Path(str(require("workflow_json"))).expanduser().resolve(),
+        "workflow_json": workflow_profile.workflow_json,
+        "workflow_nodes": workflow_profile.nodes,
+        "workflow_profile": workflow_profile,
+        **workflow_meta,
         "output_root": Path(instances[0].output_root),
         "parallel": _as_bool(comfyui.get("parallel"), False),
         "schedule": str(comfyui.get("schedule", "longest_first") or "longest_first").strip(),
@@ -360,8 +517,10 @@ def _write_comfyui_params(
     seed_policy: str,
     resolved_seed: int,
     backend_name: str = COMFYUI_BACKEND,
+    workflow_profile: WorkflowProfile | None = None,
 ) -> dict[str, Any]:
     run_root = Path(run_dir).resolve()
+    profile_meta = _workflow_profile_metadata(workflow_profile) if workflow_profile else {}
     params = {
         "task": str(task["unit_id"]),
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -405,6 +564,7 @@ def _write_comfyui_params(
         "instance_base_url": str(result.instance_base_url),
         "instance_output_root": str(result.instance_output_root),
         "generate_sec": result.generate_sec,
+        **profile_meta,
     }
     write_json_atomic(run_root / "params.json", params, indent=2)
     return params
@@ -414,16 +574,29 @@ class ComfyUIWanInpClient:
     def __init__(
         self,
         comfy_url: str,
-        workflow_json: Path,
+        workflow_json: Path | None,
         comfy_output_root: Path,
         exp_output_dir: Path,
         timeout_sec: int = 1800,
         poll_interval_sec: float = 2.0,
         platform_config: Path | None = None,
         instance_name: str = "single",
+        workflow_profile: WorkflowProfile | None = None,
+        workflow_nodes: WorkflowNodes | None = None,
     ) -> None:
         self.comfy_url = comfy_url.rstrip("/")
-        self.workflow_json = workflow_json
+        if workflow_profile is None:
+            if workflow_json is None:
+                raise ValueError("ComfyUIWanInpClient requires workflow_json or workflow_profile")
+            workflow_profile = WorkflowProfile(
+                name="legacy",
+                workflow_json=Path(workflow_json).expanduser().resolve(),
+                nodes=workflow_nodes or DEFAULT_WORKFLOW_NODES,
+                lora_enabled=False,
+            )
+        self.workflow_profile = workflow_profile
+        self.nodes = workflow_profile.nodes
+        self.workflow_json = workflow_profile.workflow_json
         self.comfy_output_root = comfy_output_root
         self.exp_output_dir = exp_output_dir
         self.timeout_sec = timeout_sec
@@ -432,9 +605,14 @@ class ComfyUIWanInpClient:
         self.instance_name = str(instance_name or "single")
 
         if not self.workflow_json.exists():
-            raise FileNotFoundError(f"workflow json not found: {self.workflow_json}")
+            raise FileNotFoundError(
+                "workflow json not found for profile {}: {}".format(
+                    self.workflow_profile.name,
+                    self.workflow_json,
+                )
+            )
 
-        self.workflow_template = self._load_workflow(self.workflow_json)
+        self.workflow_template = self._load_workflow(self.workflow_json, self.workflow_profile)
 
     @staticmethod
     def resolve_seed(seed: int) -> int:
@@ -446,24 +624,32 @@ class ComfyUIWanInpClient:
         return seed_value
 
     @staticmethod
-    def _load_workflow(path: Path) -> dict[str, Any]:
+    def _load_workflow(path: Path, profile: WorkflowProfile) -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as f:
             workflow = json.load(f)
         if not isinstance(workflow, dict):
             raise ValueError("workflow JSON must be API format: top-level object keyed by node id")
-        for node_id in (
-            NODE_KSAMPLER,
-            NODE_POSITIVE_PROMPT,
-            NODE_NEGATIVE_PROMPT,
-            NODE_CREATE_VIDEO,
-            NODE_SAVE_VIDEO,
-            NODE_START_IMAGE,
-            NODE_VIDEO_SPEC,
-            NODE_END_IMAGE,
-            NODE_SAVE_IMAGE,
-        ):
+        roles = list(WORKFLOW_CONTRACT_NODE_ROLES)
+        if profile.lora_enabled:
+            if not profile.nodes.lora_loader:
+                raise ValueError(
+                    "ComfyUI decode profile {} has lora_enabled=true but no lora_loader node".format(
+                        profile.name,
+                    )
+                )
+            roles.append("lora_loader")
+        for role in roles:
+            node_id = getattr(profile.nodes, role)
             if node_id not in workflow:
-                raise ValueError(f"workflow missing required node id {node_id}")
+                contract_note = " (profile contract node)" if role == "vae_decode" else ""
+                raise ValueError(
+                    "workflow JSON missing node for profile {}: role={} node_id={}{}".format(
+                        profile.name,
+                        role,
+                        node_id,
+                        contract_note,
+                    )
+                )
         return workflow
 
     def upload_image(self, image_path: Path, subfolder: str = "exphub") -> str:
@@ -502,30 +688,46 @@ class ComfyUIWanInpClient:
 
     def build_workflow(self, req: DecodeRequest, start_image_name: str, end_image_name: str) -> dict[str, Any]:
         wf = copy.deepcopy(self.workflow_template)
+        nodes = self.nodes
 
-        wf[NODE_POSITIVE_PROMPT]["inputs"]["text"] = req.positive_prompt
-        wf[NODE_NEGATIVE_PROMPT]["inputs"]["text"] = req.negative_prompt
+        wf[nodes.positive_prompt]["inputs"]["text"] = req.positive_prompt
+        wf[nodes.negative_prompt]["inputs"]["text"] = req.negative_prompt
 
-        wf[NODE_START_IMAGE]["inputs"]["image"] = start_image_name
-        wf[NODE_END_IMAGE]["inputs"]["image"] = end_image_name
+        wf[nodes.start_image]["inputs"]["image"] = start_image_name
+        wf[nodes.end_image]["inputs"]["image"] = end_image_name
 
-        wf[NODE_VIDEO_SPEC]["inputs"]["width"] = int(req.width)
-        wf[NODE_VIDEO_SPEC]["inputs"]["height"] = int(req.height)
-        wf[NODE_VIDEO_SPEC]["inputs"]["length"] = int(req.length)
-        wf[NODE_VIDEO_SPEC]["inputs"]["batch_size"] = 1
+        wf[nodes.video_spec]["inputs"]["width"] = int(req.width)
+        wf[nodes.video_spec]["inputs"]["height"] = int(req.height)
+        wf[nodes.video_spec]["inputs"]["length"] = int(req.length)
+        wf[nodes.video_spec]["inputs"]["batch_size"] = 1
 
-        wf[NODE_KSAMPLER]["inputs"]["seed"] = int(req.seed)
-        wf[NODE_KSAMPLER]["inputs"]["steps"] = int(req.steps)
-        wf[NODE_KSAMPLER]["inputs"]["cfg"] = float(req.cfg)
-        wf[NODE_KSAMPLER]["inputs"]["sampler_name"] = req.sampler_name
-        wf[NODE_KSAMPLER]["inputs"]["scheduler"] = req.scheduler
-        wf[NODE_KSAMPLER]["inputs"]["denoise"] = float(req.denoise)
+        wf[nodes.ksampler]["inputs"]["seed"] = int(req.seed)
+        wf[nodes.ksampler]["inputs"]["steps"] = int(req.steps)
+        wf[nodes.ksampler]["inputs"]["cfg"] = float(req.cfg)
+        wf[nodes.ksampler]["inputs"]["sampler_name"] = req.sampler_name
+        wf[nodes.ksampler]["inputs"]["scheduler"] = req.scheduler
+        wf[nodes.ksampler]["inputs"]["denoise"] = float(req.denoise)
 
-        wf[NODE_CREATE_VIDEO]["inputs"]["fps"] = int(req.fps)
+        wf[nodes.create_video]["inputs"]["fps"] = int(req.fps)
 
         # These prefixes are under ComfyUI/output.
-        wf[NODE_SAVE_VIDEO]["inputs"]["filename_prefix"] = f"video/{req.segment_id}"
-        wf[NODE_SAVE_IMAGE]["inputs"]["filename_prefix"] = f"frames/{req.segment_id}/frame"
+        wf[nodes.save_video]["inputs"]["filename_prefix"] = f"video/{req.segment_id}"
+        wf[nodes.save_image]["inputs"]["filename_prefix"] = f"frames/{req.segment_id}/frame"
+
+        if self.workflow_profile.lora_enabled:
+            if not nodes.lora_loader:
+                raise ComfyUIDecodeError(
+                    "ComfyUI decode profile {} has lora_enabled=true but no lora_loader node".format(
+                        self.workflow_profile.name,
+                    )
+                )
+            lora_inputs = wf[nodes.lora_loader].setdefault("inputs", {})
+            if self.workflow_profile.lora_name:
+                lora_inputs["lora_name"] = self.workflow_profile.lora_name
+            if self.workflow_profile.lora_strength_model is not None:
+                lora_inputs["strength_model"] = float(self.workflow_profile.lora_strength_model)
+            if self.workflow_profile.lora_strength_clip is not None:
+                lora_inputs["strength_clip"] = float(self.workflow_profile.lora_strength_clip)
 
         return wf
 
@@ -655,6 +857,7 @@ class ComfyUIWanInpClient:
                 generate_sec=float(time.time() - generate_started),
             )
 
+        profile_meta = _workflow_profile_metadata(self.workflow_profile)
         meta = {
             "backend": result.backend,
             "segment_id": req.segment_id,
@@ -681,6 +884,7 @@ class ComfyUIWanInpClient:
             "error": result.error,
             "expected_comfy_frames_dir": str(self.comfy_output_root / "frames" / req.segment_id),
             "expected_comfy_video_prefix": str(self.comfy_output_root / "video" / req.segment_id),
+            **profile_meta,
         }
         Path(result.meta_path).parent.mkdir(parents=True, exist_ok=True)
         write_json_atomic(Path(result.meta_path), meta, indent=2)
@@ -824,6 +1028,7 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--platform-config", default=None, help="Path to ExpHub platform.yaml with services.comfyui config.")
     p.add_argument("--workflow-json", default=None, help="Path to exported ComfyUI API-format workflow JSON.")
+    p.add_argument("--decode-profile", default="", help="ComfyUI workflow profile override.")
     p.add_argument("--start-frame", required=True, help="Path to start frame image.")
     p.add_argument("--end-frame", required=True, help="Path to end frame image.")
     p.add_argument("--positive-prompt", required=True, help="Positive prompt.")
@@ -885,7 +1090,10 @@ def resolve_runtime_config(args: argparse.Namespace) -> dict[str, Any]:
     resolved_cfg = {}
     default_instance = None
     if comfyui_cfg:
-        resolved_cfg = resolve_comfyui_platform_config({"services": {"comfyui": comfyui_cfg}})
+        resolved_cfg = resolve_comfyui_platform_config(
+            {"services": {"comfyui": comfyui_cfg}},
+            decode_profile=args.decode_profile,
+        )
         instances = list(resolved_cfg.get("instances") or [])
         default_instance = instances[0] if instances else None
     return {
@@ -894,6 +1102,8 @@ def resolve_runtime_config(args: argparse.Namespace) -> dict[str, Any]:
             or resolved_cfg.get("workflow_json")
             or _first_config_value(None, comfyui_cfg, "workflow_json", "--workflow-json")
         ).expanduser().resolve(),
+        "workflow_profile": resolved_cfg.get("workflow_profile"),
+        "workflow_nodes": resolved_cfg.get("workflow_nodes"),
         "comfy_url": str(
             args.comfy_url
             or comfyui_cfg.get("base_url")
@@ -921,17 +1131,22 @@ def run_comfyui_decode(
     *,
     comfy_url: str | None = None,
     workflow_json: str | Path | None = None,
+    workflow_profile: WorkflowProfile | None = None,
+    workflow_nodes: WorkflowNodes | None = None,
     comfy_output_root: str | Path | None = None,
     exp_output_dir: str | Path,
     timeout_sec: int | None = None,
     poll_interval_sec: float | None = None,
     platform_config: str | Path | None = None,
     instance_name: str = "single",
+    decode_profile: str | None = None,
 ) -> DecodeResult:
     if platform_cfg is not None:
-        resolved = resolve_comfyui_platform_config(platform_cfg)
+        resolved = resolve_comfyui_platform_config(platform_cfg, decode_profile=decode_profile)
         comfy_url = comfy_url or str(resolved["base_url"])
         workflow_json = workflow_json or resolved["workflow_json"]
+        workflow_profile = workflow_profile or resolved["workflow_profile"]
+        workflow_nodes = workflow_nodes or resolved["workflow_nodes"]
         comfy_output_root = comfy_output_root or resolved["output_root"]
         timeout_sec = int(timeout_sec if timeout_sec is not None else resolved["timeout_sec"])
         poll_interval_sec = float(
@@ -949,6 +1164,8 @@ def run_comfyui_decode(
         poll_interval_sec=float(poll_interval_sec if poll_interval_sec is not None else 2.0),
         platform_config=Path(platform_config).resolve() if platform_config else None,
         instance_name=str(instance_name or "single"),
+        workflow_profile=workflow_profile,
+        workflow_nodes=workflow_nodes,
     )
     return client.run(req)
 
@@ -1039,6 +1256,8 @@ def _run_comfyui_unit(
             req,
             comfy_url=instance.base_url,
             workflow_json=cfg["workflow_json"],
+            workflow_profile=cfg["workflow_profile"],
+            workflow_nodes=cfg["workflow_nodes"],
             comfy_output_root=instance.output_root,
             exp_output_dir=run_dir,
             timeout_sec=int(cfg["timeout_sec"]),
@@ -1067,6 +1286,7 @@ def _run_comfyui_unit(
             seed_policy=seed_policy,
             resolved_seed=resolved_decode_seed,
             backend_name=COMFYUI_BACKEND,
+            workflow_profile=cfg["workflow_profile"],
         )
         actual = _validate_run_output(task, run_dir)
         params = dict(actual.get("params") or {})
@@ -1115,7 +1335,11 @@ def run_comfyui_decode_tasks(
     runtime: Any,
     platform_cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    cfg = resolve_comfyui_platform_config(platform_cfg, exphub_root=runtime.exphub_root)
+    cfg = resolve_comfyui_platform_config(
+        platform_cfg,
+        exphub_root=runtime.exphub_root,
+        decode_profile=getattr(runtime.args, "decode_profile", ""),
+    )
     tasks = list(tasks_payload.get("tasks") or [])
     execution_segments = _execution_segments(tasks_payload, COMFYUI_BACKEND)
     if not execution_segments:
@@ -1239,6 +1463,7 @@ def run_comfyui_decode_tasks(
         else None
     )
     instances_report = [instance.as_report() for instance in instances]
+    workflow_meta = _workflow_profile_metadata(cfg["workflow_profile"])
     report = {
         "schema": "decode_report",
         "stage": "decode",
@@ -1259,6 +1484,7 @@ def run_comfyui_decode_tasks(
             "backend": COMFYUI_BACKEND,
             "mode": "direct_python_comfyui_client",
             "workflow_json": str(cfg["workflow_json"]),
+            **workflow_meta,
             "comfy_url": str(cfg["base_url"]),
             "comfy_output_root": str(cfg["output_root"]),
             "platform_config": str(cfg["platform_config"]),
@@ -1277,6 +1503,7 @@ def run_comfyui_decode_tasks(
             "instances": instances_report,
         },
         "parallel": bool(parallel_active),
+        **workflow_meta,
         "schedule": str(schedule),
         "instance_count": int(len(instances)),
         "instances": instances_report,
@@ -1341,6 +1568,8 @@ def main() -> int:
         poll_interval_sec=runtime_cfg["poll_interval_sec"],
         platform_config=runtime_cfg["platform_config"],
         instance_name=runtime_cfg["instance_name"],
+        workflow_profile=runtime_cfg.get("workflow_profile"),
+        workflow_nodes=runtime_cfg.get("workflow_nodes"),
     )
 
     result = client.run(req)
