@@ -249,9 +249,41 @@ def _decode_generation_summary(exp_dir: Path) -> Dict[str, object]:
         _as_int_or_none(decode_report.get("instance_count"))
         or _pick_int(decode_report, ["backend_result", "instance_count"])
     )
+    decode_profile = str(
+        decode_report.get("decode_profile")
+        or _get_nested(decode_report, ["backend_result", "decode_profile"])
+        or ""
+    ).strip()
+    workflow_json = str(
+        decode_report.get("workflow_json")
+        or _get_nested(decode_report, ["backend_result", "workflow_json"])
+        or ""
+    ).strip()
+    lora_enabled = decode_report.get("lora_enabled")
+    if not isinstance(lora_enabled, bool):
+        lora_enabled = _get_nested(decode_report, ["backend_result", "lora_enabled"])
+    if not isinstance(lora_enabled, bool):
+        lora_enabled = None
+    lora_name = str(
+        decode_report.get("lora_name")
+        or _get_nested(decode_report, ["backend_result", "lora_name"])
+        or ""
+    ).strip()
+    lora_strength_model = _as_float_or_none(decode_report.get("lora_strength_model"))
+    if lora_strength_model is None:
+        lora_strength_model = _pick_float(decode_report, ["backend_result", "lora_strength_model"])
+    lora_strength_clip = _as_float_or_none(decode_report.get("lora_strength_clip"))
+    if lora_strength_clip is None:
+        lora_strength_clip = _pick_float(decode_report, ["backend_result", "lora_strength_clip"])
 
     return {
         "backend": backend,
+        "decode_profile": decode_profile or None,
+        "workflow_json": workflow_json or None,
+        "lora_enabled": lora_enabled,
+        "lora_name": lora_name or None,
+        "lora_strength_model": lora_strength_model,
+        "lora_strength_clip": lora_strength_clip,
         "units": unit_count,
         "frames": merged_frames if merged_frames is not None else generated_frames,
         "generate_sec": generate_sec,
@@ -386,6 +418,28 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     backend = str(decode_generation.get("backend") or "").strip()
     if backend:
         detail_rows.append(("decode.backend", backend))
+    decode_profile = str(decode_generation.get("decode_profile") or "").strip()
+    if decode_profile:
+        detail_rows.append(("decode.profile", decode_profile))
+    lora_enabled = decode_generation.get("lora_enabled")
+    if isinstance(lora_enabled, bool):
+        if bool(lora_enabled):
+            lora_name = str(decode_generation.get("lora_name") or "").strip()
+            detail_rows.append(("decode.lora", lora_name or "enabled"))
+        else:
+            detail_rows.append(("decode.lora", "disabled"))
+    _add_row(
+        detail_rows,
+        "decode.lora_strength_model",
+        _as_float_or_none(decode_generation.get("lora_strength_model")),
+        lambda v: "{:.3f}".format(float(v)),
+    )
+    _add_row(
+        detail_rows,
+        "decode.lora_strength_clip",
+        _as_float_or_none(decode_generation.get("lora_strength_clip")),
+        lambda v: "{:.3f}".format(float(v)),
+    )
     if isinstance(decode_generation.get("parallel"), bool):
         detail_rows.append(("decode.parallel", "true" if bool(decode_generation.get("parallel")) else "false"))
     instances = _as_int_or_none(decode_generation.get("instances"))
@@ -495,6 +549,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--train_clip_num_frames", type=int, default=73)
     ap.add_argument("--train_clip_stride", type=int, default=36)
     ap.add_argument("--seed", type=int, default=-1, dest="seed_base")
+    ap.add_argument("--decode_profile", default="", help="ComfyUI decode workflow profile override")
     ap.add_argument("--gpus", type=int, default=2)
     ap.add_argument("--lora-profile", default="")
     ap.add_argument("--lora-gpus", default="")
