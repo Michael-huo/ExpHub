@@ -3,6 +3,10 @@ from __future__ import annotations
 from exphub.common.io import write_json_atomic
 
 
+TURN_UNIT_MAX_SECONDS = 1.0
+TURN_MOTION_LABELS = {"left_turn", "right_turn"}
+
+
 def _as_dict(value):
     return value if isinstance(value, dict) else {}
 
@@ -190,6 +194,50 @@ def _unit_boundary_sources(boundary_idx, motion_state_start, motion_state_end, p
     return ["unit_boundary"]
 
 
+def _max_unit_delta_for_motion(label, fps, default_max_delta):
+    if str(label or "") in TURN_MOTION_LABELS:
+        turn_max_delta = int(round(float(fps) * float(TURN_UNIT_MAX_SECONDS)))
+        return int(min(max(1, turn_max_delta), int(default_max_delta)))
+    return int(default_max_delta)
+
+
+def _allowed_deltas_for_motion(label, fps, default_max_delta, raw_allowed_deltas, motion_state_span, diagnostics, motion_state_id):
+    motion_label = str(label or "")
+    default_allowed_deltas = set(delta for delta in raw_allowed_deltas if int(delta) <= int(default_max_delta))
+    if motion_label not in TURN_MOTION_LABELS:
+        return default_allowed_deltas
+
+    turn_max_delta = _max_unit_delta_for_motion(motion_label, fps, default_max_delta)
+    allowed_deltas = set(delta for delta in raw_allowed_deltas if int(delta) <= int(turn_max_delta))
+    if allowed_deltas:
+        return allowed_deltas
+
+    fallback_candidates = sorted(int(delta) for delta in raw_allowed_deltas if int(delta) <= int(motion_state_span))
+    if fallback_candidates:
+        fallback_delta = int(fallback_candidates[0])
+        diagnostics.append(
+            {
+                "type": "turn_unit_delta_fallback",
+                "motion_state_id": str(motion_state_id),
+                "motion_label": str(motion_label),
+                "requested_max_delta": int(turn_max_delta),
+                "fallback_delta": int(fallback_delta),
+            }
+        )
+        return {fallback_delta}
+
+    diagnostics.append(
+        {
+            "type": "turn_unit_single_segment_fallback",
+            "motion_state_id": str(motion_state_id),
+            "motion_label": str(motion_label),
+            "requested_max_delta": int(turn_max_delta),
+            "fallback_delta": int(motion_state_span),
+        }
+    )
+    return {int(motion_state_span)}
+
+
 def build_generation_units(prepare_result, motion_segments, semantic_anchors, out_path=None):
     prepare = _as_dict(prepare_result)
     legal_grid = _as_dict(prepare.get("legal_grid"))
@@ -197,10 +245,10 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
     legal_set = set(legal_positions)
     raw_allowed_deltas = set(int(item) for item in list(legal_grid.get("allowed_delta_indices") or []))
     max_unit_span_frames = int(_as_dict(_as_dict(semantic_anchors).get("policy")).get("max_unit_span_frames", 96) or 96)
-    allowed_deltas = set(delta for delta in raw_allowed_deltas if int(delta) <= int(max_unit_span_frames))
-    allowed_num_frames = set(int(delta) + 1 for delta in allowed_deltas)
-    if not legal_positions or not allowed_deltas or not allowed_num_frames:
+    default_allowed_deltas = set(delta for delta in raw_allowed_deltas if int(delta) <= int(max_unit_span_frames))
+    if not legal_positions or not default_allowed_deltas:
         raise RuntimeError("prepare_result legal_grid missing legal unit constraints")
+    fps = float(prepare.get("target_fps", legal_grid.get("fps", 1)) or 1)
 
     motion_state_by_id = _motion_state_map(motion_segments)
     states_by_motion_state = _states_by_motion_state(semantic_anchors)
@@ -212,6 +260,8 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
         motion_state_id = str(motion_state.get("motion_state_id", "") or "")
         motion_state_start = int(motion_state.get("start_idx"))
         motion_state_end = int(motion_state.get("end_idx"))
+        motion_label = str(motion_state.get("motion_label", "") or "mixed")
+        motion_state_span = int(motion_state_end) - int(motion_state_start)
         _validate_legal(motion_state_start, legal_set, "motion_state start")
         _validate_legal(motion_state_end, legal_set, "motion_state end")
         if previous_end is not None and int(motion_state_start) != int(previous_end):
@@ -223,6 +273,18 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
             )
 
         motion_state_legal = _legal_between(legal_positions, motion_state_start, motion_state_end)
+        allowed_deltas = _allowed_deltas_for_motion(
+            motion_label,
+            fps,
+            max_unit_span_frames,
+            raw_allowed_deltas,
+            motion_state_span,
+            diagnostics,
+            motion_state_id,
+        )
+        allowed_num_frames = set(int(delta) + 1 for delta in allowed_deltas)
+        if not allowed_deltas or not allowed_num_frames:
+            raise RuntimeError("generation unit allowed deltas missing for motion_state {}".format(motion_state_id))
         states = list(states_by_motion_state.get(motion_state_id) or [])
         if not states:
             raise RuntimeError("semantic states missing for motion_state {}".format(motion_state_id))
@@ -279,7 +341,7 @@ def build_generation_units(prepare_result, motion_segments, semantic_anchors, ou
                     "start_abs_time_sec": _time_at(prepare, int(start_idx)),
                     "end_abs_time_sec": _time_at(prepare, int(end_idx)),
                     "motion_state_id": str(motion_state_id),
-                    "motion_label": str(motion_state.get("motion_label", "") or "mixed"),
+                    "motion_label": str(motion_label),
                     "motion_state_index": int(motion_state_index),
                     "semantic_state_id": str(semantic_state_id),
                     "semantic_state_start_idx": int(state.get("semantic_state_start_idx", state.get("start_idx"))),
