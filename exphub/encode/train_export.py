@@ -124,6 +124,8 @@ class TrainExportSession:
         self.unit_lengths = []
         self.fps = int(float(runtime.spec.fps))
         self.resolution = [0, 0]
+        self.resolutions = []
+        self.sequence_stats = []
         self._tmp_dir = runtime.paths.trainset_dir / ".tmp"
 
     def prepare_output_dirs(self):
@@ -230,6 +232,7 @@ class TrainExportSession:
         prompts,
         generation_units_path,
         prompts_path,
+        encode_result_path=None,
     ):
         units = list(_as_dict(generation_units).get("units") or [])
         prompt_units = list(_as_dict(prompts).get("units") or [])
@@ -247,17 +250,30 @@ class TrainExportSession:
         width, height = _resolution(prepare_result)
         fps = int(prepare_result.get("target_fps", self.runtime.spec.fps) or self.runtime.spec.fps)
         self.fps = int(fps)
+        resolution = [int(width), int(height)]
+        if resolution not in self.resolutions:
+            self.resolutions.append(list(resolution))
         if self.resolution == [0, 0]:
-            self.resolution = [int(width), int(height)]
-        elif self.resolution != [int(width), int(height)]:
+            self.resolution = list(resolution)
+        elif self.resolution != resolution:
+            if str(self.runtime.paths.scope) == "dataset":
+                raise RuntimeError(
+                    "dataset-level train requires consistent normalized resolution: expected={} sequence={} got={}".format(
+                        self.resolution,
+                        sequence,
+                        resolution,
+                    )
+                )
             raise RuntimeError(
                 "train sequence resolution mismatch: sequence={} expected={} got={}".format(
                     sequence,
                     self.resolution,
-                    [int(width), int(height)],
+                    resolution,
                 )
             )
 
+        sequence_clip_start = int(len(self.records))
+        sequence_skipped_start = int(self.skipped_short_unit_count)
         for local_idx, raw_unit in enumerate(units):
             unit = _as_dict(raw_unit)
             unit_id = str(unit.get("unit_id", "") or "")
@@ -320,6 +336,24 @@ class TrainExportSession:
                 self.motion_label_histogram[motion_label] = int(self.motion_label_histogram.get(motion_label, 0)) + 1
                 clip_start += int(self.window_stride)
 
+        sequence_clip_count = int(len(self.records) - sequence_clip_start)
+        skipped_short_unit_count = int(self.skipped_short_unit_count - sequence_skipped_start)
+        sequence_stat = {
+            "sequence": str(sequence),
+            "clip_count": int(sequence_clip_count),
+            "total_frames": int(len(source_frames)),
+            "skipped_short_unit_count": int(skipped_short_unit_count),
+        }
+        if encode_result_path is not None:
+            try:
+                sequence_stat["encode_result_path"] = Path(encode_result_path).resolve().relative_to(
+                    self.runtime.paths.exp_dir.resolve()
+                ).as_posix()
+            except Exception:
+                sequence_stat["encode_result_path"] = str(Path(encode_result_path).resolve())
+        self.sequence_stats.append(sequence_stat)
+        return dict(sequence_stat)
+
     def write_indexes(self, sequence_count):
         metadata = [
             {
@@ -335,15 +369,19 @@ class TrainExportSession:
         )
         stats = {
             "dataset": str(self.runtime.spec.dataset),
+            "scope": str(self.runtime.paths.scope),
             "sequence_count": int(sequence_count),
             "clip_count": int(len(self.records)),
-            "total_frames": int(len(self.records) * int(self.target_num_frames)),
+            "total_frames": int(sum(int(item.get("total_frames", 0) or 0) for item in self.sequence_stats)),
             "fps": int(self.fps),
             "resolution": [int(self.resolution[0]), int(self.resolution[1])] if self.resolution else [0, 0],
+            "resolutions": [list(item) for item in self.resolutions],
+            "resolution_consistent": bool(len(self.resolutions) <= 1),
             "target_num_frames": int(self.target_num_frames),
             "window_stride": int(self.window_stride),
             "min_unit_frames": int(self.target_num_frames),
             "skipped_short_unit_count": int(self.skipped_short_unit_count),
+            "sequence_stats": [dict(item) for item in self.sequence_stats],
             "motion_label_histogram": dict(self.motion_label_histogram),
             "avg_unit_length": float(avg_unit_length),
             "train_metadata_path": "trainset/train_metadata.json",

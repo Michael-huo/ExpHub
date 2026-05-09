@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -9,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 from exphub.common.io import write_json_atomic
+from exphub.config import list_dataset_sequences
 from exphub.prepare.geometry_adapter import adapt_frames_and_intrinsics
 from exphub.prepare.legal_grid import build_legal_grid
 from exphub.prepare.ros_reader import (
@@ -208,28 +208,34 @@ def infer_prepare(
 
 
 def _all_sequences(config_path, dataset_name):
-    path = Path(config_path).resolve()
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    datasets = payload.get("datasets") or {}
-    dataset_cfg = datasets.get(dataset_name) or {}
-    sequences = dataset_cfg.get("sequences") or {}
-    return list(sequences.keys())
+    return list_dataset_sequences(config_path, dataset_name)
 
 
-def _resolution_list(result):
+def _resolution_dict(result):
     resolution = dict(result.normalized_resolution if hasattr(result, "normalized_resolution") else {})
-    return [int(resolution.get("width", 0) or 0), int(resolution.get("height", 0) or 0)]
+    return {
+        "width": int(resolution.get("width", 0) or 0),
+        "height": int(resolution.get("height", 0) or 0),
+    }
 
 
-def _train_prepare_ok_entry(sequence, result, result_path, frames_dir):
+def _relative_to_exp(runtime, path):
+    target = Path(path).resolve()
+    try:
+        return target.relative_to(runtime.paths.exp_dir.resolve()).as_posix()
+    except Exception:
+        return str(target)
+
+
+def _train_prepare_ok_entry(runtime, sequence, result, result_path, frames_dir):
     return {
         "sequence": str(sequence),
         "status": "ok",
         "error_message": "",
-        "prepare_result_path": str(Path(result_path).resolve()),
-        "frames_dir": str(Path(frames_dir).resolve()),
+        "prepare_result_path": _relative_to_exp(runtime, result_path),
+        "frames_dir": _relative_to_exp(runtime, frames_dir),
         "num_frames": int(result.num_frames),
-        "normalized_resolution": _resolution_list(result),
+        "normalized_resolution": _resolution_dict(result),
     }
 
 
@@ -241,7 +247,7 @@ def _train_prepare_failed_entry(sequence, error):
         "prepare_result_path": "",
         "frames_dir": "",
         "num_frames": 0,
-        "normalized_resolution": [0, 0],
+        "normalized_resolution": {"width": 0, "height": 0},
     }
 
 
@@ -256,8 +262,10 @@ def _write_train_prepare_index(runtime, sequences):
         "scope": str(runtime.paths.scope),
         "dataset": str(runtime.spec.dataset),
         "run_id": str(runtime.spec.exp_name),
+        "fps": int(float(runtime.spec.fps)),
         "target_fps": int(float(runtime.spec.fps)),
         "sequence_count": int(len(entries)),
+        "total_frames": int(sum(int(item.get("num_frames", 0) or 0) for item in entries)),
         "ok_count": int(ok_count),
         "failed_count": int(failed_count),
         "skipped_count": int(skipped_count),
@@ -403,6 +411,7 @@ def run(runtime):
             )
             entries.append(
                 _train_prepare_ok_entry(
+                    runtime=runtime,
                     sequence=sequence_name,
                     result=result,
                     result_path=runtime.paths.prepare_sequence_result_path(sequence_name),
@@ -413,9 +422,9 @@ def run(runtime):
             entries.append(_train_prepare_failed_entry(sequence_name, exc))
             if first_error is None:
                 first_error = exc
-            if runtime.paths.scope == "sequence":
-                _write_train_prepare_index(runtime, entries)
-                raise
+            _write_train_prepare_index(runtime, entries)
+            runtime.write_meta_snapshot()
+            raise
 
     index_payload = _write_train_prepare_index(runtime, entries)
     if int(index_payload.get("failed_count", 0) or 0) > 0:
@@ -425,6 +434,7 @@ def run(runtime):
                 first_error,
             )
         )
+    runtime.write_meta_snapshot()
     return runtime.paths.prepare_dir
 
 
