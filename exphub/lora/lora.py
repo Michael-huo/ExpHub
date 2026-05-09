@@ -280,6 +280,7 @@ def _write_result(
     trainset_dir: Path,
     metadata_path: Path,
     output_dir: Path,
+    trainset_stats: Optional[Dict[str, object]] = None,
     failure_message: str = "",
 ) -> Dict[str, object]:
     checkpoints, compatible, latest = _scan_outputs(output_dir)
@@ -290,6 +291,7 @@ def _write_result(
         "videox_fun_repo": str(repo),
         "train_data_dir": str(trainset_dir),
         "train_data_meta": str(metadata_path),
+        "trainset_stats": dict(trainset_stats or {}),
         "output_dir": str(output_dir),
         "command_path": str(Path(runtime.paths.lora_command_path).resolve()),
         "log_path": str(Path(runtime.paths.lora_log_path).resolve()),
@@ -328,7 +330,8 @@ def run(runtime):
     if mode != "train":
         raise RuntimeError("lora stage is only supported in train mode")
 
-    trainset_dir, metadata_path, _stats_path = _ensure_trainset(runtime)
+    trainset_dir, metadata_path, stats_path = _ensure_trainset(runtime)
+    trainset_stats = _read_json(stats_path)
     profile_name, profile = _load_profile(runtime)
     repo, _script_path, python_path = _trainer_paths(runtime, profile)
     launcher = _resolve_launcher(python_path)
@@ -390,13 +393,35 @@ def run(runtime):
     except Exception as exc:
         elapsed = time.time() - started
         message = "lora training failed before process completion: {}".format(exc)
-        _write_result(runtime, rc, elapsed, profile_name, repo, trainset_dir, metadata_path, lora_dir, message)
+        _write_result(
+            runtime,
+            rc,
+            elapsed,
+            profile_name,
+            repo,
+            trainset_dir,
+            metadata_path,
+            lora_dir,
+            trainset_stats=trainset_stats,
+            failure_message=message,
+        )
         raise
 
     elapsed = time.time() - started
     if rc != 0:
         message = "VideoX-Fun train_lora.py failed with exit code {}".format(rc)
-        payload = _write_result(runtime, rc, elapsed, profile_name, repo, trainset_dir, metadata_path, lora_dir, message)
+        payload = _write_result(
+            runtime,
+            rc,
+            elapsed,
+            profile_name,
+            repo,
+            trainset_dir,
+            metadata_path,
+            lora_dir,
+            trainset_stats=trainset_stats,
+            failure_message=message,
+        )
         raise RunError(
             message,
             returncode=rc,
@@ -405,6 +430,16 @@ def run(runtime):
             tail_lines=list(payload.get("tail_log") or []),
         )
 
-    _write_result(runtime, rc, elapsed, profile_name, repo, trainset_dir, metadata_path, lora_dir)
+    _write_result(
+        runtime,
+        rc,
+        elapsed,
+        profile_name,
+        repo,
+        trainset_dir,
+        metadata_path,
+        lora_dir,
+        trainset_stats=trainset_stats,
+    )
     log_info("lora training done: {}".format(lora_dir))
     return lora_dir

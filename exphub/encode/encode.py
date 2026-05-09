@@ -238,32 +238,46 @@ def _write_train_encode_index(runtime, sequences):
     ok_count = len([item for item in entries if item.get("status") == "ok"])
     failed_count = len([item for item in entries if item.get("status") == "failed"])
     skipped_count = len([item for item in entries if item.get("status") == "skipped"])
+    clip_count = sum(int(item.get("clip_count", 0) or 0) for item in entries)
     payload = {
         "mode": "train",
         "scope": str(runtime.paths.scope),
         "dataset": str(runtime.spec.dataset),
         "run_id": str(runtime.spec.exp_name),
         "sequence_count": int(len(entries)),
+        "clip_count": int(clip_count),
         "ok_count": int(ok_count),
         "failed_count": int(failed_count),
         "skipped_count": int(skipped_count),
         "sequences": entries,
+        "trainset_dir": "trainset",
+        "train_metadata_path": "trainset/train_metadata.json",
+        "stats_path": "trainset/stats.json",
     }
     write_json_atomic(runtime.paths.encode_dataset_index_path, payload, indent=2)
     return payload
 
 
-def _train_encode_ok_entry(sequence, paths, result):
+def _relative_to_exp(runtime, path):
+    target = Path(path).resolve()
+    try:
+        return target.relative_to(runtime.paths.exp_dir.resolve()).as_posix()
+    except Exception:
+        return str(target)
+
+
+def _train_encode_ok_entry(runtime, sequence, paths, result, export_stats):
     generation_units = dict(result.get("generation_units") or {})
     units = list(generation_units.get("units") or [])
     return {
         "sequence": str(sequence),
         "status": "ok",
         "error_message": "",
-        "encode_result_path": str(Path(paths.encode_result_path).resolve()),
-        "generation_units_path": str(Path(paths.encode_generation_units_path).resolve()),
-        "prompts_path": str(Path(paths.encode_prompts_path).resolve()),
+        "encode_result_path": _relative_to_exp(runtime, paths.encode_result_path),
+        "generation_units_path": _relative_to_exp(runtime, paths.encode_generation_units_path),
+        "prompts_path": _relative_to_exp(runtime, paths.encode_prompts_path),
         "unit_count": int(len(units)),
+        "clip_count": int(dict(export_stats or {}).get("clip_count", 0) or 0),
     }
 
 
@@ -276,6 +290,7 @@ def _train_encode_failed_entry(sequence, error):
         "generation_units_path": "",
         "prompts_path": "",
         "unit_count": 0,
+        "clip_count": 0,
     }
 
 
@@ -288,13 +303,20 @@ def _train_encode_skipped_entry(sequence, reason):
         "generation_units_path": "",
         "prompts_path": "",
         "unit_count": 0,
+        "clip_count": 0,
     }
 
 
 def _run_train_encode(runtime):
+    if not runtime.paths.prepare_dataset_index_path.is_file():
+        raise RuntimeError(
+            "prepare dataset index not found, run train prepare first: {}".format(
+                runtime.paths.prepare_dataset_index_path
+            )
+        )
     prepare_index = read_json_dict(runtime.paths.prepare_dataset_index_path)
     if not prepare_index:
-        raise RuntimeError("train encode requires prepare index: {}".format(runtime.paths.prepare_dataset_index_path))
+        raise RuntimeError("invalid prepare dataset index: {}".format(runtime.paths.prepare_dataset_index_path))
     if str(prepare_index.get("mode", "") or "") != "train":
         raise RuntimeError("invalid train prepare index mode: {}".format(runtime.paths.prepare_dataset_index_path))
     if str(prepare_index.get("scope", "") or "") != str(runtime.paths.scope):
@@ -325,12 +347,14 @@ def _run_train_encode(runtime):
             entries.append(_train_encode_skipped_entry(sequence, reason))
             if first_error is None:
                 first_error = RuntimeError(reason)
-            continue
+            _write_train_encode_index(runtime, entries)
+            runtime.write_meta_snapshot()
+            raise first_error
 
         paths = _train_sequence_encode_paths(runtime, sequence)
         try:
             result = _run_single_encode(runtime, paths, log_name="encode_{}.log".format(sequence))
-            train_export.export_sequence(
+            export_stats = train_export.export_sequence(
                 sequence=sequence,
                 prepare_result=result["prepare_result"],
                 prepare_frames_dir=paths.prepare_frames_dir,
@@ -338,19 +362,23 @@ def _run_train_encode(runtime):
                 prompts=result["prompts"],
                 generation_units_path=paths.encode_generation_units_path,
                 prompts_path=paths.encode_prompts_path,
+                encode_result_path=paths.encode_result_path,
             )
             successful_sequences += 1
-            entries.append(_train_encode_ok_entry(sequence, paths, result))
+            entries.append(_train_encode_ok_entry(runtime, sequence, paths, result, export_stats))
         except Exception as exc:
             entries.append(_train_encode_failed_entry(sequence, exc))
             if first_error is None:
                 first_error = exc
-            if runtime.paths.scope == "sequence":
-                _write_train_encode_index(runtime, entries)
-                raise
+            _write_train_encode_index(runtime, entries)
+            runtime.write_meta_snapshot()
+            raise
 
     index_payload = _write_train_encode_index(runtime, entries)
+    if successful_sequences <= 0:
+        raise RuntimeError("train encode produced no successful sequences")
     train_export.write_indexes(sequence_count=successful_sequences)
+    runtime.write_meta_snapshot()
     failed_or_skipped = int(index_payload.get("failed_count", 0) or 0) + int(index_payload.get("skipped_count", 0) or 0)
     if failed_or_skipped > 0:
         raise RuntimeError(

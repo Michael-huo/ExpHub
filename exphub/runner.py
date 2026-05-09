@@ -114,23 +114,58 @@ class PipelineRuntime:
         remove_path(path)
 
     def write_meta_snapshot(self) -> None:
-        prepare_result_path = self.paths.prepare_result_path
-        prepare_result = read_json_dict(prepare_result_path) if prepare_result_path.is_file() else {}
         mode = str(self.args.mode or "").strip().lower()
         train_mode = mode == "train"
+        prepare_result_path = self.paths.prepare_result_path
+        prepare_result = read_json_dict(prepare_result_path) if (not train_mode and prepare_result_path.is_file()) else {}
+        prepare_index = read_json_dict(self.paths.prepare_dataset_index_path) if train_mode else {}
+        trainset_stats = read_json_dict(self.paths.trainset_stats_path) if train_mode else {}
+        workflow = "prepare -> encode -> lora" if train_mode else "prepare -> encode -> decode -> eval"
+        sequence_count = None
+        if train_mode:
+            if prepare_index:
+                sequence_count = int(prepare_index.get("sequence_count", 0) or 0)
+            elif trainset_stats:
+                sequence_count = int(trainset_stats.get("sequence_count", 0) or 0)
+            elif str(self.spec.sequence or "").strip():
+                sequence_count = 1
+        prepare_meta = {}
+        if train_mode:
+            prepare_sequences = list(prepare_index.get("sequences") or []) if prepare_index else []
+            resolutions = []
+            for item in prepare_sequences:
+                resolution = item.get("normalized_resolution")
+                if isinstance(resolution, dict) and resolution not in resolutions:
+                    resolutions.append(dict(resolution))
+            prepare_meta = {
+                "sequence_count": sequence_count,
+                "total_frames": prepare_index.get("total_frames") if prepare_index else None,
+                "normalized_resolution": resolutions[0] if len(resolutions) == 1 else None,
+                "normalized_resolutions": resolutions,
+                "dataset_prepare_index": str(self.paths.prepare_dataset_index_path),
+            }
+        else:
+            prepare_meta = {
+                "num_frames": prepare_result.get("num_frames"),
+                "normalized_resolution": prepare_result.get("normalized_resolution"),
+                "normalized_intrinsics": prepare_result.get("normalized_intrinsics"),
+                "legal_grid": prepare_result.get("legal_grid"),
+            }
         meta = {
             "mode": str(self.args.mode),
             "scope": str(self.paths.scope),
             "step": str(self.args.step),
             "dataset": self.spec.dataset,
-            "sequence": self.spec.sequence,
+            "sequence": self.spec.sequence if str(self.spec.sequence or "").strip() else "",
+            "sequence_count": sequence_count,
             "tag": self.spec.tag,
             "fps": self.spec.fps,
             "dur": self.spec.dur,
             "start": self.spec.start,
             "run_id": self.spec.exp_name,
             "artifact_root": str(self.paths.exp_dir),
-            "prepare_result_path": str(prepare_result_path),
+            "workflow": workflow,
+            "prepare_result_path": str(prepare_result_path) if not train_mode else "",
             "params": {
                 "fps": self.spec.fps,
                 "dur": self.spec.dur,
@@ -144,7 +179,7 @@ class PipelineRuntime:
                 "planner": "generation_units",
                 "prompt_profile": "base_motion_prompt",
                 "anchor_backend": "image_embedding_visual_anchor",
-                "workflow": "prepare -> encode -> lora" if train_mode else "prepare -> encode -> decode -> eval",
+                "workflow": workflow,
                 "decode_backend": COMFYUI_BACKEND,
                 "droid_seq": self.args.droid_seq,
                 "viz_enable": self.viz_enable,
@@ -174,12 +209,7 @@ class PipelineRuntime:
                 "lora_python": get_phase_python_config("lora"),
                 "droid_repo": self.args.droid_repo,
             },
-            "prepare": {
-                "num_frames": prepare_result.get("num_frames"),
-                "normalized_resolution": prepare_result.get("normalized_resolution"),
-                "normalized_intrinsics": prepare_result.get("normalized_intrinsics"),
-                "legal_grid": prepare_result.get("legal_grid"),
-            },
+            "prepare": prepare_meta,
         }
         write_json_atomic(self.paths.run_meta_path, meta, indent=2)
 

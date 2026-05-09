@@ -35,6 +35,24 @@ def load_datasets_cfg(cfg_path) -> Dict[str, Any]:
         raise ConfigError("Failed to parse datasets config: {} ({})".format(cfg_path, exc))
 
 
+def list_dataset_sequences(config_path, dataset_name) -> List[str]:
+    cfg = load_datasets_cfg(config_path)
+    datasets = cfg.get("datasets")
+    if not isinstance(datasets, dict):
+        raise ConfigError("datasets.json missing top-level 'datasets' dict")
+    dataset = str(dataset_name)
+    if dataset not in datasets:
+        raise ConfigError("Dataset not found in config: {}".format(dataset))
+    dataset_cfg = datasets.get(dataset) or {}
+    sequences = dataset_cfg.get("sequences")
+    if not isinstance(sequences, dict):
+        raise ConfigError("datasets.{}.sequences must be a non-empty object".format(dataset))
+    names = sorted(str(name) for name in sequences.keys() if str(name or "").strip())
+    if not names:
+        raise ConfigError("Dataset has no sequences in config: {}".format(dataset))
+    return names
+
+
 def resolve_dataset(cfg, exphub_root, dataset, sequence) -> DatasetResolved:
     datasets = cfg.get("datasets")
     if not isinstance(datasets, dict):
@@ -140,6 +158,7 @@ __all__ = [
     "DatasetResolved",
     "get_phase_python_config",
     "get_platform_config",
+    "list_dataset_sequences",
     "load_datasets_cfg",
     "resolve_dataset",
 ]

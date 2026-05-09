@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -122,10 +123,24 @@ def _cleanup_min(exp_dir: Path) -> None:
     )
 
 
+def _is_train_exp_dir(exp_dir: Path) -> bool:
+    meta_path = Path(exp_dir) / "run_meta.json"
+    if meta_path.is_file():
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            return str(payload.get("mode", "") or "").strip().lower() == "train"
+        except Exception:
+            return False
+    parts = [str(part) for part in Path(exp_dir).parts]
+    return "artifacts" in parts and "train" in parts
+
+
 def apply_keep_level(exp_dir: Path, keep: KeepLevel) -> None:
     keep_norm = normalize_keep_level(keep)
     if keep_norm == "max":
         return
     if not exp_dir.exists():
+        return
+    if _is_train_exp_dir(exp_dir):
         return
     _cleanup_min(exp_dir)
