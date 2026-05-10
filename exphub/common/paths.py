@@ -208,12 +208,16 @@ class ExperimentPaths:
         return self.decode_dir / "preview.mp4"
 
     @property
-    def eval_slam_report_path(self) -> Path:
-        return self.eval_dir / "eval_slam_report.json"
+    def eval_evo_summary_path(self) -> Path:
+        return self.eval_dir / "evo_summary.json"
 
     @property
-    def eval_traj_report_path(self) -> Path:
-        return self.eval_dir / "eval_traj_report.json"
+    def eval_evo_ori_ape_path(self) -> Path:
+        return self.eval_dir / "ori" / "evo_ape.zip"
+
+    @property
+    def eval_evo_gen_ape_path(self) -> Path:
+        return self.eval_dir / "gen" / "evo_ape.zip"
 
     @property
     def eval_compression_report_path(self) -> Path:
@@ -228,9 +232,21 @@ class ExperimentPaths:
         return self.eval_dir / "eval_details.csv"
 
     @property
-    def eval_traj_plot_path(self) -> Path:
-        return self.eval_dir / "eval_traj_xy.png"
+    def eval_trajectory_overlay_path(self) -> Path:
+        return self.eval_dir / "trajectory_overlay_auto2d.png"
 
     @property
-    def eval_metrics_overview_path(self) -> Path:
-        return self.eval_dir / "eval_metrics_overview.png"
+    def eval_ori_traj_path(self) -> Path:
+        return self.eval_dir / "ori" / "traj_est.tum"
+
+    @property
+    def eval_gen_traj_path(self) -> Path:
+        return self.eval_dir / "gen" / "traj_est.tum"
+
+    @property
+    def eval_ori_run_meta_path(self) -> Path:
+        return self.eval_dir / "ori" / "run_meta.json"
+
+    @property
+    def eval_gen_run_meta_path(self) -> Path:
+        return self.eval_dir / "gen" / "run_meta.json"

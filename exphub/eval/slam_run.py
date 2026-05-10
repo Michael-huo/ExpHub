@@ -211,7 +211,7 @@ def _quat_xyzw_from_rot(rotation):
     return q
 
 
-def _save_trajectory(traj_est, timestamps_sec, tum_path, npz_path, track_name):
+def _save_trajectory(traj_est, timestamps_sec, tum_path, track_name):
     import lietorch
     import numpy as np
     import torch
@@ -236,9 +236,6 @@ def _save_trajectory(traj_est, timestamps_sec, tum_path, npz_path, track_name):
         )
 
     Path(tum_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(npz_path).parent.mkdir(parents=True, exist_ok=True)
-    np.savez(str(npz_path), tstamps=timestamps, poses=matrices)
-
     with open(str(tum_path), "w", encoding="utf-8") as handle:
         for timestamp, pose in zip(timestamps, matrices):
             rotation = pose[:3, :3]
@@ -421,8 +418,7 @@ def _run_track(exp_dir, track_name, frames_dir, args, source_timestamps):
         termination_mode = "traj_filler_only"
 
     tum_path = (track_dir / "traj_est.tum").resolve()
-    npz_path = (track_dir / "traj_est.npz").resolve()
-    _save_trajectory(traj_est, timestamps_used, tum_path=tum_path, npz_path=npz_path, track_name=track_name)
+    _save_trajectory(traj_est, timestamps_used, tum_path=tum_path, track_name=track_name)
 
     run_meta = {
         "version": 1,
@@ -436,7 +432,6 @@ def _run_track(exp_dir, track_name, frames_dir, args, source_timestamps):
         "timestamps_source": "prepare_result.frame_index_map.prepared_to_ros_time_sec",
         "timestamp_source": "prepare_ros_time",
         "trajectory_path": _relative_path(exp_dir, tum_path),
-        "npz_path": _relative_path(exp_dir, npz_path),
         "runtime_sec": float(time.time() - started),
         "termination_mode": termination_mode,
         "droid_repo": str(Path(args.droid_repo).resolve()),
@@ -458,7 +453,6 @@ def _run_track(exp_dir, track_name, frames_dir, args, source_timestamps):
         "timestamps_source": "prepare_result.frame_index_map.prepared_to_ros_time_sec",
         "timestamp_source": "prepare_ros_time",
         "trajectory_path": _relative_path(exp_dir, tum_path),
-        "npz_path": _relative_path(exp_dir, npz_path),
         "run_meta_path": _relative_path(exp_dir, run_meta_path),
         "runtime_sec": float(run_meta["runtime_sec"]),
         "status": "success",
@@ -494,48 +488,15 @@ def run_slam(config):
     if seq in ("gen", "both"):
         tracks["gen"] = _run_track(exp_dir, "gen", args.decode_frames_dir, args, source_timestamps)
 
-    inputs = {
-        "prepare_result": _relative_path(exp_dir, prepare_result_path),
-        "prepare_frames_dir": _relative_path(exp_dir, Path(args.prepare_frames_dir).resolve()),
-        "generation_units": _relative_path(exp_dir, generation_units_path),
-        "encode_result": _relative_path(exp_dir, encode_result_path),
-        "decode_frames_dir": _relative_path(exp_dir, Path(args.decode_frames_dir).resolve()),
-        "decode_calib": _relative_path(exp_dir, Path(args.decode_calib).resolve()),
-        "decode_timestamps": _relative_path(exp_dir, Path(args.decode_timestamps).resolve()),
-        "decode_report": _relative_path(exp_dir, decode_report_path),
-        "decode_merge_report": _relative_path(exp_dir, decode_merge_report_path),
-    }
-    report = {
-        "version": 1,
-        "source": "eval.slam_run",
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "status": "success",
-        "requested_seq": str(seq),
-        "input_source_kind": "native",
-        "native_inputs": list(inputs.values()),
-        "fallback_used": False,
-        "timestamp_source": "prepare_ros_time",
-        "source_timestamp_count": int(len(source_timestamps)),
-        "ori_time_range_after_rewrite": _as_dict(tracks.get("ori")).get("time_range_after_rewrite"),
-        "gen_time_range_after_rewrite": _as_dict(tracks.get("gen")).get("time_range_after_rewrite"),
-        "inputs": inputs,
-        "ori": dict(tracks.get("ori") or {}),
-        "gen": dict(tracks.get("gen") or {}),
-        "warnings": [],
-    }
-    report_path = out_dir / "eval_slam_report.json"
-    write_json_atomic(report_path, report, indent=2)
-    log_info("eval slam report: {}".format(report_path))
     return {
-        "report_path": report_path,
-        "report": report,
+        "tracks": tracks,
         "out_dir": out_dir,
     }
 
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-native-slam", action="store_true")
+    parser.add_argument("--run-slam-mainline", action="store_true")
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--prepare_result", required=True)
@@ -578,8 +539,8 @@ def _build_arg_parser():
 
 def main(argv=None):
     args = _build_arg_parser().parse_args(argv)
-    if not args.run_native_slam:
-        raise SystemExit("eval slam helper requires --run-native-slam")
+    if not args.run_slam_mainline:
+        raise SystemExit("eval slam helper requires --run-slam-mainline")
     run_slam(vars(args))
 
 

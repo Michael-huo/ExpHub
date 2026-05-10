@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -31,6 +30,15 @@ def _relative_path(base_dir, target_path):
         return str(target.relative_to(base))
     except Exception:
         return str(target)
+
+
+def _resolve_report_path(exp_dir, path_text):
+    if not path_text:
+        return None
+    path = Path(str(path_text))
+    if path.is_absolute():
+        return path.resolve()
+    return (Path(exp_dir).resolve() / path).resolve()
 
 
 def _read_required_json(path_obj, label, warnings):
@@ -93,8 +101,9 @@ def _input_paths(exp_dir, config):
         "encode_result": Path(_get_arg(config, "encode_result")).resolve(),
         "decode_report": Path(_get_arg(config, "decode_report")).resolve(),
         "decode_merge_report": Path(_get_arg(config, "decode_merge_report")).resolve(),
-        "eval_slam_report": Path(_get_arg(config, "slam_report")).resolve(),
-        "eval_traj_report": Path(_get_arg(config, "traj_report")).resolve(),
+        "ori_run_meta": Path(_get_arg(config, "ori_run_meta")).resolve(),
+        "gen_run_meta": Path(_get_arg(config, "gen_run_meta")).resolve(),
+        "evo_summary": Path(_get_arg(config, "evo_summary")).resolve(),
     }
 
 
@@ -186,7 +195,7 @@ def _build_compression_report(exp_dir, out_dir, inputs, reports, warnings):
         "version": 1,
         "source": "eval.compression_report",
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "definition": "unique generation unit boundary frames plus native prompt/unit JSON payload",
+        "definition": "unique generation unit boundary frames plus prompt/unit JSON payload",
         "orig_size_bytes": int(orig_size_bytes),
         "comp_size_bytes": int(comp_size_bytes),
         "ratio": ratio,
@@ -217,15 +226,17 @@ def _build_compression_report(exp_dir, out_dir, inputs, reports, warnings):
 def _detail_fieldnames():
     return [
         "comparison",
-        "alignment_mode",
-        "scale",
+        "metric_source",
+        "alignment",
         "rmse",
         "mean",
         "median",
+        "std",
         "min",
         "max",
-        "std",
-        "matched_samples",
+        "sse",
+        "pose_pairs",
+        "result_zip",
     ]
 
 
@@ -241,23 +252,24 @@ def _write_csv(path_obj, fieldnames, rows):
     os.replace(str(tmp_path), str(path))
 
 
-def _write_details(out_dir, traj_report):
+def _write_details(out_dir, evo_summary):
     rows = []
-    comparisons = _as_dict(_as_dict(traj_report).get("comparisons"))
-    for name in ["ori_vs_gt", "gen_vs_gt"]:
-        item = _as_dict(comparisons.get(name))
+    for prefix, name in [("ori", "ori_vs_gt"), ("gen", "gen_vs_gt")]:
+        item = _as_dict(evo_summary.get("{}_stats".format(prefix)))
         rows.append(
             {
                 "comparison": name,
-                "alignment_mode": item.get("alignment_mode", ""),
-                "scale": item.get("scale", ""),
+                "metric_source": evo_summary.get("metric_source", "evo_ape"),
+                "alignment": evo_summary.get("alignment", "sim3"),
                 "rmse": item.get("rmse", ""),
                 "mean": item.get("mean", ""),
                 "median": item.get("median", ""),
+                "std": item.get("std", ""),
                 "min": item.get("min", ""),
                 "max": item.get("max", ""),
-                "std": item.get("std", ""),
-                "matched_samples": item.get("matched_samples", ""),
+                "sse": item.get("sse", ""),
+                "pose_pairs": evo_summary.get("{}_pose_pairs".format(prefix), ""),
+                "result_zip": evo_summary.get("{}_result_zip".format(prefix), ""),
             }
         )
     details_path = Path(out_dir).resolve() / "eval_details.csv"
@@ -265,84 +277,28 @@ def _write_details(out_dir, traj_report):
     return details_path
 
 
-def _setup_matplotlib():
-    if not os.environ.get("MPLBACKEND"):
-        os.environ["MPLBACKEND"] = "Agg"
-    if not os.environ.get("MPLCONFIGDIR"):
-        os.environ["MPLCONFIGDIR"] = tempfile.mkdtemp(prefix="exphub_mpl_")
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    return plt
-
-
-def _curve_xy(curve):
-    if not isinstance(curve, dict):
-        return [], []
-    return list(curve.get("x") or []), list(curve.get("y") or [])
-
-
-def _save_metrics_overview(out_dir, traj_report):
-    plt = _setup_matplotlib()
-    plot_path = Path(out_dir).resolve() / "eval_metrics_overview.png"
-
-    comparisons = _as_dict(_as_dict(traj_report).get("comparisons"))
-    labels = ["ORI vs GT", "GEN vs GT"]
-    values = [
-        _pick_float(comparisons, ["ori_vs_gt", "rmse"]),
-        _pick_float(comparisons, ["gen_vs_gt", "rmse"]),
-    ]
-    numeric_values = [0.0 if value is None else float(value) for value in values]
-
-    fig, ax = plt.subplots(figsize=(7.2, 4.8), dpi=180)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-    bars = ax.bar(labels, numeric_values, color=["#c56a2d", "#2f7d5c"], width=0.56)
-    ax.set_title("GT Trajectory RMSE (Sim3 aligned)")
-    ax.set_ylabel("RMSE (m)")
-    ax.grid(True, axis="y", alpha=0.3)
-    ymax = max(numeric_values) if numeric_values else 0.0
-    ax.set_ylim(0.0, ymax * 1.22 if ymax > 0.0 else 1.0)
-    for bar, value in zip(bars, values):
-        label = "n/a" if value is None else "{:.4f} m".format(float(value))
-        ax.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            bar.get_height(),
-            label,
-            ha="center",
-            va="bottom",
-            fontsize=9,
-        )
-
-    fig.tight_layout()
-    fig.savefig(str(plot_path), bbox_inches="tight", pad_inches=0.05)
-    plt.close(fig)
-    return plot_path
-
-
 def _summary_lines(exp_dir, inputs, reports, compression_report, warnings):
-    prepare = reports["prepare_result"]
     generation_units = reports["generation_units"]
-    slam_report = reports["eval_slam_report"]
-    traj_report = reports["eval_traj_report"]
+    ori_run_meta = reports["ori_run_meta"]
+    gen_run_meta = reports["gen_run_meta"]
+    evo_summary = reports["evo_summary"]
 
     units = list(_as_dict(generation_units).get("units") or [])
-    comparisons = _as_dict(traj_report.get("comparisons"))
-    overview = _as_dict(traj_report.get("overview"))
-    association = _as_dict(traj_report.get("association"))
-    alignment = _as_dict(traj_report.get("alignment"))
-    alignment_mode = str(alignment.get("mode") or overview.get("alignment_mode") or "sim3").strip().lower()
-    alignment_text = "Sim3" if alignment_mode == "sim3" else (alignment_mode or "n/a")
-    better = str(overview.get("better", "") or "")
-    better_text = better.upper() if better in {"ori", "gen"} else (better or "n/a")
+    alignment = str(evo_summary.get("alignment") or "sim3").strip().lower()
+    alignment_text = "Sim3 Umeyama (-a -s)" if alignment == "sim3" else (alignment or "n/a")
+    overlay_path = evo_summary.get("trajectory_overlay_path")
+    overlay_file = _resolve_report_path(exp_dir, overlay_path)
+    plot_status = str(evo_summary.get("plot_status") or "skipped")
+    plot_text = "n/a"
+    if plot_status == "success" and overlay_file is not None and overlay_file.is_file():
+        plot_text = "eval/trajectory_overlay_auto2d.png"
+    failure_log = Path(inputs["evo_summary"]).resolve().parent / "evo_failure.log"
     lines = [
-        "=== ExpHub Eval Native Summary ===",
+        "=== ExpHub Eval Summary ===",
         "created_at: {}".format(datetime.now().isoformat(timespec="seconds")),
-        "workflow: slam_run -> trajectory_eval -> summary_build",
+        "workflow: slam_run -> evo_ape -> summary_build",
         "",
-        "[Native Inputs]",
+        "[Inputs]",
     ]
     for name in [
         "prepare_result",
@@ -351,8 +307,9 @@ def _summary_lines(exp_dir, inputs, reports, compression_report, warnings):
         "encode_result",
         "decode_report",
         "decode_merge_report",
-        "eval_slam_report",
-        "eval_traj_report",
+        "ori_run_meta",
+        "gen_run_meta",
+        "evo_summary",
     ]:
         lines.append("{}: {}".format(name, _relative_path(exp_dir, inputs[name])))
 
@@ -360,18 +317,25 @@ def _summary_lines(exp_dir, inputs, reports, compression_report, warnings):
         [
             "",
             "[Headline Metrics]",
-            "status: {}".format(str(traj_report.get("eval_status", "failed") or "failed")),
+            "status: {}".format(str(evo_summary.get("status", "failed") or "failed")),
             "",
-            "[Trajectory vs GT]",
+            "[Trajectory Accuracy: evo_ape]",
+            "Metric source: {}".format(str(evo_summary.get("metric_source") or "evo_ape")),
+            "Alignment mode: {}".format(str(evo_summary.get("alignment") or "sim3")),
             "Alignment: {}".format(alignment_text),
-            "ORI vs GT RMSE: {}".format(_fmt_value(_pick_float(comparisons, ["ori_vs_gt", "rmse"]), "m")),
-            "GEN vs GT RMSE: {}".format(_fmt_value(_pick_float(comparisons, ["gen_vs_gt", "rmse"]), "m")),
-            "Delta GEN-ORI: {}".format(_fmt_value(overview.get("rmse_delta_gen_minus_ori"), "m")),
-            "Ratio GEN/ORI: {}".format(_fmt_value(overview.get("rmse_ratio_gen_over_ori"))),
-            "Better: {}".format(better_text),
-            "ORI scale: {}".format(_fmt_value(overview.get("ori_scale"))),
-            "GEN scale: {}".format(_fmt_value(overview.get("gen_scale"))),
-            "Common matched samples: {}".format(int(association.get("common_matched_samples", 0) or 0)),
+            "Timestamp max difference: {} s".format(_fmt_value(evo_summary.get("t_max_diff"))),
+            "ORI APE RMSE: {}".format(_fmt_value(evo_summary.get("ori_ape_rmse"), "m")),
+            "GEN APE RMSE: {}".format(_fmt_value(evo_summary.get("gen_ape_rmse"), "m")),
+            "Delta GEN-ORI: {}".format(_fmt_value(evo_summary.get("rmse_delta_gen_minus_ori"), "m")),
+            "RMSE Increase: {}".format(_fmt_value(evo_summary.get("rmse_increase_pct"), "%")),
+            "RMSE Ratio GEN/ORI: {}".format(_fmt_value(evo_summary.get("rmse_ratio_gen_over_ori"))),
+            "ORI pose pairs: {}".format(evo_summary.get("ori_pose_pairs") if evo_summary.get("ori_pose_pairs") is not None else "n/a"),
+            "GEN pose pairs: {}".format(evo_summary.get("gen_pose_pairs") if evo_summary.get("gen_pose_pairs") is not None else "n/a"),
+            "Trajectory plot status: {}".format(str(evo_summary.get("plot_status") or "skipped")),
+            "Selected plot plane: {}".format(str(evo_summary.get("selected_plot_plane") or "n/a")),
+            "GT plot mode: {}".format(str(evo_summary.get("gt_plot_mode") or "n/a")),
+            "Plot common start: {}".format(_fmt_value(evo_summary.get("plot_common_start"), "s")),
+            "Plot common end: {}".format(_fmt_value(evo_summary.get("plot_common_end"), "s")),
             "",
             "[Generation Units]",
             "unit_count: {}".format(int(len(units))),
@@ -388,20 +352,21 @@ def _summary_lines(exp_dir, inputs, reports, compression_report, warnings):
             "json_payload_bytes: {} bytes".format(int(compression_report.get("json_payload_bytes", 0) or 0)),
             "",
             "[Output Files]",
-            "slam_report: eval/eval_slam_report.json",
-            "traj_report: eval/eval_traj_report.json",
+            "evo_summary: eval/evo_summary.json",
             "compression_report: eval/eval_compression_report.json",
-            "summary: eval/eval_summary.txt",
             "details: eval/eval_details.csv",
-            "trajectory_plot: {}".format(str(traj_report.get("plot_path", "eval/eval_traj_xy.png") or "eval/eval_traj_xy.png")),
-            "metrics_overview: eval/eval_metrics_overview.png",
-            "raw_ori_traj: {}".format(_as_dict(slam_report.get("ori")).get("trajectory_path", "")),
-            "raw_gen_traj: {}".format(_as_dict(slam_report.get("gen")).get("trajectory_path", "")),
+            "trajectory_overlay: {}".format(plot_text),
+            "ori_traj: {}".format(str(ori_run_meta.get("trajectory_path") or "eval/ori/traj_est.tum")),
+            "gen_traj: {}".format(str(gen_run_meta.get("trajectory_path") or "eval/gen/traj_est.tum")),
+            "ori_evo_zip: {}".format(str(evo_summary.get("ori_result_zip") or "eval/ori/evo_ape.zip")),
+            "gen_evo_zip: {}".format(str(evo_summary.get("gen_result_zip") or "eval/gen/evo_ape.zip")),
         ]
     )
-    if warnings or list(traj_report.get("warnings") or []):
+    if failure_log.is_file():
+        lines.append("evo_failure_log: eval/evo_failure.log")
+    if warnings or list(evo_summary.get("warnings") or []):
         lines.extend(["", "[Warnings]"])
-        for warning in list(warnings) + list(traj_report.get("warnings") or []):
+        for warning in list(warnings) + list(evo_summary.get("warnings") or []):
             lines.append("- {}".format(warning))
     return lines
 
@@ -420,27 +385,25 @@ def build_eval_summary(config):
         "encode_result": _read_required_json(inputs["encode_result"], "encode result", warnings),
         "decode_report": _read_required_json(inputs["decode_report"], "decode report", warnings),
         "decode_merge_report": _read_required_json(inputs["decode_merge_report"], "decode merge report", warnings),
-        "eval_slam_report": _read_required_json(inputs["eval_slam_report"], "eval slam report", warnings),
-        "eval_traj_report": _read_required_json(inputs["eval_traj_report"], "eval trajectory report", warnings),
+        "ori_run_meta": _read_required_json(inputs["ori_run_meta"], "ORI run meta", warnings),
+        "gen_run_meta": _read_required_json(inputs["gen_run_meta"], "GEN run meta", warnings),
+        "evo_summary": _read_required_json(inputs["evo_summary"], "evo summary", warnings),
     }
 
     compression_path, compression_report = _build_compression_report(exp_dir, out_dir, inputs, reports, warnings)
     summary_text = "\n".join(_summary_lines(exp_dir, inputs, reports, compression_report, warnings))
     summary_path = out_dir / "eval_summary.txt"
-    details_path = _write_details(out_dir, reports["eval_traj_report"])
-    overview_path = _save_metrics_overview(out_dir, reports["eval_traj_report"])
+    details_path = _write_details(out_dir, reports["evo_summary"])
     write_text_atomic(summary_path, summary_text + "\n")
 
     log_prog("eval summary generated")
     log_info("eval summary: {}".format(summary_path))
     log_info("eval compression report: {}".format(compression_path))
     log_info("eval details: {}".format(details_path))
-    log_info("eval metrics overview: {}".format(overview_path))
     return {
         "summary_path": summary_path,
         "compression_path": compression_path,
         "details_path": details_path,
-        "metrics_overview_path": overview_path,
         "summary_text": summary_text,
         "compression": compression_report,
     }
@@ -448,7 +411,7 @@ def build_eval_summary(config):
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-native-summary", action="store_true")
+    parser.add_argument("--run-eval-summary", action="store_true")
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--prepare_frames_dir", required=True)
@@ -458,15 +421,16 @@ def _build_arg_parser():
     parser.add_argument("--encode_result", required=True)
     parser.add_argument("--decode_report", required=True)
     parser.add_argument("--decode_merge_report", required=True)
-    parser.add_argument("--slam_report", required=True)
-    parser.add_argument("--traj_report", required=True)
+    parser.add_argument("--ori_run_meta", required=True)
+    parser.add_argument("--gen_run_meta", required=True)
+    parser.add_argument("--evo_summary", required=True)
     return parser
 
 
 def main(argv=None):
     args = _build_arg_parser().parse_args(argv)
-    if not args.run_native_summary:
-        raise SystemExit("eval summary helper requires --run-native-summary")
+    if not args.run_eval_summary:
+        raise SystemExit("eval summary helper requires --run-eval-summary")
     build_eval_summary(vars(args))
 
 

@@ -308,7 +308,7 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
 
     eval_dir = exp_dir / "eval"
     encode_result = _read_json_dict(exp_dir / "encode" / "encode_result.json")
-    traj_metrics = _read_json_dict(eval_dir / "eval_traj_report.json")
+    evo_summary = _read_json_dict(eval_dir / "evo_summary.json")
     decode_generation = _decode_generation_summary(exp_dir)
 
     compression_snapshot = _read_json_dict(eval_dir / "eval_compression_report.json")
@@ -337,14 +337,16 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
         "encode_profile": encode_result.get("profile") if isinstance(encode_result.get("profile"), dict) else {},
         "decode_generation": decode_generation,
         "quality": {
-            "ori_vs_gt_rmse": _pick_float(traj_metrics, ["comparisons", "ori_vs_gt", "rmse"]),
-            "gen_vs_gt_rmse": _pick_float(traj_metrics, ["comparisons", "gen_vs_gt", "rmse"]),
-            "rmse_delta_gen_minus_ori": _pick_float(traj_metrics, ["overview", "rmse_delta_gen_minus_ori"]),
-            "common_matched_samples": _pick_int(traj_metrics, ["association", "common_matched_samples"]),
-            "better": _get_nested(traj_metrics, ["overview", "better"]),
-            "alignment_mode": _get_nested(traj_metrics, ["alignment", "mode"]),
-            "ori_scale": _pick_float(traj_metrics, ["overview", "ori_scale"]),
-            "gen_scale": _pick_float(traj_metrics, ["overview", "gen_scale"]),
+            "metric_source": _get_nested(evo_summary, ["metric_source"]),
+            "alignment": _get_nested(evo_summary, ["alignment"]),
+            "ori_ape_rmse": _pick_float(evo_summary, ["ori_ape_rmse"]),
+            "gen_ape_rmse": _pick_float(evo_summary, ["gen_ape_rmse"]),
+            "rmse_delta_gen_minus_ori": _pick_float(evo_summary, ["rmse_delta_gen_minus_ori"]),
+            "rmse_increase_pct": _pick_float(evo_summary, ["rmse_increase_pct"]),
+            "rmse_ratio_gen_over_ori": _pick_float(evo_summary, ["rmse_ratio_gen_over_ori"]),
+            "ori_pose_pairs": _pick_int(evo_summary, ["ori_pose_pairs"]),
+            "gen_pose_pairs": _pick_int(evo_summary, ["gen_pose_pairs"]),
+            "plot_status": _get_nested(evo_summary, ["plot_status"]),
         },
         "compression": {
             "ratio": ratio_bytes,
@@ -458,23 +460,27 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
         detail_rows.append(("total", _fmt_seconds(total_time)))
 
     quality_rows = []
-    _add_row(quality_rows, "ori_vs_gt_rmse", _as_float_or_none(quality.get("ori_vs_gt_rmse")), lambda v: _fmt_metric(v, unit="m"))
-    _add_row(quality_rows, "gen_vs_gt_rmse", _as_float_or_none(quality.get("gen_vs_gt_rmse")), lambda v: _fmt_metric(v, unit="m"))
+    metric_source = str(quality.get("metric_source") or "").strip()
+    if metric_source:
+        quality_rows.append(("metric_source", metric_source))
+    alignment = str(quality.get("alignment") or "").strip()
+    if alignment:
+        quality_rows.append(("alignment", alignment))
+    _add_row(quality_rows, "ori_ape_rmse", _as_float_or_none(quality.get("ori_ape_rmse")), lambda v: _fmt_metric(v, unit="m"))
+    _add_row(quality_rows, "gen_ape_rmse", _as_float_or_none(quality.get("gen_ape_rmse")), lambda v: _fmt_metric(v, unit="m"))
     _add_row(
         quality_rows,
         "rmse_delta_gen_minus_ori",
         _as_float_or_none(quality.get("rmse_delta_gen_minus_ori")),
         lambda v: _fmt_metric(v, unit="m"),
     )
-    _add_row(quality_rows, "common_matched_samples", _as_int_or_none(quality.get("common_matched_samples")), _fmt_count)
-    better = str(quality.get("better") or "").strip()
-    if better:
-        quality_rows.append(("better", better.upper() if better in {"ori", "gen"} else better))
-    alignment_mode = str(quality.get("alignment_mode") or "").strip()
-    if alignment_mode:
-        quality_rows.append(("alignment_mode", alignment_mode))
-    _add_row(quality_rows, "ori_scale", _as_float_or_none(quality.get("ori_scale")), lambda v: "{:.6f}".format(float(v)))
-    _add_row(quality_rows, "gen_scale", _as_float_or_none(quality.get("gen_scale")), lambda v: "{:.6f}".format(float(v)))
+    _add_row(quality_rows, "rmse_increase_pct", _as_float_or_none(quality.get("rmse_increase_pct")), lambda v: _fmt_metric(v, unit="%"))
+    _add_row(quality_rows, "rmse_ratio_gen_over_ori", _as_float_or_none(quality.get("rmse_ratio_gen_over_ori")), lambda v: "{:.6f}".format(float(v)))
+    _add_row(quality_rows, "ori_pose_pairs", _as_int_or_none(quality.get("ori_pose_pairs")), _fmt_count)
+    _add_row(quality_rows, "gen_pose_pairs", _as_int_or_none(quality.get("gen_pose_pairs")), _fmt_count)
+    plot_status = str(quality.get("plot_status") or "").strip()
+    if plot_status:
+        quality_rows.append(("plot_status", plot_status))
 
     compression_rows = []
     _add_row(compression_rows, "ratio", _as_float_or_none(compression.get("ratio")), _fmt_ratio)

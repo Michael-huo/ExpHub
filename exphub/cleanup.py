@@ -110,17 +110,25 @@ def _cleanup_min(exp_dir: Path) -> None:
         exp_dir,
         exp_dir / "eval",
         {
-            "eval_slam_report.json",
-            "eval_traj_report.json",
+            "evo_summary.json",
             "eval_compression_report.json",
             "eval_summary.txt",
             "eval_details.csv",
-            "eval_traj_xy.png",
-            "eval_metrics_overview.png",
+            "trajectory_overlay_auto2d.png",
             "ori",
             "gen",
         },
     )
+    for track in ("ori", "gen"):
+        _prune_dir_keep_names(
+            exp_dir,
+            exp_dir / "eval" / track,
+            {
+                "traj_est.tum",
+                "run_meta.json",
+                "evo_ape.zip",
+            },
+        )
 
 
 def _is_train_exp_dir(exp_dir: Path) -> bool:
