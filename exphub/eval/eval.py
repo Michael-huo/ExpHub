@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Native eval mainline: SLAM -> trajectory metrics -> summary artifacts."""
+"""Eval mainline: SLAM -> evo_ape trajectory metrics -> summary artifacts."""
 
 import argparse
 import sys
@@ -10,21 +10,34 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_dir, ensure_file, remove_path
+from exphub.common.io import ensure_dir, ensure_file, read_json_dict, remove_path
 from exphub.common.logging import log_info, log_prog, log_warn
+from exphub.eval.evo_eval import run_evo_eval
 from exphub.eval.slam_run import run_slam
 from exphub.eval.summary_build import build_eval_summary
-from exphub.eval.trajectory_eval import run_trajectory_eval
 
 
 _STALE_EVAL_OUTPUTS = (
     "eval_slam_report.json",
-    "eval_traj_report.json",
+    "internal/eval_slam_report.json",
+    "evo_summary.json",
+    "evo_ori_ape.zip",
+    "evo_gen_ape.zip",
+    "ori/evo_ape.zip",
+    "gen/evo_ape.zip",
+    "ori/traj_est.npz",
+    "gen/traj_est.npz",
+    "evo_ori_stdout.txt",
+    "evo_ori_stderr.txt",
+    "evo_gen_stdout.txt",
+    "evo_gen_stderr.txt",
+    "evo_failure.log",
     "eval_compression_report.json",
     "eval_summary.txt",
     "eval_details.csv",
-    "eval_traj_xy.png",
     "eval_metrics_overview.png",
+    "trajectory_overlay_auto2d.png",
+    "trajectory_plot_data.json",
 )
 
 
@@ -35,7 +48,7 @@ def _clean_eval_outputs(out_dir):
         remove_path(root / name)
 
 
-def _validate_native_inputs(args):
+def _validate_eval_inputs(args):
     return {
         "prepare_result": ensure_file(args.prepare_result, "prepare result"),
         "prepare_frames_dir": ensure_dir(args.prepare_frames_dir, "prepare frames dir"),
@@ -50,10 +63,10 @@ def _validate_native_inputs(args):
     }
 
 
-def run_native_mainline(args):
+def run_eval_mainline(args):
     exp_dir = Path(args.exp_dir).resolve()
     out_dir = Path(args.out_dir).resolve()
-    inputs = _validate_native_inputs(args)
+    inputs = _validate_eval_inputs(args)
     gt_traj_path = Path(args.gt_traj).resolve()
     if not gt_traj_path.is_file():
         raise RuntimeError(
@@ -63,7 +76,7 @@ def run_native_mainline(args):
         )
     _clean_eval_outputs(out_dir)
 
-    log_prog("eval native mainline: slam")
+    log_prog("eval mainline: slam")
     slam_result = run_slam(
         {
             "exp_dir": str(exp_dir),
@@ -107,21 +120,20 @@ def run_native_mainline(args):
         }
     )
 
-    log_prog("eval native mainline: trajectory")
-    traj_result = run_trajectory_eval(
+    log_prog("eval mainline: evo_ape")
+    evo_result = run_evo_eval(
         {
-            "exp_dir": str(exp_dir),
             "out_dir": str(out_dir),
-            "prepare_result": str(inputs["prepare_result"]),
-            "generation_units": str(inputs["generation_units"]),
+            "exp_dir": str(exp_dir),
             "gt_traj": str(gt_traj_path),
             "ori_traj": str((out_dir / "ori" / "traj_est.tum").resolve()),
             "gen_traj": str((out_dir / "gen" / "traj_est.tum").resolve()),
+            "t_max_diff": float(args.t_max_diff),
             "skip_plots": bool(args.skip_plots),
         }
     )
 
-    log_prog("eval native mainline: summary")
+    log_prog("eval mainline: summary")
     summary_result = build_eval_summary(
         {
             "exp_dir": str(exp_dir),
@@ -133,17 +145,16 @@ def run_native_mainline(args):
             "prepare_frames_dir": str(inputs["prepare_frames_dir"]),
             "decode_report": str(inputs["decode_report"]),
             "decode_merge_report": str(inputs["decode_merge_report"]),
-            "slam_report": str(out_dir / "eval_slam_report.json"),
-            "traj_report": str(out_dir / "eval_traj_report.json"),
-            "traj_records": list((traj_result or {}).get("records") or []),
-            "traj_overview": dict((traj_result or {}).get("overview") or {}),
+            "ori_run_meta": str(out_dir / "ori" / "run_meta.json"),
+            "gen_run_meta": str(out_dir / "gen" / "run_meta.json"),
+            "evo_summary": str(out_dir / "evo_summary.json"),
         }
     )
 
-    log_info("eval native mainline complete: {}".format(out_dir))
+    log_info("eval mainline complete: {}".format(out_dir))
     return {
         "slam": slam_result,
-        "trajectory": traj_result,
+        "evo": evo_result,
         "summary": summary_result,
         "out_dir": out_dir,
     }
@@ -177,7 +188,7 @@ def run(runtime):
     cmd = [
         "-m",
         "exphub.eval.eval",
-        "--run-native-mainline",
+        "--run-eval-mainline",
         "--exp_dir",
         str(runtime.paths.exp_dir),
         "--out_dir",
@@ -226,19 +237,27 @@ def run(runtime):
     )
 
     required_artifacts = [
-        (runtime.paths.eval_slam_report_path, "eval slam report"),
-        (runtime.paths.eval_traj_report_path, "eval traj report"),
+        (runtime.paths.eval_evo_summary_path, "evo summary"),
         (runtime.paths.eval_compression_report_path, "eval compression report"),
         (runtime.paths.eval_summary_path, "eval summary"),
         (runtime.paths.eval_details_path, "eval details"),
-        (runtime.paths.eval_traj_plot_path, "eval traj plot"),
-        (runtime.paths.eval_metrics_overview_path, "eval metrics overview plot"),
+        (runtime.paths.eval_trajectory_overlay_path, "trajectory overlay"),
+        (runtime.paths.eval_ori_traj_path, "ORI trajectory"),
+        (runtime.paths.eval_gen_traj_path, "GEN trajectory"),
+        (runtime.paths.eval_ori_run_meta_path, "ORI run meta"),
+        (runtime.paths.eval_gen_run_meta_path, "GEN run meta"),
+        (runtime.paths.eval_evo_ori_ape_path, "ORI evo APE result"),
+        (runtime.paths.eval_evo_gen_ape_path, "GEN evo APE result"),
     ]
+    evo_summary = read_json_dict(runtime.paths.eval_evo_summary_path)
+    plot_status = str(evo_summary.get("plot_status") or "skipped").strip().lower()
     for artifact_path, label in required_artifacts:
-        if label == "eval traj plot" and runtime.args.no_viz:
-            if not Path(artifact_path).is_file():
-                log_warn("eval traj plot skipped by --no_viz")
-                continue
+        if label == "trajectory overlay" and runtime.args.no_viz:
+            log_warn("trajectory overlay skipped by --no_viz")
+            continue
+        if label == "trajectory overlay" and plot_status != "success":
+            log_warn("trajectory overlay not required because plot_status={}".format(plot_status or "skipped"))
+            continue
         ensure_file(artifact_path, label)
 
     return runtime.paths.eval_dir
@@ -246,7 +265,7 @@ def run(runtime):
 
 def _build_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-native-mainline", action="store_true")
+    parser.add_argument("--run-eval-mainline", action="store_true")
     parser.add_argument("--exp_dir", required=True)
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--prepare_result", required=True)
@@ -264,6 +283,7 @@ def _build_arg_parser():
     parser.add_argument("--droid_repo", required=True)
     parser.add_argument("--weights", required=True)
     parser.add_argument("--fps", type=float, default=0.0)
+    parser.add_argument("--t_max_diff", type=float, default=0.03)
     parser.add_argument("--disable_vis", action="store_true")
     parser.add_argument("--skip_plots", action="store_true")
     return parser
@@ -271,9 +291,9 @@ def _build_arg_parser():
 
 def main(argv=None):
     args = _build_arg_parser().parse_args(argv)
-    if not args.run_native_mainline:
-        raise SystemExit("eval helper requires --run-native-mainline")
-    run_native_mainline(args)
+    if not args.run_eval_mainline:
+        raise SystemExit("eval helper requires --run-eval-mainline")
+    run_eval_mainline(args)
 
 
 if __name__ == "__main__":
