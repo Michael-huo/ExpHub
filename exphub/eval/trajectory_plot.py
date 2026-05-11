@@ -96,6 +96,55 @@ def _plane_columns(plane):
     raise RuntimeError("unsupported plot plane: {}".format(plane))
 
 
+def _fixed_equal_limits(xy_arrays, axes_aspect, padding_ratio=0.06, eps=1e-9):
+    axes_aspect = float(axes_aspect)
+    if not np.isfinite(axes_aspect) or axes_aspect <= eps:
+        raise RuntimeError("invalid plot axes aspect: {}".format(axes_aspect))
+
+    finite_arrays = []
+    for xy in xy_arrays:
+        arr = np.asarray(xy, dtype=np.float64)
+        if arr.ndim != 2 or arr.shape[1] != 2:
+            continue
+        mask = np.isfinite(arr[:, 0]) & np.isfinite(arr[:, 1])
+        if np.any(mask):
+            finite_arrays.append(arr[mask])
+    if not finite_arrays:
+        raise RuntimeError("trajectory plot has no finite 2D coordinates")
+
+    points = np.vstack(finite_arrays)
+    xmin = float(np.min(points[:, 0]))
+    xmax = float(np.max(points[:, 0]))
+    ymin = float(np.min(points[:, 1]))
+    ymax = float(np.max(points[:, 1]))
+    x_center = 0.5 * (xmin + xmax)
+    y_center = 0.5 * (ymin + ymax)
+    x_span = max(float(xmax - xmin), 0.0)
+    y_span = max(float(ymax - ymin), 0.0)
+
+    if x_span <= eps and y_span <= eps:
+        y_span = 1.0
+        x_span = y_span * axes_aspect
+    elif x_span <= eps:
+        x_span = max(y_span * axes_aspect, eps)
+    elif y_span <= eps:
+        y_span = max(x_span / axes_aspect, eps)
+
+    pad_factor = 1.0 + 2.0 * float(padding_ratio)
+    x_range = x_span * pad_factor
+    y_range = y_span * pad_factor
+    current_aspect = x_range / y_range
+    if current_aspect < axes_aspect:
+        x_range = y_range * axes_aspect
+    elif current_aspect > axes_aspect:
+        y_range = x_range / axes_aspect
+
+    return (
+        (x_center - 0.5 * x_range, x_center + 0.5 * x_range),
+        (y_center - 0.5 * y_range, y_center + 0.5 * y_range),
+    )
+
+
 def _mask_for_time_range(timestamps, start, end):
     values = np.asarray(timestamps, dtype=np.float64)
     return (values >= float(start)) & (values <= float(end))
@@ -185,21 +234,80 @@ def generate_trajectory_overlay(
 
         selected_plane = _select_plane(gt_positions) if plot_plane == "auto" else str(plot_plane)
         i, j, xlabel, ylabel = _plane_columns(selected_plane)
+        gt_xy = gt_positions[:, [i, j]]
+        ori_xy = ori_positions[:, [i, j]]
+        gen_xy = gen_positions[:, [i, j]]
+        fig_size = (4.8, 3.8)
+        fig_dpi = 180
+        save_dpi = 300
+        margins = {"left": 0.16, "right": 0.98, "bottom": 0.17, "top": 0.97}
+        axes_aspect = (fig_size[0] * (margins["right"] - margins["left"])) / (
+            fig_size[1] * (margins["top"] - margins["bottom"])
+        )
+        xlim, ylim = _fixed_equal_limits((gt_xy, ori_xy, gen_xy), axes_aspect=axes_aspect)
         plt = _setup_matplotlib()
-        fig, ax = plt.subplots(figsize=(7.2, 6.0), dpi=220)
+        fig, ax = plt.subplots(figsize=fig_size, dpi=fig_dpi)
+        fig.subplots_adjust(**margins)
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
-        ax.plot(gt_positions[:, i], gt_positions[:, j], label="GT", color="#202020", linewidth=2.0)
-        ax.plot(ori_positions[:, i], ori_positions[:, j], label="ORI", color="#c56a2d", linewidth=1.8)
-        ax.plot(gen_positions[:, i], gen_positions[:, j], label="GEN", color="#2f7d5c", linewidth=1.8)
+        ax.plot(
+            gt_xy[:, 0],
+            gt_xy[:, 1],
+            label="GT",
+            color="#222222",
+            linestyle="-",
+            linewidth=2.4,
+            solid_capstyle="round",
+            solid_joinstyle="round",
+            zorder=3,
+        )
+        ax.plot(
+            ori_xy[:, 0],
+            ori_xy[:, 1],
+            label="ORI",
+            color="#4C78A8",
+            linestyle="--",
+            linewidth=2.0,
+            solid_capstyle="round",
+            solid_joinstyle="round",
+            dash_capstyle="round",
+            zorder=2,
+        )
+        ax.plot(
+            gen_xy[:, 0],
+            gen_xy[:, 1],
+            label="GEN",
+            color="#C06C5B",
+            linestyle="-",
+            linewidth=2.0,
+            solid_capstyle="round",
+            solid_joinstyle="round",
+            zorder=2,
+        )
         ax.set_aspect("equal", adjustable="box")
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.set_title("Evo-synchronized Sim3-aligned trajectory overlay\nplane={}".format(selected_plane))
-        ax.grid(True, alpha=0.25)
-        ax.legend(loc="best", frameon=True)
-        fig.tight_layout()
-        fig.savefig(str(plot_path), dpi=300, bbox_inches="tight", pad_inches=0.05)
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
+        ax.set_axisbelow(True)
+        ax.set_xlabel(xlabel, fontsize=11)
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.tick_params(axis="both", labelsize=10)
+        ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.22)
+        for spine in ax.spines.values():
+            spine.set_color("#444444")
+        legend = ax.legend(
+            loc="upper right",
+            bbox_to_anchor=(0.97, 0.95),
+            frameon=True,
+            framealpha=0.92,
+            facecolor="white",
+            edgecolor="#D0D0D0",
+            fontsize=10,
+            handlelength=2.4,
+            borderpad=0.4,
+            labelspacing=0.35,
+        )
+        legend.set_zorder(10)
+        fig.savefig(str(plot_path), dpi=save_dpi, facecolor="white")
         plt.close(fig)
 
         return {
