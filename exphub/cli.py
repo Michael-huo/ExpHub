@@ -190,6 +190,48 @@ def _fmt_bytes(value: int) -> str:
     return "{:.2f} {}".format(size, units[unit_idx])
 
 
+def _fmt_plain_seconds(value: object) -> str:
+    parsed = _as_float_or_none(value)
+    if parsed is None:
+        return "n/a"
+    return "{:.2f}".format(float(parsed))
+
+
+def _fmt_plain_metric(value: object, digits: int = 3) -> str:
+    parsed = _as_float_or_none(value)
+    if parsed is None:
+        return "n/a"
+    return "{:.{digits}f}".format(float(parsed), digits=int(digits))
+
+
+def _fmt_plain_ratio(value: object) -> str:
+    parsed = _as_float_or_none(value)
+    if parsed is None:
+        return "n/a"
+    return "{:.4f}".format(float(parsed))
+
+
+def _fmt_plain_int(value: object) -> str:
+    parsed = _as_int_or_none(value)
+    if parsed is None:
+        return "n/a"
+    return str(int(parsed))
+
+
+def _bytes_to_mib(value: object) -> Optional[float]:
+    parsed = _as_float_or_none(value)
+    if parsed is None:
+        return None
+    return float(parsed) / (1024.0 * 1024.0)
+
+
+def _alignment_label(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if text == "sim3":
+        return "Sim3 (-a -s)"
+    return text or "n/a"
+
+
 def _pick_float(obj: Dict[str, object], path: List[str]) -> Optional[float]:
     return _as_float_or_none(_get_nested(obj, path))
 
@@ -316,15 +358,13 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
     ori_bytes = _pick_int(compression_snapshot, ["orig_size_bytes"])
     comp_size = _pick_int(compression_snapshot, ["comp_size_bytes"])
     ratio_bytes = _pick_float(compression_snapshot, ["ratio"])
-    unit_boundary_count = _pick_int(compression_snapshot, ["unit_boundary_count"])
-
-    reduction_ratio = None  # type: Optional[float]
-    if ratio_bytes is not None:
-        reduction_ratio = 1.0 - float(ratio_bytes)
-    else:
-        reduction_pct = _pick_float(compression_snapshot, ["reduction_pct"])
-        if reduction_pct is not None:
-            reduction_ratio = float(reduction_pct) / 100.0
+    raw_frame_count = _pick_int(compression_snapshot, ["raw_frame_count"])
+    transmitted_frame_count = _pick_int(compression_snapshot, ["transmitted_frame_count"])
+    if transmitted_frame_count is None:
+        transmitted_frame_count = _pick_int(compression_snapshot, ["unit_boundary_count"])
+    reduction_pct = _pick_float(compression_snapshot, ["reduction_pct"])
+    if reduction_pct is None and ratio_bytes is not None:
+        reduction_pct = (1.0 - float(ratio_bytes)) * 100.0
 
     phase_times = {}
     for phase_name in phase_names:
@@ -339,21 +379,25 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
         "quality": {
             "metric_source": _get_nested(evo_summary, ["metric_source"]),
             "alignment": _get_nested(evo_summary, ["alignment"]),
+            "gt_path_length_m": _pick_float(evo_summary, ["gt_path_length_m"]),
             "ori_ape_rmse": _pick_float(evo_summary, ["ori_ape_rmse"]),
             "gen_ape_rmse": _pick_float(evo_summary, ["gen_ape_rmse"]),
             "rmse_delta_gen_minus_ori": _pick_float(evo_summary, ["rmse_delta_gen_minus_ori"]),
-            "rmse_increase_pct": _pick_float(evo_summary, ["rmse_increase_pct"]),
-            "rmse_ratio_gen_over_ori": _pick_float(evo_summary, ["rmse_ratio_gen_over_ori"]),
-            "ori_pose_pairs": _pick_int(evo_summary, ["ori_pose_pairs"]),
-            "gen_pose_pairs": _pick_int(evo_summary, ["gen_pose_pairs"]),
-            "plot_status": _get_nested(evo_summary, ["plot_status"]),
+            "ori_rpe_trans_rmse": _pick_float(evo_summary, ["ori_rpe_trans_rmse"]),
+            "gen_rpe_trans_rmse": _pick_float(evo_summary, ["gen_rpe_trans_rmse"]),
+            "rpe_delta_trans": _pick_float(evo_summary, ["rpe_delta_trans"]),
+            "ori_rpe_rot_rmse_deg": _pick_float(evo_summary, ["ori_rpe_rot_rmse_deg"]),
+            "gen_rpe_rot_rmse_deg": _pick_float(evo_summary, ["gen_rpe_rot_rmse_deg"]),
+            "rpe_delta_rot_deg": _pick_float(evo_summary, ["rpe_delta_rot_deg"]),
+            "eval_reliability": _get_nested(evo_summary, ["eval_reliability"]),
         },
         "compression": {
             "ratio": ratio_bytes,
-            "reduction": reduction_ratio,
+            "reduction_pct": reduction_pct,
             "orig_size": ori_bytes,
             "comp_size": comp_size,
-            "unit_boundaries": unit_boundary_count,
+            "raw_frames": raw_frame_count,
+            "transmitted_frames": transmitted_frame_count,
         },
     }
     return report
@@ -386,131 +430,56 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     sep = "=" * 70
     div = "-" * 70
 
-    time_rows = []
-    for phase_name in ["encode", "decode", "eval"]:
-        value = _as_float_or_none(phase_times.get(phase_name))
-        if value is not None:
-            time_rows.append((phase_name, _fmt_phase_seconds(value, total_time)))
+    time_rows = [
+        ("total_sec", _fmt_plain_seconds(total_time)),
+        ("encode_sec", _fmt_plain_seconds(phase_times.get("encode"))),
+        ("decode_sec", _fmt_plain_seconds(phase_times.get("decode"))),
+        ("eval_sec", _fmt_plain_seconds(phase_times.get("eval"))),
+        ("encode.motion_segment_sec", _fmt_plain_seconds(encode_profile.get("motion_segment_sec"))),
+        ("encode.semantic_anchor_sec", _fmt_plain_seconds(encode_profile.get("semantic_anchor_sec"))),
+        ("encode.result_writer_sec", _fmt_plain_seconds(encode_profile.get("result_writer_sec"))),
+        ("motion.phase_correlation_sec", _fmt_plain_seconds(encode_motion_profile.get("phase_correlation_sec"))),
+        ("motion.orb_tracking_sec", _fmt_plain_seconds(encode_motion_profile.get("orb_tracking_sec"))),
+        ("motion.optical_flow_sec", _fmt_plain_seconds(encode_motion_profile.get("optical_flow_sec"))),
+        ("decode.generate_sec", _fmt_plain_seconds(decode_generation.get("generate_sec"))),
+        ("decode.avg_fps", _fmt_plain_metric(decode_generation.get("avg_fps"), digits=2)),
+    ]
 
-    encode_rows = []
-    _add_row(encode_rows, "encode.motion_segment_sec", _as_float_or_none(encode_profile.get("motion_segment_sec")), _fmt_seconds)
-    _add_row(encode_rows, "encode.motion.read_gray_sec", _as_float_or_none(encode_motion_profile.get("read_gray_sec")), _fmt_seconds)
-    _add_row(
-        encode_rows,
-        "encode.motion.motion_estimation_sec",
-        _as_float_or_none(encode_motion_profile.get("motion_estimation_sec")),
-        _fmt_seconds,
-    )
-    _add_row(
-        encode_rows,
-        "encode.motion.phase_correlation_sec",
-        _as_float_or_none(encode_motion_profile.get("phase_correlation_sec")),
-        _fmt_seconds,
-    )
-    _add_row(
-        encode_rows,
-        "encode.motion.orb_tracking_sec",
-        _as_float_or_none(encode_motion_profile.get("orb_tracking_sec")),
-        _fmt_seconds,
-    )
-    _add_row(encode_rows, "encode.semantic_anchor_sec", _as_float_or_none(encode_profile.get("semantic_anchor_sec")), _fmt_seconds)
-    _add_row(encode_rows, "encode.result_writer_sec", _as_float_or_none(encode_profile.get("result_writer_sec")), _fmt_seconds)
+    quality_rows = [
+        ("alignment", _alignment_label(quality.get("alignment"))),
+        ("gt_path_length_m", _fmt_plain_metric(quality.get("gt_path_length_m"), digits=2)),
+        ("ape.ori_rmse_m", _fmt_plain_metric(quality.get("ori_ape_rmse"), digits=3)),
+        ("ape.gen_rmse_m", _fmt_plain_metric(quality.get("gen_ape_rmse"), digits=3)),
+        ("ape.delta_gen_minus_ori_m", _fmt_plain_metric(quality.get("rmse_delta_gen_minus_ori"), digits=3)),
+        ("rpe.ori_trans_rmse_m", _fmt_plain_metric(quality.get("ori_rpe_trans_rmse"), digits=3)),
+        ("rpe.gen_trans_rmse_m", _fmt_plain_metric(quality.get("gen_rpe_trans_rmse"), digits=3)),
+        ("rpe.delta_trans_m", _fmt_plain_metric(quality.get("rpe_delta_trans"), digits=3)),
+        ("rpe.ori_rot_rmse_deg", _fmt_plain_metric(quality.get("ori_rpe_rot_rmse_deg"), digits=2)),
+        ("rpe.gen_rot_rmse_deg", _fmt_plain_metric(quality.get("gen_rpe_rot_rmse_deg"), digits=2)),
+        ("rpe.delta_rot_deg", _fmt_plain_metric(quality.get("rpe_delta_rot_deg"), digits=2)),
+        ("eval_reliability", str(quality.get("eval_reliability") or "n/a")),
+    ]
 
-    detail_rows = []
-    backend = str(decode_generation.get("backend") or "").strip()
-    if backend:
-        detail_rows.append(("decode.backend", backend))
-    decode_profile = str(decode_generation.get("decode_profile") or "").strip()
-    if decode_profile:
-        detail_rows.append(("decode.profile", decode_profile))
-    lora_enabled = decode_generation.get("lora_enabled")
-    if isinstance(lora_enabled, bool):
-        if bool(lora_enabled):
-            lora_name = str(decode_generation.get("lora_name") or "").strip()
-            detail_rows.append(("decode.lora", lora_name or "enabled"))
-        else:
-            detail_rows.append(("decode.lora", "disabled"))
-    _add_row(
-        detail_rows,
-        "decode.lora_strength_model",
-        _as_float_or_none(decode_generation.get("lora_strength_model")),
-        lambda v: "{:.3f}".format(float(v)),
-    )
-    _add_row(
-        detail_rows,
-        "decode.lora_strength_clip",
-        _as_float_or_none(decode_generation.get("lora_strength_clip")),
-        lambda v: "{:.3f}".format(float(v)),
-    )
-    if isinstance(decode_generation.get("parallel"), bool):
-        detail_rows.append(("decode.parallel", "true" if bool(decode_generation.get("parallel")) else "false"))
-    instances = _as_int_or_none(decode_generation.get("instances"))
-    if instances is not None and int(instances) > 0:
-        detail_rows.append(("decode.instances", _fmt_count(instances)))
-    schedule = str(decode_generation.get("schedule") or "").strip()
-    if schedule:
-        detail_rows.append(("decode.schedule", schedule))
-    _add_row(detail_rows, "decode.units", _as_int_or_none(decode_generation.get("units")), _fmt_count)
-    _add_row(detail_rows, "decode.frames", _as_int_or_none(decode_generation.get("frames")), _fmt_count)
-    _add_row(detail_rows, "decode.generate_sec", _as_float_or_none(decode_generation.get("generate_sec")), _fmt_seconds)
-    _add_row(detail_rows, "decode.sum_unit_sec", _as_float_or_none(decode_generation.get("sum_unit_sec")), _fmt_seconds)
-    _add_row(detail_rows, "decode.speedup", _as_float_or_none(decode_generation.get("speedup")), lambda v: "{:.3f}x".format(float(v)))
-    _add_row(detail_rows, "decode.avg_fps", _as_float_or_none(decode_generation.get("avg_fps")), lambda v: "{:.3f} fps".format(float(v)))
-    if total_time > 0:
-        detail_rows.append(("total", _fmt_seconds(total_time)))
-
-    quality_rows = []
-    metric_source = str(quality.get("metric_source") or "").strip()
-    if metric_source:
-        quality_rows.append(("metric_source", metric_source))
-    alignment = str(quality.get("alignment") or "").strip()
-    if alignment:
-        quality_rows.append(("alignment", alignment))
-    _add_row(quality_rows, "ori_ape_rmse", _as_float_or_none(quality.get("ori_ape_rmse")), lambda v: _fmt_metric(v, unit="m"))
-    _add_row(quality_rows, "gen_ape_rmse", _as_float_or_none(quality.get("gen_ape_rmse")), lambda v: _fmt_metric(v, unit="m"))
-    _add_row(
-        quality_rows,
-        "rmse_delta_gen_minus_ori",
-        _as_float_or_none(quality.get("rmse_delta_gen_minus_ori")),
-        lambda v: _fmt_metric(v, unit="m"),
-    )
-    _add_row(quality_rows, "rmse_increase_pct", _as_float_or_none(quality.get("rmse_increase_pct")), lambda v: _fmt_metric(v, unit="%"))
-    _add_row(quality_rows, "rmse_ratio_gen_over_ori", _as_float_or_none(quality.get("rmse_ratio_gen_over_ori")), lambda v: "{:.6f}".format(float(v)))
-    _add_row(quality_rows, "ori_pose_pairs", _as_int_or_none(quality.get("ori_pose_pairs")), _fmt_count)
-    _add_row(quality_rows, "gen_pose_pairs", _as_int_or_none(quality.get("gen_pose_pairs")), _fmt_count)
-    plot_status = str(quality.get("plot_status") or "").strip()
-    if plot_status:
-        quality_rows.append(("plot_status", plot_status))
-
-    compression_rows = []
-    _add_row(compression_rows, "ratio", _as_float_or_none(compression.get("ratio")), _fmt_ratio)
-    _add_row(compression_rows, "reduction", _as_float_or_none(compression.get("reduction")), _fmt_reduction)
-    _add_row(compression_rows, "orig_size", _as_int_or_none(compression.get("orig_size")), _fmt_bytes)
-    _add_row(compression_rows, "comp_size", _as_int_or_none(compression.get("comp_size")), _fmt_bytes)
-    _add_row(compression_rows, "unit_boundaries", _as_int_or_none(compression.get("unit_boundaries")), _fmt_count)
+    compression_rows = [
+        ("raw_size_mib", _fmt_plain_metric(_bytes_to_mib(compression.get("orig_size")), digits=2)),
+        ("hvm_size_mib", _fmt_plain_metric(_bytes_to_mib(compression.get("comp_size")), digits=2)),
+        ("transmission_ratio", _fmt_plain_ratio(compression.get("ratio"))),
+        ("reduction_pct", _fmt_plain_metric(compression.get("reduction_pct"), digits=2)),
+        ("raw_frames", _fmt_plain_int(compression.get("raw_frames"))),
+        ("transmitted_frames", _fmt_plain_int(compression.get("transmitted_frames"))),
+    ]
 
     _info(sep)
     _info("EXPERIMENT REPORT")
     _info(sep)
     _info("[Time]")
     _print_rows(time_rows)
-    if encode_rows:
-        _info(div)
-        _info("[Encode]")
-        _print_rows(encode_rows)
-    if detail_rows:
-        _info(div)
-        _print_rows(detail_rows)
-    if quality_rows:
-        _info(div)
-        _info("[Quality]")
-        _print_rows(quality_rows)
-    if compression_rows:
-        _info(div)
-        _info("[Compression]")
-        _print_rows(compression_rows)
     _info(div)
-    _print_rows([("exp_dir", str(report.get("exp_dir") or exp_dir))])
+    _info("[Quality: evo]")
+    _print_rows(quality_rows)
+    _info(div)
+    _info("[Compression]")
+    _print_rows(compression_rows)
     _info(sep)
 
 
