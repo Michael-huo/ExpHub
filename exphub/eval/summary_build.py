@@ -64,6 +64,42 @@ def _fmt_value(value, unit=""):
     return text
 
 
+def _as_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
+def _fmt_number(value, digits=2):
+    if value is None:
+        return "n/a"
+    try:
+        return "{:.{digits}f}".format(float(value), digits=int(digits))
+    except Exception:
+        return "n/a"
+
+
+def _fmt_ratio(value):
+    if value is None:
+        return "n/a"
+    try:
+        return "{:.4f}".format(float(value))
+    except Exception:
+        return "n/a"
+
+
+def _bytes_to_mib(value):
+    try:
+        if value is None:
+            return None
+        return float(value) / (1024.0 * 1024.0)
+    except Exception:
+        return None
+
+
 def _pick_float(obj, keys):
     current = obj
     for key in list(keys or []):
@@ -198,6 +234,8 @@ def _build_compression_report(exp_dir, out_dir, inputs, reports, warnings):
         "definition": "unique generation unit boundary frames plus prompt/unit JSON payload",
         "orig_size_bytes": int(orig_size_bytes),
         "comp_size_bytes": int(comp_size_bytes),
+        "raw_frame_count": int(len(frame_files)),
+        "transmitted_frame_count": int(len(boundary_frame_paths)),
         "ratio": ratio,
         "reduction_pct": reduction_pct,
         "unit_count": int(len(list(_as_dict(generation_units).get("units") or []))),
@@ -254,12 +292,12 @@ def _write_csv(path_obj, fieldnames, rows):
 
 def _write_details(out_dir, evo_summary):
     rows = []
-    for prefix, name in [("ori", "ori_vs_gt"), ("gen", "gen_vs_gt")]:
+    for prefix, name in [("ori", "ape_ori_vs_gt"), ("gen", "ape_gen_vs_gt")]:
         item = _as_dict(evo_summary.get("{}_stats".format(prefix)))
         rows.append(
             {
                 "comparison": name,
-                "metric_source": evo_summary.get("metric_source", "evo_ape"),
+                "metric_source": "evo_ape",
                 "alignment": evo_summary.get("alignment", "sim3"),
                 "rmse": item.get("rmse", ""),
                 "mean": item.get("mean", ""),
@@ -272,102 +310,157 @@ def _write_details(out_dir, evo_summary):
                 "result_zip": evo_summary.get("{}_result_zip".format(prefix), ""),
             }
         )
+    rpe = _as_dict(evo_summary.get("rpe"))
+    for prefix, name in [("ori", "rpe_ori"), ("gen", "rpe_gen")]:
+        track = _as_dict(rpe.get(prefix))
+        for relation_label, suffix in [("trans", "trans"), ("rot", "rot")]:
+            item = _as_dict(track.get(relation_label))
+            stats = _as_dict(item.get("stats"))
+            rows.append(
+                {
+                    "comparison": "{}_{}".format(name, suffix),
+                    "metric_source": "evo_rpe",
+                    "alignment": evo_summary.get("alignment", "sim3"),
+                    "rmse": stats.get("rmse", ""),
+                    "mean": stats.get("mean", ""),
+                    "median": stats.get("median", ""),
+                    "std": stats.get("std", ""),
+                    "min": stats.get("min", ""),
+                    "max": stats.get("max", ""),
+                    "sse": stats.get("sse", ""),
+                    "pose_pairs": item.get("pose_pairs", ""),
+                    "result_zip": item.get("result_zip", ""),
+                }
+            )
     details_path = Path(out_dir).resolve() / "eval_details.csv"
     _write_csv(details_path, _detail_fieldnames(), rows)
     return details_path
 
 
-def _summary_lines(exp_dir, inputs, reports, compression_report, warnings):
-    generation_units = reports["generation_units"]
-    ori_run_meta = reports["ori_run_meta"]
-    gen_run_meta = reports["gen_run_meta"]
+def _decode_generate_sec(decode_report):
+    return (
+        _pick_float(decode_report, ["wall_generate_sec"])
+        or _pick_float(decode_report, ["total_runtime_sec"])
+        or _pick_float(decode_report, ["backend_result", "wall_generate_sec"])
+        or _pick_float(decode_report, ["backend_result", "total_runtime_sec"])
+    )
+
+
+def _decode_frame_count(decode_report, merge_report):
+    count = (
+        _pick_int(merge_report, ["summary", "execution_frame_count"])
+        or _pick_int(merge_report, ["summary", "merged_frame_count"])
+        or _pick_int(merge_report, ["outputs", "frame_count"])
+    )
+    if count is not None:
+        return count
+    total = 0
+    for item in list(decode_report.get("units") or []):
+        if isinstance(item, dict):
+            value = _pick_int(item, ["num_frames"])
+            if value is not None:
+                total += int(value)
+    return total if total > 0 else None
+
+
+def _row(lines, key, value):
+    lines.append("{:<30} : {}".format(str(key), str(value)))
+
+
+def _summary_lines(exp_dir, inputs, reports, compression_report, warnings, eval_runtime_sec=None):
+    encode_result = reports["encode_result"]
+    decode_report = reports["decode_report"]
+    decode_merge_report = reports["decode_merge_report"]
     evo_summary = reports["evo_summary"]
 
-    units = list(_as_dict(generation_units).get("units") or [])
     alignment = str(evo_summary.get("alignment") or "sim3").strip().lower()
-    alignment_text = "Sim3 Umeyama (-a -s)" if alignment == "sim3" else (alignment or "n/a")
-    overlay_path = evo_summary.get("trajectory_overlay_path")
-    overlay_file = _resolve_report_path(exp_dir, overlay_path)
-    plot_status = str(evo_summary.get("plot_status") or "skipped")
-    plot_text = "n/a"
-    if plot_status == "success" and overlay_file is not None and overlay_file.is_file():
-        plot_text = "eval/trajectory_overlay_auto2d.png"
-    failure_log = Path(inputs["evo_summary"]).resolve().parent / "evo_failure.log"
+    alignment_text = "Sim3 (-a -s)" if alignment == "sim3" else (alignment or "n/a")
+    encode_profile = _as_dict(encode_result.get("profile"))
+    encode_motion_profile = _as_dict(encode_profile.get("motion"))
+    encode_sec = _pick_float(encode_result, ["profile", "total_sec"])
+    decode_sec = _decode_generate_sec(decode_report)
+    eval_sec = _as_float(eval_runtime_sec)
+    total_sec = None
+    if encode_sec is not None and decode_sec is not None and eval_sec is not None:
+        total_sec = float(encode_sec) + float(decode_sec) + float(eval_sec)
+    decode_frames = _decode_frame_count(decode_report, decode_merge_report)
+    decode_avg_fps = None
+    if decode_frames is not None and decode_sec is not None and float(decode_sec) > 0:
+        decode_avg_fps = float(decode_frames) / float(decode_sec)
+    all_warnings = []
+    for warning in list(warnings) + list(evo_summary.get("warnings") or []):
+        text = str(warning)
+        if text not in all_warnings:
+            all_warnings.append(text)
+
     lines = [
         "=== ExpHub Eval Summary ===",
         "created_at: {}".format(datetime.now().isoformat(timespec="seconds")),
-        "workflow: slam_run -> evo_ape -> summary_build",
+        "workflow: slam_run -> evo -> summary_build",
         "",
-        "[Inputs]",
+        "[Time]",
     ]
-    for name in [
-        "prepare_result",
-        "generation_units",
-        "prompts",
-        "encode_result",
-        "decode_report",
-        "decode_merge_report",
-        "ori_run_meta",
-        "gen_run_meta",
-        "evo_summary",
-    ]:
-        lines.append("{}: {}".format(name, _relative_path(exp_dir, inputs[name])))
 
-    lines.extend(
-        [
-            "",
-            "[Headline Metrics]",
-            "status: {}".format(str(evo_summary.get("status", "failed") or "failed")),
-            "",
-            "[Trajectory Accuracy: evo_ape]",
-            "Metric source: {}".format(str(evo_summary.get("metric_source") or "evo_ape")),
-            "Alignment mode: {}".format(str(evo_summary.get("alignment") or "sim3")),
-            "Alignment: {}".format(alignment_text),
-            "Timestamp max difference: {} s".format(_fmt_value(evo_summary.get("t_max_diff"))),
-            "ORI APE RMSE: {}".format(_fmt_value(evo_summary.get("ori_ape_rmse"), "m")),
-            "GEN APE RMSE: {}".format(_fmt_value(evo_summary.get("gen_ape_rmse"), "m")),
-            "Delta GEN-ORI: {}".format(_fmt_value(evo_summary.get("rmse_delta_gen_minus_ori"), "m")),
-            "RMSE Increase: {}".format(_fmt_value(evo_summary.get("rmse_increase_pct"), "%")),
-            "RMSE Ratio GEN/ORI: {}".format(_fmt_value(evo_summary.get("rmse_ratio_gen_over_ori"))),
-            "ORI pose pairs: {}".format(evo_summary.get("ori_pose_pairs") if evo_summary.get("ori_pose_pairs") is not None else "n/a"),
-            "GEN pose pairs: {}".format(evo_summary.get("gen_pose_pairs") if evo_summary.get("gen_pose_pairs") is not None else "n/a"),
-            "Trajectory plot status: {}".format(str(evo_summary.get("plot_status") or "skipped")),
-            "Selected plot plane: {}".format(str(evo_summary.get("selected_plot_plane") or "n/a")),
-            "GT plot mode: {}".format(str(evo_summary.get("gt_plot_mode") or "n/a")),
-            "Plot common start: {}".format(_fmt_value(evo_summary.get("plot_common_start"), "s")),
-            "Plot common end: {}".format(_fmt_value(evo_summary.get("plot_common_end"), "s")),
-            "",
-            "[Generation Units]",
-            "unit_count: {}".format(int(len(units))),
-            "unit_boundaries: {}".format(_boundary_indices(generation_units)),
-            "boundary_source: {}".format(_relative_path(exp_dir, inputs["generation_units"])),
-            "",
-            "[Compression]",
-            "orig_size: {} bytes".format(int(compression_report.get("orig_size_bytes", 0) or 0)),
-            "comp_size: {} bytes".format(int(compression_report.get("comp_size_bytes", 0) or 0)),
-            "ratio: {}".format(_fmt_value(compression_report.get("ratio"))),
-            "reduction_pct: {}".format(_fmt_value(compression_report.get("reduction_pct"), "%")),
-            "unit_boundaries: {}".format(int(compression_report.get("unit_boundary_count", 0) or 0)),
-            "boundary_frame_bytes: {} bytes".format(int(compression_report.get("boundary_frame_bytes", 0) or 0)),
-            "json_payload_bytes: {} bytes".format(int(compression_report.get("json_payload_bytes", 0) or 0)),
-            "",
-            "[Output Files]",
-            "evo_summary: eval/evo_summary.json",
-            "compression_report: eval/eval_compression_report.json",
-            "details: eval/eval_details.csv",
-            "trajectory_overlay: {}".format(plot_text),
-            "ori_traj: {}".format(str(ori_run_meta.get("trajectory_path") or "eval/ori/traj_est.tum")),
-            "gen_traj: {}".format(str(gen_run_meta.get("trajectory_path") or "eval/gen/traj_est.tum")),
-            "ori_evo_zip: {}".format(str(evo_summary.get("ori_result_zip") or "eval/ori/evo_ape.zip")),
-            "gen_evo_zip: {}".format(str(evo_summary.get("gen_result_zip") or "eval/gen/evo_ape.zip")),
-        ]
-    )
-    if failure_log.is_file():
-        lines.append("evo_failure_log: eval/evo_failure.log")
-    if warnings or list(evo_summary.get("warnings") or []):
-        lines.extend(["", "[Warnings]"])
-        for warning in list(warnings) + list(evo_summary.get("warnings") or []):
+    _row(lines, "total_sec", _fmt_number(total_sec))
+    _row(lines, "encode_sec", _fmt_number(encode_sec))
+    _row(lines, "decode_sec", _fmt_number(decode_sec))
+    _row(lines, "eval_sec", _fmt_number(eval_sec))
+    _row(lines, "encode.motion_segment_sec", _fmt_number(encode_profile.get("motion_segment_sec")))
+    _row(lines, "encode.semantic_anchor_sec", _fmt_number(encode_profile.get("semantic_anchor_sec")))
+    _row(lines, "encode.result_writer_sec", _fmt_number(encode_profile.get("result_writer_sec")))
+    _row(lines, "motion.phase_correlation_sec", _fmt_number(encode_motion_profile.get("phase_correlation_sec")))
+    _row(lines, "motion.orb_tracking_sec", _fmt_number(encode_motion_profile.get("orb_tracking_sec")))
+    _row(lines, "motion.optical_flow_sec", _fmt_number(encode_motion_profile.get("optical_flow_sec")))
+    _row(lines, "decode.generate_sec", _fmt_number(decode_sec))
+    _row(lines, "decode.avg_fps", _fmt_number(decode_avg_fps))
+
+    lines.extend(["", "[Quality: evo]"])
+    _row(lines, "alignment", alignment_text)
+    _row(lines, "gt_path_length_m", _fmt_number(evo_summary.get("gt_path_length_m")))
+    _row(lines, "ape.ori_rmse_m", _fmt_number(evo_summary.get("ori_ape_rmse"), digits=3))
+    _row(lines, "ape.gen_rmse_m", _fmt_number(evo_summary.get("gen_ape_rmse"), digits=3))
+    _row(lines, "ape.delta_gen_minus_ori_m", _fmt_number(evo_summary.get("rmse_delta_gen_minus_ori"), digits=3))
+    _row(lines, "rpe.ori_trans_rmse_m", _fmt_number(evo_summary.get("ori_rpe_trans_rmse"), digits=3))
+    _row(lines, "rpe.gen_trans_rmse_m", _fmt_number(evo_summary.get("gen_rpe_trans_rmse"), digits=3))
+    _row(lines, "rpe.delta_trans_m", _fmt_number(evo_summary.get("rpe_delta_trans"), digits=3))
+    _row(lines, "rpe.ori_rot_rmse_deg", _fmt_number(evo_summary.get("ori_rpe_rot_rmse_deg"), digits=2))
+    _row(lines, "rpe.gen_rot_rmse_deg", _fmt_number(evo_summary.get("gen_rpe_rot_rmse_deg"), digits=2))
+    _row(lines, "rpe.delta_rot_deg", _fmt_number(evo_summary.get("rpe_delta_rot_deg"), digits=2))
+    _row(lines, "eval_reliability", str(evo_summary.get("eval_reliability") or "n/a"))
+
+    lines.extend(["", "[Compression]"])
+    _row(lines, "raw_size_mib", _fmt_number(_bytes_to_mib(compression_report.get("orig_size_bytes"))))
+    _row(lines, "hvm_size_mib", _fmt_number(_bytes_to_mib(compression_report.get("comp_size_bytes"))))
+    _row(lines, "transmission_ratio", _fmt_ratio(compression_report.get("ratio")))
+    _row(lines, "reduction_pct", _fmt_number(compression_report.get("reduction_pct")))
+    _row(lines, "raw_frames", compression_report.get("raw_frame_count", "n/a"))
+    _row(lines, "transmitted_frames", compression_report.get("transmitted_frame_count", "n/a"))
+
+    lines.extend(["", "[Diagnostics]"])
+    rpe_delta_frames = evo_summary.get("rpe_delta_frames")
+    rpe_delta_seconds = evo_summary.get("rpe_delta_seconds_approx")
+    if rpe_delta_frames is not None and rpe_delta_seconds is not None:
+        _row(
+            lines,
+            "RPE delta",
+            "{} frames (~{} s)".format(
+                int(rpe_delta_frames),
+                _fmt_number(rpe_delta_seconds),
+            ),
+        )
+    _row(lines, "ape.ori_pose_pairs", evo_summary.get("ori_pose_pairs") if evo_summary.get("ori_pose_pairs") is not None else "n/a")
+    _row(lines, "ape.gen_pose_pairs", evo_summary.get("gen_pose_pairs") if evo_summary.get("gen_pose_pairs") is not None else "n/a")
+    _row(lines, "rpe.ori_trans_pose_pairs", evo_summary.get("ori_rpe_trans_pose_pairs") if evo_summary.get("ori_rpe_trans_pose_pairs") is not None else "n/a")
+    _row(lines, "rpe.gen_trans_pose_pairs", evo_summary.get("gen_rpe_trans_pose_pairs") if evo_summary.get("gen_rpe_trans_pose_pairs") is not None else "n/a")
+    _row(lines, "rpe.ori_rot_pose_pairs", evo_summary.get("ori_rpe_rot_pose_pairs") if evo_summary.get("ori_rpe_rot_pose_pairs") is not None else "n/a")
+    _row(lines, "rpe.gen_rot_pose_pairs", evo_summary.get("gen_rpe_rot_pose_pairs") if evo_summary.get("gen_rpe_rot_pose_pairs") is not None else "n/a")
+    _row(lines, "trajectory_plot_status", str(evo_summary.get("plot_status") or "skipped"))
+    if all_warnings:
+        lines.append("warnings:")
+        for warning in all_warnings:
             lines.append("- {}".format(warning))
+    else:
+        _row(lines, "warnings", "none")
     return lines
 
 
@@ -391,7 +484,16 @@ def build_eval_summary(config):
     }
 
     compression_path, compression_report = _build_compression_report(exp_dir, out_dir, inputs, reports, warnings)
-    summary_text = "\n".join(_summary_lines(exp_dir, inputs, reports, compression_report, warnings))
+    summary_text = "\n".join(
+        _summary_lines(
+            exp_dir,
+            inputs,
+            reports,
+            compression_report,
+            warnings,
+            eval_runtime_sec=_get_arg(config, "eval_runtime_sec"),
+        )
+    )
     summary_path = out_dir / "eval_summary.txt"
     details_path = _write_details(out_dir, reports["evo_summary"])
     write_text_atomic(summary_path, summary_text + "\n")

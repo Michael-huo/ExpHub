@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -25,6 +26,10 @@ _STALE_EVAL_OUTPUTS = (
     "evo_gen_ape.zip",
     "ori/evo_ape.zip",
     "gen/evo_ape.zip",
+    "ori/evo_rpe_trans.zip",
+    "ori/evo_rpe_rot.zip",
+    "gen/evo_rpe_trans.zip",
+    "gen/evo_rpe_rot.zip",
     "ori/traj_est.npz",
     "gen/traj_est.npz",
     "evo_ori_stdout.txt",
@@ -32,6 +37,10 @@ _STALE_EVAL_OUTPUTS = (
     "evo_gen_stdout.txt",
     "evo_gen_stderr.txt",
     "evo_failure.log",
+    "evo_rpe_ori_trans_failure.log",
+    "evo_rpe_ori_rot_failure.log",
+    "evo_rpe_gen_trans_failure.log",
+    "evo_rpe_gen_rot_failure.log",
     "eval_compression_report.json",
     "eval_summary.txt",
     "eval_details.csv",
@@ -64,6 +73,7 @@ def _validate_eval_inputs(args):
 
 
 def run_eval_mainline(args):
+    eval_started = time.time()
     exp_dir = Path(args.exp_dir).resolve()
     out_dir = Path(args.out_dir).resolve()
     inputs = _validate_eval_inputs(args)
@@ -130,6 +140,9 @@ def run_eval_mainline(args):
             "gen_traj": str((out_dir / "gen" / "traj_est.tum").resolve()),
             "t_max_diff": float(args.t_max_diff),
             "skip_plots": bool(args.skip_plots),
+            "fps": float(args.fps),
+            "prepare_result": str(inputs["prepare_result"]),
+            "decode_report": str(inputs["decode_report"]),
         }
     )
 
@@ -148,6 +161,7 @@ def run_eval_mainline(args):
             "ori_run_meta": str(out_dir / "ori" / "run_meta.json"),
             "gen_run_meta": str(out_dir / "gen" / "run_meta.json"),
             "evo_summary": str(out_dir / "evo_summary.json"),
+            "eval_runtime_sec": float(time.time() - eval_started),
         }
     )
 
