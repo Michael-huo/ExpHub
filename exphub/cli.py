@@ -422,7 +422,6 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     total_time = float(report.get("total_time") or 0.0)
     phase_times = dict(report.get("phase_times") or {})
     encode_profile = dict(report.get("encode_profile") or {})
-    encode_motion_profile = dict(encode_profile.get("motion") or {})
     decode_generation = dict(report.get("decode_generation") or {})
     quality = dict(report.get("quality") or {})
     compression = dict(report.get("compression") or {})
@@ -438,9 +437,6 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
         ("encode.motion_segment_sec", _fmt_plain_seconds(encode_profile.get("motion_segment_sec"))),
         ("encode.semantic_anchor_sec", _fmt_plain_seconds(encode_profile.get("semantic_anchor_sec"))),
         ("encode.result_writer_sec", _fmt_plain_seconds(encode_profile.get("result_writer_sec"))),
-        ("motion.phase_correlation_sec", _fmt_plain_seconds(encode_motion_profile.get("phase_correlation_sec"))),
-        ("motion.orb_tracking_sec", _fmt_plain_seconds(encode_motion_profile.get("orb_tracking_sec"))),
-        ("motion.optical_flow_sec", _fmt_plain_seconds(encode_motion_profile.get("optical_flow_sec"))),
         ("decode.generate_sec", _fmt_plain_seconds(decode_generation.get("generate_sec"))),
         ("decode.avg_fps", _fmt_plain_metric(decode_generation.get("avg_fps"), digits=2)),
     ]
@@ -525,6 +521,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--train_clip_stride", type=int, default=36)
     ap.add_argument("--seed", type=int, default=-1, dest="seed_base")
     ap.add_argument("--decode_profile", default="", help="ComfyUI decode workflow profile override")
+    ap.add_argument(
+        "--encode_motion_benchmark",
+        action="store_true",
+        default=False,
+        help="run opt-in PC/ORB/Optical-Flow motion benchmark during encode",
+    )
     ap.add_argument("--gpus", type=int, default=2)
     ap.add_argument("--lora-profile", default="")
     ap.add_argument("--lora-gpus", default="")

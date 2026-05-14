@@ -8,6 +8,7 @@ from exphub.common.io import ensure_dir, ensure_file, read_json_dict, write_json
 from exphub.common.logging import log_info
 
 from .generation_unit import build_generation_units
+from .motion_benchmark import run_motion_benchmark
 from .motion_segment import build_motion_segments
 from .result_writer import write_encode_outputs
 from .synthetic_prompt import build_prompts
@@ -88,19 +89,64 @@ def _patch_encode_result_profile(result_path, encode_profile):
             "motion_estimation_sec",
             "phase_correlation_sec",
             "orb_tracking_sec",
+            "optical_flow_sec",
+            "motion_benchmark_sec",
             "write_json_sec",
             "total_sec",
         ]:
             if key in existing_profile["motion"]:
                 existing_motion[key] = existing_profile["motion"][key]
     profile = {}
-    for key in ["version", "total_sec", "motion_segment_sec", "semantic_anchor_sec", "result_writer_sec"]:
+    for key in [
+        "version",
+        "total_sec",
+        "formal_encode_sec_without_benchmark",
+        "motion_segment_sec",
+        "semantic_anchor_sec",
+        "result_writer_sec",
+        "benchmark_enabled",
+        "motion_benchmark_sec",
+        "motion_benchmark_report",
+        "benchmark_overhead_note",
+    ]:
         if key in incoming_profile:
             profile[key] = incoming_profile[key]
     if existing_motion:
         profile["motion"] = existing_motion
     payload["profile"] = profile
     write_json_atomic(result_path, payload, indent=2)
+
+
+def _fmt_benchmark_value(value, digits=3):
+    try:
+        if value is None:
+            return "n/a"
+        return "{:.{digits}f}".format(float(value), digits=int(digits))
+    except Exception:
+        return "n/a"
+
+
+def _log_motion_benchmark_report(report):
+    report = dict(report or {})
+    methods = dict(report.get("methods") or {})
+    relative = dict(dict(report.get("relative_cost") or {}).get("pc_as_1x") or {})
+    rows = [
+        ("phase_correlation.runtime_sec", _fmt_benchmark_value(dict(methods.get("phase_correlation") or {}).get("runtime_sec"))),
+        ("phase_correlation.ms_per_pair", _fmt_benchmark_value(dict(methods.get("phase_correlation") or {}).get("time_per_pair_ms"))),
+        ("phase_correlation.valid_rate", _fmt_benchmark_value(dict(methods.get("phase_correlation") or {}).get("valid_rate"))),
+        ("orb.runtime_sec", _fmt_benchmark_value(dict(methods.get("orb") or {}).get("runtime_sec"))),
+        ("orb.ms_per_pair", _fmt_benchmark_value(dict(methods.get("orb") or {}).get("time_per_pair_ms"))),
+        ("orb.valid_rate", _fmt_benchmark_value(dict(methods.get("orb") or {}).get("valid_rate"))),
+        ("optical_flow.runtime_sec", _fmt_benchmark_value(dict(methods.get("optical_flow") or {}).get("runtime_sec"))),
+        ("optical_flow.ms_per_pair", _fmt_benchmark_value(dict(methods.get("optical_flow") or {}).get("time_per_pair_ms"))),
+        ("optical_flow.valid_rate", _fmt_benchmark_value(dict(methods.get("optical_flow") or {}).get("valid_rate"))),
+        ("relative_cost.pc_as_1x.orb", _fmt_benchmark_value(relative.get("orb"))),
+        ("relative_cost.pc_as_1x.of", _fmt_benchmark_value(relative.get("optical_flow"))),
+    ]
+    width = max(len(key) for key, _ in rows)
+    log_info("[Motion Benchmark]")
+    for key, value in rows:
+        log_info("{:<{w}} : {}".format(key, value, w=width))
 
 
 def _run_single_encode(runtime, paths, log_name="encode.log"):
@@ -214,6 +260,34 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         (paths.encode_overview_path, "encode overview"),
     ]:
         ensure_file(path, label)
+
+    benchmark_enabled = bool(getattr(runtime.args, "encode_motion_benchmark", False))
+    if benchmark_enabled:
+        formal_encode_sec = float(total_sec)
+        benchmark_report = run_motion_benchmark(
+            prepare_result=prepare_result,
+            frames_dir=paths.prepare_frames_dir,
+            encode_dir=paths.encode_dir,
+            exp_dir=paths.exp_dir,
+            formal_encode_sec_without_benchmark=formal_encode_sec,
+        )
+        _log_motion_benchmark_report(benchmark_report)
+        motion_benchmark_sec = float(dict(benchmark_report).get("motion_benchmark_sec", 0.0) or 0.0)
+        total_sec = float(time.perf_counter() - total_started_perf)
+        encode_profile["benchmark_enabled"] = True
+        encode_profile["motion_benchmark_sec"] = float(motion_benchmark_sec)
+        encode_profile["formal_encode_sec_without_benchmark"] = float(formal_encode_sec)
+        encode_profile["benchmark_overhead_note"] = "motion_benchmark_sec is opt-in experimental overhead, not default PC-only inference cost"
+        encode_profile["motion_benchmark_report"] = "encode/motion_benchmark_report.json"
+        encode_profile["total_sec"] = float(total_sec)
+        _patch_encode_result_profile(result_path, encode_profile)
+        for path, label in [
+            (paths.encode_dir / "motion_benchmark_report.json", "motion benchmark report"),
+            (paths.encode_dir / "motion_benchmark.csv", "motion benchmark csv"),
+            (paths.encode_dir / "motion_benchmark_overview.png", "motion benchmark overview"),
+        ]:
+            ensure_file(path, label)
+
     log_info(
         "encode profile: motion={:.2f}s semantic={:.2f}s writer={:.2f}s total={:.2f}s".format(
             float(motion_segment_sec),

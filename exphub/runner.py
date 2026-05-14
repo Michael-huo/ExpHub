@@ -179,6 +179,7 @@ class PipelineRuntime:
                 "planner": "generation_units",
                 "prompt_profile": "base_motion_prompt",
                 "anchor_backend": "image_embedding_visual_anchor",
+                "encode_motion_benchmark": bool(getattr(self.args, "encode_motion_benchmark", False)),
                 "workflow": workflow,
                 "decode_backend": COMFYUI_BACKEND,
                 "droid_seq": self.args.droid_seq,
