@@ -522,6 +522,30 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--seed", type=int, default=-1, dest="seed_base")
     ap.add_argument("--decode_profile", default="", help="ComfyUI decode workflow profile override")
     ap.add_argument(
+        "--decode_image_quality",
+        action="store_true",
+        default=False,
+        help="run optional LPIPS/SSIM/FID image quality evaluation after decode merge",
+    )
+    ap.add_argument(
+        "--decode_image_quality_stride",
+        type=int,
+        default=1,
+        help="sample every N matched frames for optional decode image quality evaluation",
+    )
+    ap.add_argument(
+        "--decode_image_quality_max_frames",
+        type=int,
+        default=0,
+        help="maximum matched frames for optional decode image quality evaluation; 0 means unlimited",
+    )
+    ap.add_argument(
+        "--decode_image_quality_device",
+        default="auto",
+        choices=["auto", "cuda", "cpu"],
+        help="device for optional decode image quality evaluation",
+    )
+    ap.add_argument(
         "--encode_motion_benchmark",
         action="store_true",
         default=False,
@@ -579,6 +603,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         _die("--train_clip_num_frames must be > 0")
     if int(args.train_clip_stride) <= 0:
         _die("--train_clip_stride must be > 0")
+    if int(args.decode_image_quality_stride) <= 0:
+        _die("--decode_image_quality_stride must be > 0")
+    if int(args.decode_image_quality_max_frames) < 0:
+        _die("--decode_image_quality_max_frames must be >= 0")
     if args.lora_epochs is not None and int(args.lora_epochs) <= 0:
         _die("--lora-epochs must be > 0")
     args.mode = str(args.mode or "").strip().lower()
