@@ -675,6 +675,7 @@ def _window_scores(pc_rows, orb_rows, scales=None):
     weak_count = len([row for row in orb_rows if str(row.get("tracking_state", "") or "") == "weak"])
     lost_count = len([row for row in orb_rows if str(row.get("tracking_state", "") or "") == "lost"])
     total = max(1, len(orb_rows))
+    has_tracking = bool(orb_rows)
     motion = _mean_score(pc_rows, "motion_intensity")
     steering = _mean_score(pc_rows, "steering_response")
     forward = _mean_score(pc_rows, "forward_response")
@@ -711,9 +712,9 @@ def _window_scores(pc_rows, orb_rows, scales=None):
         "forward_strength": float(forward_score),
         "steering_sign_fraction": float(same_sign),
         "tracking_quality": float(np.mean(tracking_values)) if tracking_values else 0.0,
-        "ok_pair_fraction": float(ok_count) / float(total),
-        "weak_pair_fraction": float(weak_count) / float(total),
-        "lost_pair_fraction": float(lost_count) / float(total),
+        "ok_pair_fraction": (float(ok_count) / float(total)) if has_tracking else 1.0,
+        "weak_pair_fraction": (float(weak_count) / float(total)) if has_tracking else 0.0,
+        "lost_pair_fraction": (float(lost_count) / float(total)) if has_tracking else 0.0,
     }
 
 
@@ -991,6 +992,19 @@ def _resize_pad(image, target_w, target_h, pad_value=255):
     return canvas
 
 
+def _resize_direct(image, target_w, target_h, pad_value=255):
+    import cv2
+
+    if image is None or image.size == 0:
+        return np.full((int(target_h), int(target_w), 3), pad_value, dtype=np.uint8)
+    arr = np.asarray(image)
+    if arr.ndim == 2:
+        arr = cv2.cvtColor(arr, cv2.COLOR_GRAY2RGB)
+    if arr.shape[2] == 4:
+        arr = arr[:, :, :3]
+    return cv2.resize(arr, (int(target_w), int(target_h)), interpolation=cv2.INTER_AREA)
+
+
 def _pc_details(prev_gray, curr_gray):
     return [item for item in _pc_block_records(prev_gray, curr_gray) if float(item.get("weight", 0.0) or 0.0) > PC_EPS]
 
@@ -1002,14 +1016,14 @@ def _pc_thumb(grays, pair_index, thumb_w=160, thumb_h=100):
     prev_gray = grays[pair_index]
     curr_gray = grays[pair_index + 1]
     h, w = prev_gray.shape
-    canvas = np.full((thumb_h, thumb_w, 3), 244, dtype=np.uint8)
-    cv2.rectangle(canvas, (0, 0), (thumb_w - 1, thumb_h - 1), (223, 226, 229), 1, cv2.LINE_AA)
+    canvas = np.full((thumb_h, thumb_w, 3), 246, dtype=np.uint8)
+    cv2.rectangle(canvas, (0, 0), (thumb_w - 1, thumb_h - 1), (190, 196, 203), 1, cv2.LINE_AA)
     for row in range(PC_GRID_ROWS + 1):
         y = int(round(row * thumb_h / float(PC_GRID_ROWS)))
-        cv2.line(canvas, (0, min(thumb_h - 1, y)), (thumb_w - 1, min(thumb_h - 1, y)), (232, 235, 238), 1, cv2.LINE_AA)
+        cv2.line(canvas, (0, min(thumb_h - 1, y)), (thumb_w - 1, min(thumb_h - 1, y)), (205, 211, 218), 1, cv2.LINE_AA)
     for col in range(PC_GRID_COLS + 1):
         x = int(round(col * thumb_w / float(PC_GRID_COLS)))
-        cv2.line(canvas, (min(thumb_w - 1, x), 0), (min(thumb_w - 1, x), thumb_h - 1), (232, 235, 238), 1, cv2.LINE_AA)
+        cv2.line(canvas, (min(thumb_w - 1, x), 0), (min(thumb_w - 1, x), thumb_h - 1), (205, 211, 218), 1, cv2.LINE_AA)
     for item in _pc_details(prev_gray, curr_gray):
         x1 = int(round(float(item["x0"]) / max(1, w) * thumb_w))
         x2 = int(round(float(item["x0"] + item["bw"]) / max(1, w) * thumb_w))
@@ -1019,18 +1033,18 @@ def _pc_thumb(grays, pair_index, thumb_w=160, thumb_h=100):
         y1, y2 = int(np.clip(y1, 0, thumb_h - 1)), int(np.clip(y2, y1 + 1, thumb_h))
         dx = float(item["dx"])
         dy = float(item["dy"])
-        base = np.asarray((215, 188, 179), dtype=np.float32) if dx >= 0 else np.asarray((173, 202, 217), dtype=np.float32)
-        strength = float(np.clip(0.16 + 0.10 * float(item.get("reliability", 0.0) or 0.0) + 0.08 * abs(dx), 0.14, 0.72))
-        fill = np.clip((1.0 - strength) * 244.0 + strength * base, 0, 255).astype(np.uint8)
+        base = np.asarray((226, 128, 92), dtype=np.float32) if dx >= 0 else np.asarray((84, 156, 203), dtype=np.float32)
+        strength = float(np.clip(0.24 + 0.16 * float(item.get("reliability", 0.0) or 0.0) + 0.10 * abs(dx), 0.20, 0.82))
+        fill = np.clip((1.0 - strength) * 246.0 + strength * base, 0, 255).astype(np.uint8)
         cv2.rectangle(canvas, (x1, y1), (x2 - 1, y2 - 1), tuple(int(v) for v in fill), -1, cv2.LINE_AA)
-        cv2.rectangle(canvas, (x1, y1), (x2 - 1, y2 - 1), (240, 242, 244), 1, cv2.LINE_AA)
+        cv2.rectangle(canvas, (x1, y1), (x2 - 1, y2 - 1), (228, 232, 236), 1, cv2.LINE_AA)
         cx = int(round((x1 + x2 - 1) / 2.0))
         cy = int(round((y1 + y2 - 1) / 2.0))
-        scale = min(7.5, max(1.6, 1.25 * math.sqrt(dx * dx + dy * dy) + 1.2))
+        scale = min(11.0, max(2.8, 1.85 * math.sqrt(dx * dx + dy * dy) + 2.0))
         ex = int(np.clip(cx + dx * scale, x1 + 5, x2 - 5))
         ey = int(np.clip(cy + dy * scale, y1 + 5, y2 - 5))
-        color = (155, 103, 86) if dx >= 0 else (83, 129, 150)
-        cv2.arrowedLine(canvas, (cx, cy), (ex, ey), color, 1, cv2.LINE_AA, tipLength=0.30)
+        color = (156, 58, 36) if dx >= 0 else (20, 91, 142)
+        cv2.arrowedLine(canvas, (cx, cy), (ex, ey), color, 2, cv2.LINE_AA, tipLength=0.34)
     return canvas
 
 
@@ -1070,10 +1084,10 @@ def _overview_sample_strip(frames, grays, indices):
     indices = [int(idx) for idx in list(indices or [])]
     if not indices:
         indices = [0]
-    thumb_w = 260
-    thumb_h = int(round(thumb_w * 0.58))
-    gap_x = max(12, int(round(thumb_w * 0.08)))
-    gap_y = max(10, int(round(thumb_h * 0.10)))
+    thumb_w = 180
+    thumb_h = 95
+    gap_x = 8
+    gap_y = 6
     total_w = len(indices) * thumb_w + max(0, len(indices) - 1) * gap_x
     total_h = 2 * thumb_h + gap_y
     canvas = np.full((total_h, total_w, 3), 255, dtype=np.uint8)
@@ -1082,8 +1096,8 @@ def _overview_sample_strip(frames, grays, indices):
         x0 = col * (thumb_w + gap_x)
         safe_idx = int(np.clip(frame_idx, 0, max(0, len(frames) - 1)))
         pair_idx = int(np.clip(frame_idx, 0, max(0, len(grays) - 2)))
-        rgb = _resize_pad(_read_rgb(frames[safe_idx]), thumb_w, thumb_h)
-        cv2.putText(rgb, str(int(pair_idx)), (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (255, 255, 255), 2, cv2.LINE_AA)
+        rgb = _resize_direct(_read_rgb(frames[safe_idx]), thumb_w, thumb_h)
+        cv2.putText(rgb, str(int(pair_idx)), (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 255, 255), 2, cv2.LINE_AA)
         cv2.rectangle(rgb, (0, 0), (thumb_w - 1, thumb_h - 1), (226, 229, 232), 1, cv2.LINE_AA)
         canvas[0:thumb_h, x0 : x0 + thumb_w] = rgb
         canvas[thumb_h + gap_y : 2 * thumb_h + gap_y, x0 : x0 + thumb_w] = _pc_thumb(grays, pair_idx, thumb_w, thumb_h)
@@ -1271,8 +1285,8 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
             "savefig.facecolor": "white",
         }
     )
-    fig = plt.figure(figsize=(16, 7.4), constrained_layout=False)
-    grid = fig.add_gridspec(2, 1, height_ratios=[3.2, 2.15])
+    fig = plt.figure(figsize=(13.5, 4.7), constrained_layout=False, facecolor="white")
+    grid = fig.add_gridspec(2, 1, height_ratios=[2.55, 1.15])
     ax0 = fig.add_subplot(grid[0, 0])
     ax1 = fig.add_subplot(grid[1, 0])
 
@@ -1282,8 +1296,8 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
     x_max = max(0, int(num_frames) - 1)
     ax0.imshow(strip)
     ax0.axis("off")
-    ax0.text(-0.012, 0.745, "RGB", transform=ax0.transAxes, ha="right", va="center", fontsize=11, fontweight="bold", color="#4A4F55")
-    ax0.text(-0.012, 0.255, "PC", transform=ax0.transAxes, ha="right", va="center", fontsize=11, fontweight="bold", color="#4A4F55")
+    ax0.text(-0.010, 0.745, "RGB", transform=ax0.transAxes, ha="right", va="center", fontsize=10.5, fontweight="bold", color="#4A4F55")
+    ax0.text(-0.010, 0.255, "PC", transform=ax0.transAxes, ha="right", va="center", fontsize=10.5, fontweight="bold", color="#4A4F55")
     ax0.set_title("Motion Overview Samples", pad=8, loc="left", fontsize=12, fontweight="bold")
 
     x = np.arange(len(pair_states))
@@ -1304,7 +1318,7 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
     ax1.plot(x, steering, color=PC_LINE_COLOR, linewidth=2.0, alpha=0.95, label="PC normalized yaw")
     ax1.plot(x, forward, color=PC_LINE_COLOR, linewidth=1.7, alpha=0.72, linestyle="--", label="PC normalized expansion")
     ax1.set_ylim(-0.05, 1.05)
-    ax1.set_title("Phase Correlation Motion Responses", pad=7, loc="left")
+    ax1.set_title("Phase Correlation Motion Responses", pad=5, loc="left")
     _style_axis(ax1, "Response")
     ax1.set_xlabel("Frame / Pair Index", labelpad=8)
     ax1.set_xlim(0, x_max)
@@ -1322,8 +1336,8 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
     frame.set_edgecolor("#D8DDE3")
     frame.set_linewidth(0.8)
     fig.align_ylabels([ax1])
-    fig.subplots_adjust(left=0.09, right=0.965, top=0.875, bottom=0.085, hspace=0.18)
-    plt.savefig(str(path), dpi=230, bbox_inches="tight")
+    fig.subplots_adjust(left=0.075, right=0.985, top=0.84, bottom=0.12, hspace=0.10)
+    plt.savefig(str(path), dpi=230, facecolor="white", transparent=False)
     plt.close(fig)
     return True
 
@@ -1373,7 +1387,9 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
         "read_gray_sec": 0.0,
         "motion_estimation_sec": 0.0,
         "phase_correlation_sec": 0.0,
-        "orb_tracking_sec": 0.0,
+        "orb_tracking_sec": None,
+        "optical_flow_sec": None,
+        "motion_benchmark_sec": None,
         "write_json_sec": 0.0,
         "total_sec": 0.0,
     }
@@ -1398,14 +1414,12 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
             )
         )
 
-    log_info("motion estimation backend=phase_correlation tracking_backend=orb_quality")
+    log_info("motion estimation backend=phase_correlation")
     phase_started = time.perf_counter()
     grays = [_read_gray(frame) for frame in frames]
     profile["read_gray_sec"] = float(time.perf_counter() - phase_started)
-    orb_started = time.perf_counter()
-    orb_rows = _orb_pairs(grays)
-    profile["orb_tracking_sec"] = float(time.perf_counter() - orb_started)
-    loss_intervals = _loss_intervals(orb_rows)
+    orb_rows = []
+    loss_intervals = []
     phase_started = time.perf_counter()
     pc_rows = _pc_evidence(grays)
     motion_estimation_sec = float(time.perf_counter() - phase_started)
@@ -1424,7 +1438,7 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
     legal_continuity_ok = _legal_continuity_ok(motion_states, legal_positions, num_frames)
     final_mixed_count = len([item for item in motion_states if str(item.get("motion_label", "") or "") == "mixed"])
     final_stop_count = len([item for item in motion_states if str(item.get("motion_label", "") or "") == "stop"])
-    diagnostic_figures = _write_diagnostics(out_path, frames, grays, loss_intervals, orb_rows, pair_states)
+    diagnostic_figures = []
     motion_overview_figure = _write_motion_overview(out_path, frames, grays, pair_states, motion_states, num_frames)
     motion_diagnostics = {
         "raw_candidate_run_count": int(_run_count([str(row.get("raw_motion_state", "forward") or "forward") for row in pair_states])),
@@ -1467,24 +1481,10 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
         "motion_states": motion_states,
         "motion_boundaries": motion_boundaries,
         "motion_backend": "phase_correlation",
-        "tracking_backend": "orb_quality",
-        "tracking_quality": [
-            {
-                "pair_index": int(row["pair_index"]),
-                "frame_start_idx": int(row["frame_start_idx"]),
-                "frame_end_idx": int(row["frame_end_idx"]),
-                "tracking_quality": float(row["tracking_quality"]),
-            }
-            for row in orb_rows
-        ],
-        "tracking_state": [
-            {
-                "pair_index": int(row["pair_index"]),
-                "tracking_state": str(row["tracking_state"]),
-            }
-            for row in orb_rows
-        ],
-        "loss_intervals": loss_intervals,
+        "tracking_backend": None,
+        "tracking_quality": [],
+        "tracking_state": [],
+        "loss_intervals": [],
         "pc_motion_evidence": [
             {
                 "pair_index": int(row["pair_index"]),
@@ -1528,9 +1528,8 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
         payload["summary"]["elapsed_sec"] = float(payload["summary"]["profile"]["total_sec"])
         write_json_atomic(out_path, payload, indent=2)
         log_info(
-            "motion states generated: backend=phase_correlation count={} loss_intervals={} path={}".format(
+            "motion states generated: backend=phase_correlation count={} path={}".format(
                 len(motion_states),
-                len(loss_intervals),
                 Path(out_path).resolve(),
             )
         )
@@ -1547,8 +1546,6 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
         )
         if motion_overview_figure:
             log_info("motion overview figure: {}".format(str(Path(out_path).resolve().parent / motion_overview_figure)))
-        if diagnostic_figures:
-            log_info("loss interval diagnostic figures: {}".format(", ".join(diagnostic_figures)))
     return payload
 
 
