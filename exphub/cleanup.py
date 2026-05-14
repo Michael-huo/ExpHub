@@ -107,6 +107,9 @@ def _cleanup_min(exp_dir: Path) -> None:
             "timestamps.txt",
             "calib.txt",
             "preview.mp4",
+            "image_quality_report.json",
+            "image_quality_summary.txt",
+            "image_quality_details.csv",
         },
     )
     _prune_dir_keep_names(

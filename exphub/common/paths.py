@@ -208,6 +208,18 @@ class ExperimentPaths:
         return self.decode_dir / "preview.mp4"
 
     @property
+    def decode_image_quality_report_path(self) -> Path:
+        return self.decode_dir / "image_quality_report.json"
+
+    @property
+    def decode_image_quality_summary_path(self) -> Path:
+        return self.decode_dir / "image_quality_summary.txt"
+
+    @property
+    def decode_image_quality_details_path(self) -> Path:
+        return self.decode_dir / "image_quality_details.csv"
+
+    @property
     def eval_evo_summary_path(self) -> Path:
         return self.eval_dir / "evo_summary.json"
 

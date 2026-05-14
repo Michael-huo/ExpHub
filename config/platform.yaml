@@ -14,6 +14,9 @@ environments:
     slam:
       python: "/home/hx/anaconda3/envs/droid/bin/python"
       conda: "droid"
+    decode:
+      python: "/home/hx/anaconda3/envs/comfyui/bin/python3"
+      conda: "comfyui"
     lora:
       python: "/home/hx/anaconda3/envs/videox/bin/python"
       conda: "videox"

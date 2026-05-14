@@ -5,6 +5,7 @@ from exphub.common.logging import log_info, log_prog
 from exphub.config import get_platform_config
 
 from .comfyui_client import run_comfyui_decode_tasks
+from .image_quality_subprocess import run_decode_image_quality_subprocess
 from .task_build import build_generation_tasks
 from .unit_merge import merge_units
 
@@ -45,6 +46,7 @@ def run(runtime):
     if not decode_report:
         raise RuntimeError("invalid decode report: {}".format(runtime.paths.decode_report_path))
     merge_units(runtime, tasks_payload, decode_report)
+    run_decode_image_quality_subprocess(runtime)
 
     ensure_file(runtime.paths.decode_report_path, "decode report")
     ensure_file(runtime.paths.decode_merge_report_path, "decode merge report")
