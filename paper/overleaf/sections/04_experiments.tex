@@ -4,15 +4,34 @@
 \label{sec:experiments}
 % ==================================================
 
+% Keep the project macro from swallowing spaces in this and following sections.
+\makeatletter
+\renewcommand{\HVM}{HVM-Codec\futurelet\@let@token\HVM@space}
+\newcommand{\HVM@space}{%
+  \ifx\@let@token\bgroup\else
+  \ifx\@let@token,\else
+  \ifx\@let@token.\else
+  \ifx\@let@token;\else
+  \ifx\@let@token:\else
+  \ifx\@let@token)\else
+  \ifx\@let@token]\else
+  \space
+  \fi\fi\fi\fi\fi\fi\fi}
+\makeatother
+
 \subsection{Experimental Setup}
 \label{subsec:exp_setup}
 
-This subsection will be expanded after the final table and figure layout is verified.
+The evaluation uses three types of sequences: NCD, TUM, and GDUT. NCD and TUM provide public benchmark sequences, while GDUT contains real robot data collected in our deployment environment. This combination allows the experiments to cover both standard datasets and robot-captured visual streams under the same \HVM{} evaluation protocol.
+
+All experiments follow a unified prepare--encode--decode--eval pipeline. The preparation stage organizes image sequences and trajectory references; the encoder converts dense frames into the transmitted \HVM{} representation; the decoder produces a generated visual sequence from the image--text memory; and the evaluation stage runs the VSLAM backend on both original and generated sequences. Unless otherwise stated, phase correlation (PC) is used as the default lightweight motion estimator on the edge side. The cloud side uses an image--text conditioned world-model decoder, with Base and LoRA variants compared in the ablation study.
+
+Trajectory quality is measured from the VSLAM backend output using evo after Sim(3) alignment, and the reported task metric is APE RMSE. Compression is measured by comparing the size of the original image sequence with the size of the transmitted \HVM{} representation. LPIPS, SSIM, and FID are used only as auxiliary image-fidelity metrics in the LoRA ablation; they are not the final task-level objective of \HVM.
 
 \subsection{End-to-End Compression and VSLAM Accuracy}
 \label{subsec:compression_accuracy}
 
-This subsection will be expanded after the final table and figure layout is verified.
+The first experiment evaluates end-to-end transmission reduction and VSLAM trajectory accuracy across nine test fragments.
 
 \input{tables/tab_exp1_compression_accuracy}
 
@@ -23,10 +42,16 @@ This subsection will be expanded after the final table and figure layout is veri
 \label{fig:trajectory_map}
 \end{figure*}
 
+Table~\ref{tab:compression_accuracy} reports that, on average, the raw image sequence size is 404.16 MiB, while the transmitted \HVM{} representation is 11.12 MiB. This corresponds to an average data reduction of 96.8\%, indicating that the proposed representation substantially reduces transmitted visual data.
+
+The VSLAM results indicate that this reduction can retain task-usable geometric information. The average ORI APE RMSE is 0.694 m, while the average GEN APE RMSE is 0.707 m. Thus, although GEN APE is close to ORI APE on average, sequence-level differences remain: some generated sequences obtain lower APE than their original counterparts, whereas others obtain higher APE. This behavior is expected because \HVM{} does not aim to reconstruct pixel-identical videos, but to retain enough geometric continuity for downstream VSLAM.
+
+Fig.~\ref{fig:trajectory_map} further illustrates this trend by comparing trajectories and point-cloud reconstructions on NCD, TUM, and GDUT. The generated sequences retain the main route structure and support trackable reconstruction in these examples, which suggests that task-usable geometric continuity can be retained under aggressive transmission reduction.
+
 \subsection{Edge-Side Motion Estimation Benchmark}
 \label{subsec:motion_benchmark}
 
-This subsection will be expanded after the final table and figure layout is verified.
+The second experiment compares three edge-side motion estimation choices for constructing motion memory. This benchmark evaluates qualitative segmentation consistency and runtime efficiency, rather than supervised motion-label accuracy.
 
 \begin{figure*}[!t]
 \centering
@@ -37,9 +62,21 @@ This subsection will be expanded after the final table and figure layout is veri
 
 \input{tables/tab_exp2_motion_benchmark}
 
+Fig.~\ref{fig:motion_benchmark} and Table~\ref{tab:motion_benchmark} show the qualitative behavior and runtime cost of the three methods. The valid-output ratio denotes the fraction of frame pairs for which a method produced usable motion evidence.
+
+PC is the lightest option, requiring 4.51 s in total and 4.70 ms per frame pair. ORB feature tracking requires 11.73 s, or 2.60x the PC cost, and produces usable motion evidence for 85.7\% of the evaluated pairs. Farneback optical flow (OF) provides a denser motion field, but its runtime increases to 29.75 s, or 6.59x the PC cost.
+
+These results reflect different edge-side tradeoffs. ORB depends on repeatable local features and can fail in low-texture regions, rapid turns, or tracking-difficult intervals. OF can describe richer local motion but introduces a much higher computational burden. PC provides only coarse global motion, but it can capture language-level trends such as forward motion and turning at the lowest cost, making it suitable as the default edge encoder in \HVM.
+
 \subsection{LoRA Ablation for the World-Model Decoder}
 \label{subsec:lora_ablation}
 
-This subsection will be expanded after the final table and figure layout is verified.
+The final experiment ablates the Base and LoRA variants of the world-model decoder.
 
 \input{tables/tab_exp3_lora_ablation}
+
+Table~\ref{tab:lora_ablation} shows that the average GEN APE RMSE decreases from 0.609 m with the Base decoder to 0.321 m with LoRA, while the average ORI APE RMSE remains 0.240 m because the original sequences are not affected by the decoder. The same trend appears on NCD, TUM, and GDUT, suggesting that LoRA improves VSLAM-oriented decoding performance across the evaluated data groups.
+
+The image-fidelity metrics do not improve in the same direction. On average, LPIPS changes from 0.335 to 0.398, SSIM changes from 0.604 to 0.515, and FID changes from 61.286 to 66.552. Since LPIPS, SSIM, and FID measure image fidelity and are not the optimization target of \HVM, these changes do not by themselves indicate system failure.
+
+Instead, the ablation indicates that traditional image similarity and VSLAM trajectory quality are not fully aligned in this setting. LoRA appears to bias the decoder toward SLAM-friendly geometry and temporal continuity rather than pixel-level similarity, which supports the task-oriented nature of \HVM.
