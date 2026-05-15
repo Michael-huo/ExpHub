@@ -7,142 +7,39 @@
 \subsection{Experimental Setup}
 \label{subsec:exp_setup}
 
-\subsubsection{Datasets}
-\label{subsubsec:datasets}
-% TODO: Fill in NCD, SCAND, GDUT self-collected data, and optional TUM RGB-D.
-Table~\ref{tab:datasets} summarizes the datasets and sequences used in the experiments.
+This subsection will be expanded after the final table and figure layout is verified.
 
-\begin{table*}[!t]
-\renewcommand{\arraystretch}{1.15}
-\caption{Dataset and Sequence Statistics}
-\label{tab:datasets}
-\centering
-\begin{tabular}{l l l l c c c c}
-\toprule
-Dataset & Sequence & Scene Type & Sensor & FPS & Duration & Resolution & Ground Truth \\
-\midrule
-NCD & TODO & Outdoor/campus & TODO & TODO & TODO & TODO & TODO \\
-SCAND & TODO & Mobile robot navigation & TODO & TODO & TODO & TODO & TODO \\
-GDUT & TODO & Real robot scene & RealSense D435 & TODO & TODO & TODO & TODO \\
-TUM RGB-D & TODO & Indoor benchmark & RGB-D & TODO & TODO & TODO & TODO \\
-\bottomrule
-\end{tabular}
-\end{table*}
+\subsection{End-to-End Compression and VSLAM Accuracy}
+\label{subsec:compression_accuracy}
 
-\subsubsection{Baseline Methods}
-\label{subsubsec:baselines}
-% TODO: Define all baselines precisely.
-The following baselines are considered: raw frame transmission, standard image/video compression, uniform keyframes, boundary frames with a generic generator, boundary frames with language memory but without LoRA, and the full \HVM.
+This subsection will be expanded after the final table and figure layout is verified.
 
-\subsubsection{Metrics}
-\label{subsubsec:metrics}
-% TODO: Define compression, VSLAM, runtime, and optional visual metrics.
-Compression is measured by transmitted bytes and compression ratio. VSLAM quality is measured by APE, RPE, trajectory completeness, matched poses, and tracking success rate. Runtime is reported separately for edge encoding, cloud decoding, and VSLAM evaluation.
-
-\subsubsection{Implementation Details}
-\label{subsubsec:implementation}
-% TODO: Fill in fps, resolution, generation unit length, generator backend, LoRA settings, VSLAM backend, and hardware.
-All experiments are implemented in the ExpHub pipeline with prepare, encode, decode, and evaluation stages. The cloud-side generative backend and VSLAM backend should be specified here.
-
-\subsection{Overall Compression and VSLAM Performance}
-\label{subsec:overall_results}
-
-\begin{table*}[!t]
-\renewcommand{\arraystretch}{1.15}
-\caption{Overall Compression and VSLAM Trajectory Performance}
-\label{tab:overall}
-\centering
-\begin{tabular}{l l r r r r r r}
-\toprule
-Dataset & Method & Bytes $\downarrow$ & CR $\uparrow$ & APE RMSE $\downarrow$ & RPE-t $\downarrow$ & RPE-r $\downarrow$ & Completeness $\uparrow$ \\
-\midrule
-TODO & Raw frames & TODO & 1.0$\times$ & TODO & TODO & TODO & TODO \\
-TODO & H.264/H.265 & TODO & TODO & TODO & TODO & TODO & TODO \\
-TODO & Uniform keyframes & TODO & TODO & TODO & TODO & TODO & TODO \\
-TODO & Boundary frames + generic decoder & TODO & TODO & TODO & TODO & TODO & TODO \\
-TODO & Boundary frames + language memory & TODO & TODO & TODO & TODO & TODO & TODO \\
-TODO & \HVM~(full) & TODO & TODO & TODO & TODO & TODO & TODO \\
-\bottomrule
-\end{tabular}
-\end{table*}
-
-% TODO: Discuss why HVM-Codec achieves better compression-performance trade-off.
-
-\subsection{Ablation Study on Edge-Side Image--Text Memory Encoding}
-\label{subsec:edge_ablation}
-
-\begin{table}[!t]
-\renewcommand{\arraystretch}{1.15}
-\caption{Ablation on Edge-Side Memory Components}
-\label{tab:edge_ablation}
-\centering
-\begin{tabular}{l c c c c}
-\toprule
-Variant & Motion & Anchor & Lang. & APE $\downarrow$ \\
-\midrule
-Boundary frames only & -- & -- & -- & TODO \\
-Fixed prompt & -- & -- & \checkmark & TODO \\
-Motion language & \checkmark & -- & \checkmark & TODO \\
-Visual anchor & -- & \checkmark & \checkmark & TODO \\
-Full encoder & \checkmark & \checkmark & \checkmark & TODO \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-
-\subsection{Ablation Study on LoRA Fine-Tuned Generative Decoding}
-\label{subsec:lora_ablation}
-
-\begin{table}[!t]
-\renewcommand{\arraystretch}{1.15}
-\caption{Ablation on Cloud-Side World-Model Decoder}
-\label{tab:lora_ablation}
-\centering
-\begin{tabular}{l c c c}
-\toprule
-Variant & LoRA & Lang. & APE $\downarrow$ \\
-\midrule
-Generic decoder & -- & -- & TODO \\
-Generic decoder + language & -- & \checkmark & TODO \\
-LoRA fine-tuned decoder & \checkmark & -- & TODO \\
-LoRA fine-tuned decoder + language & \checkmark & \checkmark & TODO \\
-Full \HVM & \checkmark & \checkmark & TODO \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Qualitative Analysis of Human-Inspired Visual Memory}
-\label{subsec:qualitative}
+\input{tables/tab_exp1_compression_accuracy}
 
 \begin{figure*}[!t]
 \centering
-\placeholderfig{1.75in}{0.92\textwidth}
-\caption{Qualitative analysis of human-inspired visual memory. Each case should show original dense frames, transmitted boundary frames, language memory, generated intermediate frames, and VSLAM trajectory comparison.}
-\label{fig:qualitative}
+\includegraphics[width=\textwidth]{figures/fig_exp1_trajectory_map.png}
+\caption{Trajectory comparison and point-cloud reconstruction results on NCD, TUM, and GDUT.}
+\label{fig:trajectory_map}
 \end{figure*}
 
-% TODO: Include cases: straight motion, left/right turn, scene transition, and tracking weak/lost segment.
+\subsection{Edge-Side Motion Estimation Benchmark}
+\label{subsec:motion_benchmark}
 
-\subsection{Runtime and Bandwidth Analysis}
-\label{subsec:runtime_bandwidth}
+This subsection will be expanded after the final table and figure layout is verified.
 
-\begin{table}[!t]
-\renewcommand{\arraystretch}{1.15}
-\caption{Runtime and Bandwidth Breakdown}
-\label{tab:runtime}
+\begin{figure*}[!t]
 \centering
-\begin{tabular}{l r}
-\toprule
-Component & Value \\
-\midrule
-Boundary frame bytes & TODO \\
-Language memory bytes & TODO \\
-Metadata bytes & TODO \\
-Edge encoding time & TODO \\
-Cloud decoding time & TODO \\
-VSLAM evaluation time & TODO \\
-\bottomrule
-\end{tabular}
-\end{table}
+\includegraphics[width=\textwidth]{figures/fig_exp2_motion_benchmark.png}
+\caption{Qualitative comparison of phase correlation, ORB feature tracking, and Farneback optical flow for edge-side motion estimation.}
+\label{fig:motion_benchmark}
+\end{figure*}
 
-% TODO: Emphasize that edge encoding is lightweight, while cloud decoding can be parallelized.
+\input{tables/tab_exp2_motion_benchmark}
+
+\subsection{LoRA Ablation for the World-Model Decoder}
+\label{subsec:lora_ablation}
+
+This subsection will be expanded after the final table and figure layout is verified.
+
+\input{tables/tab_exp3_lora_ablation}
