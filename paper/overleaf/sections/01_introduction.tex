@@ -1,0 +1,37 @@
+% !TEX root = ../main.tex
+
+% ==================================================
+\section{Introduction}
+\label{sec:introduction}
+% ==================================================
+
+\IEEEPARstart{V}{isual} simultaneous localization and mapping (VSLAM) is a fundamental capability for mobile robots, autonomous platforms, and embodied intelligent systems. With the increasing availability of cloud-side computation, edge--cloud VSLAM has become an attractive paradigm: the edge device captures visual observations with limited onboard resources, while the cloud can execute more powerful perception, optimization, and mapping modules. However, this paradigm introduces a critical communication bottleneck. A monocular or RGB-D camera continuously produces high-frame-rate image streams, and transmitting dense visual data from the edge to the cloud incurs substantial bandwidth, energy, and latency costs. This bottleneck becomes more severe in long-term navigation, large-scale deployment, and bandwidth-constrained wireless environments.
+
+Existing image and video compression standards reduce visual data by exploiting spatial and temporal pixel redundancy. Although such codecs are highly effective for human viewing, their objectives are not directly aligned with VSLAM. VSLAM does not require every pixel to be faithfully reconstructed; instead, it relies on task-usable geometric continuity, stable local structures, trackable visual textures, and temporally consistent camera motion. Under aggressive compression, images that remain visually acceptable to humans may lose feature repeatability, introduce temporal artifacts, or distort geometric cues that are essential for downstream pose estimation. Therefore, edge--cloud VSLAM transmission should not be treated merely as conventional video delivery, but as a task-oriented coding problem in which the transmitted representation is optimized for downstream localization and mapping.
+
+This paper is motivated by a human-inspired view of visual memory. Humans do not memorize every pixel of every frame when navigating through an environment. Instead, they tend to retain sparse key scenes, salient landmarks, motion transitions, and high-level semantic impressions, while reconstructing the continuous visual experience from memory and prior knowledge. For example, when recalling a route, one may remember the entrance of a corridor, a left turn, a distinctive object, and the final destination, rather than all intermediate images. This observation suggests a different formulation for edge--cloud VSLAM image transmission: a dense visual stream can be compressed into sparse image-text visual memories, where images provide geometric anchors, language provides compact high-level information, and a cloud-side generative model reconstructs the missing visual continuity.
+
+Based on this idea, we propose \emph{HVM-Codec}, a human-inspired image-text visual memory coding framework for edge--cloud VSLAM. For each visual memory unit, the edge transmits boundary frames as geometric constraints and constructs compact language memories to describe motion intent, scene priors, and reconstruction constraints. The boundary frames constrain the start and end appearance of the segment, while the language memory represents part of the missing visual information with a much lower-bit abstraction. On the cloud side, an image-text conditioned world-model decoder uses its learned visual prior to reconstruct task-usable intermediate frames. The reconstructed sequence is then fed into a cloud-side VSLAM backend for trajectory estimation.
+
+The key mechanism behind HVM-Codec is the combination of three complementary information sources. First, boundary frames preserve visual and geometric constraints that are difficult to describe purely by language. Second, language memories encode high-level motion and semantic priors with extremely small communication cost. Third, the cloud-side world model supplies missing low-level visual details from its learned prior under the image-text constraints. In this way, dense visual transmission is reformulated as a compact image-text memory transmission problem.
+
+To make this framework practical for edge--cloud VSLAM, HVM-Codec adopts a lightweight edge-side memory encoder. Instead of running heavy online captioning or dense optical-flow networks on the edge, the encoder extracts coarse motion memories and visual novelty cues using low-cost visual measurements. These cues are converted into structured language conditions through a controllable prompt vocabulary and motion-conditioned templates. The cloud-side decoder is further fine-tuned with Low-Rank Adaptation (LoRA), which biases the world model toward navigation-style visual transitions and SLAM-friendly reconstruction. In this work, the quality of reconstruction is evaluated not only by visual appearance, but more importantly by downstream VSLAM trajectory quality, including absolute pose error, relative pose error, trajectory completeness, tracking success, compression ratio, and runtime.
+
+The main contributions of this paper are summarized as follows:
+\begin{itemize}
+    \item We propose a human-inspired image-text visual memory coding framework for edge--cloud VSLAM, which replaces dense frame transmission with sparse boundary frames and compact language memories.
+    \item We design a lightweight edge-side visual memory encoder that extracts motion memories and visual novelty cues, and converts them into compact language conditions without relying on heavy online generative captioning.
+    \item We develop an image-text conditioned cloud-side world-model decoder, where boundary frames provide geometric constraints, language memories provide high-level semantic and motion priors, and LoRA fine-tuning improves SLAM-friendly reconstruction.
+    \item We establish a task-level evaluation protocol for VSLAM-oriented visual transmission, measuring compression performance by downstream trajectory quality, trajectory completeness, tracking robustness, bandwidth reduction, and runtime rather than pixel fidelity alone.
+\end{itemize}
+
+The remainder of this paper is organized as follows. Section~\ref{sec:related_work} reviews related work on edge--cloud VSLAM transmission, human-inspired visual memory, and world-model-based generative reconstruction. Section~\ref{sec:methodology} presents the proposed HVM-Codec framework. Section~\ref{sec:experiments} reports the experimental evaluation and ablation studies. Section~\ref{sec:discussion} discusses the characteristics and limitations of the proposed method. Section~\ref{sec:conclusion} concludes the paper.
+
+
+% Suggested Fig. 1: human-inspired concept figure.
+\begin{figure*}[!t]
+\centering
+\placeholderfig{1.55in}{0.92\textwidth}
+\caption{Conceptual illustration of human-inspired image--text visual memory coding. Instead of transmitting all visual frames, the edge remembers sparse boundary frames, motion transitions, visual anchors, and compact language memories. The cloud-side world model reconstructs task-usable visual continuity for downstream VSLAM.}
+\label{fig:concept}
+\end{figure*}
