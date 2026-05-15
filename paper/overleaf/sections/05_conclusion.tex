@@ -1,0 +1,21 @@
+% !TEX root = ../main.tex
+
+% ==================================================
+\section{Discussion}
+\label{sec:discussion}
+% ==================================================
+
+% TODO: Discuss:
+% 1) Difference from traditional video compression.
+% 3) Role of language memory.
+% 4) Limitations: cloud generation cost, hallucination, dynamic scenes, cross-domain generalization.
+% 5) Future work: SLAM-aware training objective, better language memory generation, full edge--cloud integration.
+
+\HVM differs from traditional video compression because it optimizes for downstream VSLAM utility rather than pixel fidelity alone. Compact language memory represents part of the missing visual information and activates the cloud-side world prior under boundary-frame constraints.
+
+% ==================================================
+\section{Conclusion}
+\label{sec:conclusion}
+% ==================================================
+
+This paper presented \HVM, a human-inspired image--text visual memory coding framework for edge--cloud VSLAM. The proposed formulation compresses dense image streams into boundary frames, motion memories, visual anchors, and compact language conditions, and reconstructs task-usable visual sequences on the cloud using an image--text conditioned world-model decoder with LoRA fine-tuning. Future experiments will validate the compression--trajectory trade-off across multiple VSLAM datasets and real robot scenes.

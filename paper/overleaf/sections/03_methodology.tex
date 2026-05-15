@@ -1,0 +1,177 @@
+% !TEX root = ../main.tex
+
+% ==================================================
+
+\section{Methodology}
+\label{sec:methodology}
+% ==================================================
+
+\subsection{Framework Overview and Problem Formulation}
+\label{subsec:framework_formulation}
+
+\HVM formulates edge--cloud VSLAM image transmission as an image--text visual memory coding problem. Given a dense edge image stream, the encoder converts it into a compact memory representation consisting of boundary frames, event-based visual memory units, language memories, and generation constraints. The cloud-side world-model decoder then reconstructs task-usable intermediate frames from the transmitted image--text memory, and the reconstructed sequence is used by a cloud VSLAM backend.
+
+\begin{figure*}[!t]
+\centering
+\placeholderfig{1.75in}{0.92\textwidth}
+\caption{Overall framework of \HVM. The edge-side memory encoder converts a dense image stream into boundary frames, motion-semantic event units, and compact language memories. The same encoder is also reused to construct LoRA fine-tuning pairs for the world-model decoder. During inference, sparse image--text memories are transmitted to the cloud, where the world-model decoder reconstructs intermediate frames for downstream VSLAM.}
+\label{fig:framework}
+\end{figure*}
+
+Let the input visual stream be
+\begin{equation}
+\Iseq=\{I_1,I_2,\ldots,I_T\}.
+\end{equation}
+The edge encoder produces a set of visual memory units
+\begin{equation}
+\mathcal{U}=\{U_1,U_2,\ldots,U_N\},
+\end{equation}
+where each unit is represented by
+\begin{equation}
+U_i=\{I_i^s,I_i^e,S_i,A_i,L_i,L_i^-\}.
+\label{eq:memory_unit}
+\end{equation}
+Here \(I_i^s\) and \(I_i^e\) denote the start and end boundary frames, \(S_i\) denotes the motion memory, \(A_i\) denotes visual or semantic anchors, and \(L_i\) and \(L_i^-\) denote positive and negative language memories. The transmitted memory can be written as
+\begin{equation}
+\Mmem=\{\mathcal{U},\Pprompt,\mathrm{metadata}\},
+\end{equation}
+where \(\Pprompt\) denotes the prompt vocabulary and generation constraints shared by the encoder and decoder.
+
+The cloud-side decoder reconstructs the visual sequence unit by unit:
+\begin{equation}
+\hat{\mathcal{I}}_i=G_{\theta+\Delta\theta}(I_i^s,I_i^e,L_i,L_i^-),
+\label{eq:wm_decode}
+\end{equation}
+where \(G_\theta\) is a pretrained world model and \(\Delta\theta\) denotes the low-rank increments learned by LoRA fine-tuning. The reconstructed sequence is obtained by temporal merging:
+\begin{equation}
+\Ihat=\operatorname{Merge}(\hat{\mathcal{I}}_1,\hat{\mathcal{I}}_2,\ldots,\hat{\mathcal{I}}_N).
+\end{equation}
+
+The transmission budget is
+\begin{equation}
+B(\Mmem)=B(\Kframes)+B(\Llang)+B(\Pprompt)+B(\mathrm{metadata}),
+\label{eq:budget}
+\end{equation}
+where \(B(\Llang)\ll B(\Iseq_{\mathrm{missing}})\). The coding objective is therefore formulated as
+\begin{equation}
+\min B(\Mmem),\quad \mathrm{s.t.}\quad \Delta_{\mathrm{VSLAM}}(\Ihat,\Iseq)\leq \epsilon,
+\label{eq:objective}
+\end{equation}
+where \(\Delta_{\mathrm{VSLAM}}\) measures downstream trajectory degradation using APE, RPE, trajectory completeness, and tracking success.
+
+An important feature of the framework is that the same encoder is used in both deployment and training. During inference, the encoder produces the memory units transmitted to the cloud. During offline training, the encoder converts raw training sequences into image--text pairs for LoRA fine-tuning:
+\begin{equation}
+\mathcal{D}_{\mathrm{LoRA}}
+=\{(I_i^s,I_i^e,L_i,L_i^-,I_i^{s+1:e-1})\}_{i=1}^{N_d},
+\label{eq:lora_dataset}
+\end{equation}
+where \(I_i^{s+1:e-1}\) denotes the original intermediate frames. This shared encoder design aligns the memory format used for world-model fine-tuning with the memory format used during inference.
+
+\subsection{Motion-Semantic Event Segmentation for Boundary-Frame Selection}
+\label{subsec:motion_semantic_segmentation}
+
+The first function of the edge encoder is to determine which images should be transmitted as boundary frames. HVM-Codec treats this as a motion-semantic event segmentation problem in the first-person visual stream. A useful boundary should capture a transition that is important for reconstructing camera motion or scene content. Therefore, the segmentation is driven by two complementary cues: lightweight motion response and visual semantic novelty.
+
+For consecutive frames, a global motion response is estimated using phase correlation:
+\begin{equation}
+(\Delta x_t,\Delta y_t,\rho_t)=\operatorname{PC}(I_{t-1},I_t),
+\end{equation}
+where \(\Delta x_t\) and \(\Delta y_t\) describe the dominant translational response and \(\rho_t\) denotes the response confidence. A coarse first-person motion state is then assigned as
+\begin{equation}
+s_t\in\{\mathrm{forward},\mathrm{left\mbox{-}turn},\mathrm{right\mbox{-}turn},\mathrm{mixed}\}.
+\label{eq:motion_state}
+\end{equation}
+The accumulated motion change within a candidate interval \([t_0,t]\) is denoted by
+\begin{equation}
+R_m(t_0,t)=\sum_{k=t_0+1}^{t}\phi_m(s_{k-1},s_k,\rho_k),
+\label{eq:motion_event_score}
+\end{equation}
+where \(\phi_m(\cdot)\) measures state transition strength and confidence-weighted motion variation.
+
+Motion alone is insufficient when the camera maintains a stable forward or turning state for a long period. In such cases, the motion label may remain unchanged while the scene content changes significantly. To capture these changes, the encoder also measures visual novelty in an embedding space. Given an image encoder \(f(\cdot)\), the frame-level novelty is
+\begin{equation}
+d_t=1-\cos(f(I_t),f(I_{t-1})),
+\label{eq:visual_novelty}
+\end{equation}
+and the accumulated visual novelty is
+\begin{equation}
+R_v(t_0,t)=\sum_{k=t_0+1}^{t}d_k.
+\label{eq:visual_event_score}
+\end{equation}
+
+The event boundary set is obtained by combining the two responses:
+\begin{equation}
+\mathcal{B}=\Pi_{\Omega}\left(\left\{t\mid R_m(t_0,t)>\tau_m\ \vee\ R_v(t_0,t)>\tau_v\right\}\right),
+\label{eq:event_boundary}
+\end{equation}
+where \(\tau_m\) and \(\tau_v\) are motion and visual novelty thresholds, and \(\Pi_{\Omega}(\cdot)\) projects detected boundaries to feasible temporal positions. The boundary set \(\mathcal{B}\) defines the visual memory units. For the \(i\)-th unit, its motion memory and visual anchor set are
+\begin{equation}
+S_i=\operatorname{Merge}(s_t,\ t\in[t_i^s,t_i^e]),
+\end{equation}
+\begin{equation}
+A_i=\{t\in[t_i^s,t_i^e]\mid d_t>\tau_a\ \mathrm{or}\ R_v(t_i^s,t)>\tau_v\}.
+\end{equation}
+
+\begin{figure}[!t]
+\centering
+\placeholderfig{1.45in}{0.88\columnwidth}
+\caption{Motion-semantic event segmentation for boundary-frame selection. Phase-correlation motion responses capture first-person motion transitions, while image-embedding novelty detects visual semantic changes inside long motion-consistent intervals. Their combination determines visual memory units and transmitted boundary frames.}
+\label{fig:event_segmentation}
+\end{figure}
+
+\subsection{Controlled Language Memory Coding for Non-Transmitted Frames}
+\label{subsec:language_memory}
+
+The second function of the edge encoder is to represent non-transmitted visual information using compact language memory. For each unit, the boundary frames specify visual and geometric endpoints, while language memory provides high-level information about how the missing visual segment should evolve. This language memory is constructed from a controlled vocabulary rather than online free-form caption generation.
+
+The positive language memory of unit \(i\) is defined as
+\begin{equation}
+L_i=L_{\mathrm{base}}\oplus L_{\mathrm{motion}}(S_i)\oplus L_{\mathrm{anchor}}(A_i)\oplus L_{\mathrm{constraint}},
+\label{eq:language_memory}
+\end{equation}
+where \(L_{\mathrm{base}}\) encodes a first-person navigation-view prior, \(L_{\mathrm{motion}}(S_i)\) describes the camera motion state, \(L_{\mathrm{anchor}}(A_i)\) optionally inserts visual-anchor descriptions, and \(L_{\mathrm{constraint}}\) specifies temporal and geometric reconstruction requirements. The negative language memory is
+\begin{equation}
+L_i^- = L_{\mathrm{blur}}\oplus L_{\mathrm{distortion}}\oplus L_{\mathrm{drift}}\oplus L_{\mathrm{jump}}\oplus L_{\mathrm{hallucination}},
+\label{eq:negative_language}
+\end{equation}
+which suppresses visual artifacts that are harmful to VSLAM, such as blur, geometric distortion, temporal drift, sudden viewpoint jumps, and inconsistent hallucinated objects.
+
+The motion-conditioned part is generated through a deterministic mapping
+\begin{equation}
+L_{\mathrm{motion}}(S_i)=\Gamma(S_i),
+\label{eq:motion_language_mapping}
+\end{equation}
+where \(\Gamma(\cdot)\) maps motion states such as forward motion, left turn, and right turn into short textual descriptions. The resulting memory size is negligible compared with the omitted image sequence:
+\begin{equation}
+B(L_i)+B(L_i^-)\ll B(I_i^{s+1:e-1}).
+\label{eq:language_compression}
+\end{equation}
+
+\begin{figure}[!t]
+\centering
+\placeholderfig{1.35in}{0.88\columnwidth}
+\caption{Controlled language memory coding. Motion states and visual anchors are converted into positive language memory, while negative language memory constrains the world model against artifacts that may degrade downstream VSLAM.}
+\label{fig:language_memory}
+\end{figure}
+
+\subsection{World-Model Decoding and LoRA Fine-Tuning for VSLAM-Friendly Reconstruction}
+\label{subsec:wm_lora_decoding}
+
+On the cloud side, the transmitted image--text memory is decoded by a world model. Unlike a conventional bitstream decoder, the world-model decoder reconstructs missing frames by combining transmitted boundary images, compact language memory, and learned spatiotemporal priors. For each unit, decoding is performed as in (\ref{eq:wm_decode}), and the generated intermediate frames are temporally merged to form the sequence used by the VSLAM backend.
+
+The boundary frames and language memories play complementary roles. The frames \(I_i^s\) and \(I_i^e\) constrain the start and end appearance, camera viewpoint, and local trackable structures. The positive language memory \(L_i\) provides motion and semantic priors, while the negative language memory \(L_i^-\) constrains visual artifacts. The world model then supplies plausible low-level details and intermediate viewpoint changes from its learned prior.
+
+To bias the decoder toward navigation-style visual transitions, the pretrained world model is fine-tuned with LoRA. Let \(G_\theta\) be the base world model. LoRA introduces low-rank increments \(\Delta\theta\) to selected layers, leading to the tuned decoder \(G_{\theta+\Delta\theta}\). The fine-tuning data are generated by the same encoder according to (\ref{eq:lora_dataset}), which provides boundary frames, language memories, and the corresponding original intermediate frames. A reconstruction-oriented training objective can be written as
+\begin{equation}
+\Delta\theta^*=\arg\min_{\Delta\theta}\sum_i
+\mathcal{L}_{\mathrm{gen}}\left(G_{\theta+\Delta\theta}(I_i^s,I_i^e,L_i,L_i^-), I_i^{s+1:e-1}\right),
+\label{eq:lora_finetune}
+\end{equation}
+where \(\mathcal{L}_{\mathrm{gen}}\) denotes the generation training objective used by the video world model. The purpose of this fine-tuning is to align the world model with the memory format used by HVM-Codec and to improve viewpoint stability, geometric continuity, and feature trackability for downstream VSLAM.
+
+\begin{figure}[!t]
+\centering
+\placeholderfig{1.35in}{0.88\columnwidth}
+\caption{World-model decoding and LoRA fine-tuning. The shared encoder constructs the image--text memory format for both inference and LoRA fine-tuning, allowing the cloud-side world model to reconstruct VSLAM-friendly intermediate frames from boundary images and language memories.}
+\label{fig:lora_decoder}
+\end{figure}
