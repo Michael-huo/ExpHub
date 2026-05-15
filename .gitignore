@@ -59,3 +59,21 @@ datasets/
 *.pt
 
 *.bin
+
+# LaTeX build artifacts
+paper/overleaf/*.aux
+paper/overleaf/*.log
+paper/overleaf/*.out
+paper/overleaf/*.toc
+paper/overleaf/*.bbl
+paper/overleaf/*.blg
+paper/overleaf/*.fls
+paper/overleaf/*.fdb_latexmk
+paper/overleaf/*.synctex.gz
+paper/overleaf/*.lof
+paper/overleaf/*.lot
+paper/overleaf/*.run.xml
+paper/overleaf/*.bcf
+
+# Optional PDF output
+# paper/overleaf/*.pdf
