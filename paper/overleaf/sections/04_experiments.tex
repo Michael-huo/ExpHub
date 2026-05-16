@@ -42,6 +42,8 @@ The first experiment evaluates end-to-end transmission reduction and VSLAM traje
 \label{fig:trajectory_map}
 \end{figure*}
 
+\newpage
+
 Table~\ref{tab:compression_accuracy} reports that, on average, the raw image sequence size is 404.16 MiB, while the transmitted \HVM{} representation is 11.12 MiB. This corresponds to an average data reduction of 96.8\%, indicating that the proposed representation substantially reduces transmitted visual data.
 
 The VSLAM results indicate that this reduction can retain task-usable geometric information. The average ORI APE RMSE is 0.694 m, while the average GEN APE RMSE is 0.707 m. Thus, although GEN APE is close to ORI APE on average, sequence-level differences remain: some generated sequences obtain lower APE than their original counterparts, whereas others obtain higher APE. This behavior is expected because \HVM{} does not aim to reconstruct pixel-identical videos, but to retain enough geometric continuity for downstream VSLAM.
@@ -53,6 +55,8 @@ Fig.~\ref{fig:trajectory_map} further illustrates this trend by comparing trajec
 
 The second experiment compares three edge-side motion estimation choices for constructing motion memory. This benchmark evaluates qualitative segmentation consistency and runtime efficiency, rather than supervised motion-label accuracy.
 
+\input{tables/tab_exp2_motion_benchmark}
+
 \begin{figure*}[!t]
 \centering
 \includegraphics[width=\textwidth]{figures/fig_exp2_motion_benchmark.png}
@@ -60,7 +64,7 @@ The second experiment compares three edge-side motion estimation choices for con
 \label{fig:motion_benchmark}
 \end{figure*}
 
-\input{tables/tab_exp2_motion_benchmark}
+\newpage
 
 Fig.~\ref{fig:motion_benchmark} and Table~\ref{tab:motion_benchmark} show the qualitative behavior and runtime cost of the three methods. The valid-output ratio denotes the fraction of frame pairs for which a method produced usable motion evidence.
 
