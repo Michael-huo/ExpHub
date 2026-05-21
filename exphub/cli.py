@@ -551,6 +551,18 @@ def main(argv: Optional[List[str]] = None) -> None:
         default=False,
         help="run opt-in PC/ORB/Optical-Flow motion benchmark during encode",
     )
+    ap.add_argument(
+        "--encode_compression_benchmark",
+        action="store_true",
+        default=False,
+        help="开启并行生成基准压缩载荷（Raw 和 H.265）以进行网络传输测试。",
+    )
+    ap.add_argument(
+        "--video_bitrate",
+        type=str,
+        default="10M",
+        help="H.265 视频基线测试的目标码率 (Target bitrate)。",
+    )
     ap.add_argument("--gpus", type=int, default=2)
     ap.add_argument("--lora-profile", default="")
     ap.add_argument("--lora-gpus", default="")
@@ -607,6 +619,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         _die("--decode_image_quality_stride must be > 0")
     if int(args.decode_image_quality_max_frames) < 0:
         _die("--decode_image_quality_max_frames must be >= 0")
+    args.video_bitrate = str(args.video_bitrate or "").strip()
+    if not args.video_bitrate:
+        _die("--video_bitrate must be non-empty")
     if args.lora_epochs is not None and int(args.lora_epochs) <= 0:
         _die("--lora-epochs must be > 0")
     args.mode = str(args.mode or "").strip().lower()

@@ -82,6 +82,8 @@ def _cleanup_min(exp_dir: Path) -> None:
             "motion_benchmark_report.json",
             "motion_benchmark.csv",
             "motion_benchmark_overview.png",
+            "hvm_payload",
+            "compression_benchmark",
             "dataset_encode_index.json",
             "sequences",
         },

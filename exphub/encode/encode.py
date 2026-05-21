@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from exphub.common.io import ensure_dir, ensure_file, read_json_dict, write_json_atomic
-from exphub.common.logging import log_info
+from exphub.common.logging import log_info, log_warn
 
+from .compression_benchmark import CompressionBenchmark
 from .generation_unit import build_generation_units
 from .motion_benchmark import run_motion_benchmark
 from .motion_segment import build_motion_segments
+from .payload_writer import write_hvm_payload
 from .result_writer import write_encode_outputs
 from .synthetic_prompt import build_prompts
 from .train_export import TrainExportSession
@@ -149,6 +151,61 @@ def _log_motion_benchmark_report(report):
         log_info("{:<{w}} : {}".format(key, value, w=width))
 
 
+def _is_infer_runtime(runtime):
+    return str(getattr(runtime.args, "mode", "") or "").strip().lower() == "infer"
+
+
+def _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_hvm_algorithmic_sec):
+    if not _is_infer_runtime(runtime):
+        return
+
+    payload_dir = paths.encode_dir / "hvm_payload"
+    runtime.remove_in_exp(payload_dir)
+    runtime.remove_in_exp(paths.encode_dir / "hvm_payload.zip")
+    payload_started = time.perf_counter()
+    payload_report = write_hvm_payload(
+        frames_dir=paths.prepare_frames_dir,
+        generation_units=generation_units,
+        prompts=prompts,
+        payload_dir=payload_dir,
+    )
+    payload_write_sec = float(time.perf_counter() - payload_started)
+    ensure_dir(payload_dir, "hvm payload")
+    log_info(
+        "hvm payload done: frames={} dir={}".format(
+            int(payload_report.get("frame_count", 0) or 0),
+            _relative_to_exp(runtime, payload_dir),
+        )
+    )
+
+    if not bool(getattr(runtime.args, "encode_compression_benchmark", False)):
+        return
+
+    benchmark_dir = paths.encode_dir / "compression_benchmark"
+    runtime.remove_in_exp(benchmark_dir)
+    benchmark_report = CompressionBenchmark(
+        frames_dir=paths.prepare_frames_dir,
+        output_dir=benchmark_dir,
+        fps=getattr(runtime.args, "fps", runtime.spec.fps),
+        bitrate=getattr(runtime.args, "video_bitrate", "10M"),
+        hvm_payload_dir=payload_dir,
+        hvm_algorithmic_time=float(formal_hvm_algorithmic_sec) + float(payload_write_sec),
+    ).run()
+    ensure_file(benchmark_report["raw_zip"], "compression benchmark raw zip")
+    ensure_file(benchmark_report["h265_video"], "compression benchmark H.265 video")
+    ensure_file(benchmark_report["hvm_payload_zip"], "compression benchmark hvm payload zip")
+    log_info(
+        "encode compression benchmark done: frames={} fps={} bitrate={} raw={} h265={} hvm={}".format(
+            int(benchmark_report.get("frame_count", 0) or 0),
+            int(benchmark_report.get("fps", 0) or 0),
+            str(benchmark_report.get("bitrate", "")),
+            _relative_to_exp(runtime, benchmark_report["raw_zip"]),
+            _relative_to_exp(runtime, benchmark_report["h265_video"]),
+            _relative_to_exp(runtime, benchmark_report["hvm_payload_zip"]),
+        )
+    )
+
+
 def _run_single_encode(runtime, paths, log_name="encode.log"):
     total_started_wall = time.time()
     total_started_perf = time.perf_counter()
@@ -251,6 +308,7 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
     encode_profile["result_writer_sec"] = float(result_writer_sec)
     encode_profile["total_sec"] = float(total_sec)
     _patch_encode_result_profile(result_path, encode_profile)
+    formal_hvm_algorithmic_sec = float(total_sec)
     for path, label in [
         (paths.encode_motion_segments_path, "motion segments"),
         (paths.encode_semantic_anchors_path, "semantic anchors"),
@@ -287,6 +345,8 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
             (paths.encode_dir / "motion_benchmark_overview.png", "motion benchmark overview"),
         ]:
             ensure_file(path, label)
+
+    _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_hvm_algorithmic_sec)
 
     log_info(
         "encode profile: motion={:.2f}s semantic={:.2f}s writer={:.2f}s total={:.2f}s".format(
@@ -469,5 +529,7 @@ def run(runtime):
     if mode == "infer":
         return _run_single_encode(runtime, _infer_encode_paths(runtime))["result_path"]
     if mode == "train":
+        if bool(getattr(runtime.args, "encode_compression_benchmark", False)):
+            log_warn("encode compression benchmark is infer-only; skipping for train mode")
         return _run_train_encode(runtime)
     raise RuntimeError("unsupported encode mode: {}".format(mode))

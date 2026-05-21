@@ -180,6 +180,8 @@ class PipelineRuntime:
                 "prompt_profile": "base_motion_prompt",
                 "anchor_backend": "image_embedding_visual_anchor",
                 "encode_motion_benchmark": bool(getattr(self.args, "encode_motion_benchmark", False)),
+                "encode_compression_benchmark": bool(getattr(self.args, "encode_compression_benchmark", False)),
+                "video_bitrate": str(getattr(self.args, "video_bitrate", "10M") or "10M"),
                 "decode_image_quality": bool(getattr(self.args, "decode_image_quality", False)),
                 "decode_image_quality_stride": int(getattr(self.args, "decode_image_quality_stride", 1)),
                 "decode_image_quality_max_frames": int(getattr(self.args, "decode_image_quality_max_frames", 0)),
