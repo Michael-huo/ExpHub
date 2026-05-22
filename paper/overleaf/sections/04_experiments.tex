@@ -22,7 +22,14 @@
 \subsection{Experimental Setup}
 \label{subsec:exp_setup}
 
-The evaluation uses three types of sequences: NCD, TUM, and GDUT. NCD and TUM provide public benchmark sequences, while GDUT contains real robot data collected in our deployment environment. This combination allows the experiments to cover both standard datasets and robot-captured visual streams under the same \HVM{} evaluation protocol.
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig5.png}
+\caption{Edge--cloud experimental platform used in the real-world GDUT experiments. The edge platform consists of an AGV equipped with a RealSense D455 camera, an onboard NUC, and a Livox MID-360 LiDAR, while the cloud platform is a multi-GPU server connected through a low-bandwidth sparse transmission setting.}
+\label{fig:experimental_platform}
+\end{figure}
+
+The evaluation uses three types of sequences: NCD, TUM, and GDUT. NCD and TUM provide public benchmark sequences, while GDUT contains real robot data collected in our deployment environment. This combination allows the experiments to cover both standard datasets and robot-captured visual streams under the same \HVM{} evaluation protocol. Fig.~\ref{fig:experimental_platform} shows the edge--cloud hardware platform used for the real-world GDUT experiments.
 
 All experiments follow a unified prepare--encode--decode--eval pipeline. The preparation stage organizes image sequences and trajectory references; the encoder converts dense frames into the transmitted \HVM{} representation; the decoder produces a generated visual sequence from the image--text memory; and the evaluation stage runs the VSLAM backend on both original and generated sequences. Unless otherwise stated, phase correlation (PC) is used as the default lightweight motion estimator on the edge side. The cloud side uses an image--text conditioned world-model decoder, with Base and LoRA variants compared in the ablation study.
 
