@@ -151,13 +151,13 @@ The reconstructed units are then temporally merged:
 \end{equation}
 where \(\mathcal{B}\) preserves the original unit order and shared boundary-frame structure. Shared boundaries prevent neighboring units from being treated as unrelated clips and help maintain temporal continuity before the reconstructed sequence is passed to the VSLAM backend. The decoder is therefore not a conventional entropy or bitstream decoder. It is a conditional world-model decoder that uses sparse memory and learned visual priors to synthesize plausible intermediate continuity for downstream use.
 
-In the training/adaptation branch, the same edge encoder converts raw training sequences into memory pairs:
+For each unit \(i\), let \(\mathcal{I}^{\mathrm{mid}}_i=\{I_t\}_{t=b_{i-1}+1}^{b_i-1}\) denote its original intermediate frames. In the training/adaptation branch, the same edge encoder converts raw training sequences into memory pairs:
 \begin{equation}
 \mathcal{D}_{\mathrm{LoRA}}
-=\{(I_{b_{i-1}},I_{b_i},L_i,L_i^{-},I_{(b_{i-1}+1):(b_i-1)})\}_{i=1}^{N_d}.
+=\{(I_{b_{i-1}},I_{b_i},L_i,L_i^{-},\mathcal{I}^{\mathrm{mid}}_i)\}_{i=1}^{N_d}.
 \label{eq:lora_dataset}
 \end{equation}
-The last term denotes the original intermediate frames \(I_{(b_{i-1}+1):(b_i-1)}\) within the unit. Because the pair construction uses the same boundary selection, motion memory, visual novelty anchors, and language memory as inference, LoRA adaptation sees the same type of conditioning that the decoder receives during deployment.
+The last term \(\mathcal{I}^{\mathrm{mid}}_i\) denotes the original intermediate frames within unit \(i\). Because the pair construction uses the same boundary selection, motion memory, visual novelty anchors, and language memory as inference, LoRA adaptation sees the same type of conditioning that the decoder receives during deployment.
 
 LoRA keeps the base world model frozen and learns low-rank increments in selected layers. A reconstruction-oriented adaptation objective can be written as
 \begin{equation}
@@ -165,7 +165,7 @@ LoRA keeps the base world model frozen and learns low-rank increments in selecte
 \Delta\theta^*=\arg\min_{\Delta\theta}\sum_i
 &\mathcal{L}_{\mathrm{gen}}\bigl(
 G_{\theta+\Delta\theta}(I_{b_{i-1}},I_{b_i},L_i,L_i^{-}),\\
-&I_{(b_{i-1}+1):(b_i-1)}
+&\mathcal{I}^{\mathrm{mid}}_i
 \bigr),
 \end{aligned}
 \label{eq:lora_finetune}
