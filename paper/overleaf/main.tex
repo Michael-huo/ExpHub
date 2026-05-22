@@ -39,7 +39,7 @@ Replace this box with the final vector figure or high-resolution image.
 }
 
 % Correct bad hyphenation here.
-\hyphenation{op-tical net-works semi-conduc-tor VSLAM image-text edge-cloud}
+\hyphenation{op-tical net-works semi-conduc-tor VSLAM}
 
 \begin{document}
 
@@ -64,7 +64,7 @@ Replace this box with the final vector figure or high-resolution image.
 
 % -------------------- Abstract --------------------
 \begin{abstract}
-Edge--cloud visual simultaneous localization and mapping (VSLAM) relies on continuous visual streams, but transmitting dense image sequences from resource-constrained edge devices to cloud-side SLAM backends introduces substantial bandwidth and energy costs. Existing image and video codecs mainly optimize pixel-level fidelity or perceptual quality, which does not necessarily preserve the geometric continuity and trackable structures required by VSLAM. Inspired by human visual memory, this paper proposes \HVM, a human-inspired image--text visual memory coding framework for edge--cloud VSLAM. The edge encoder represents a visual sequence using boundary frames, lightweight motion memories, visual novelty anchors, and compact language conditions. Boundary frames provide geometric constraints, language memories encode high-level motion and semantic priors, and a cloud-side world-model decoder uses its learned visual prior to imagine and reconstruct task-usable intermediate frames. To improve SLAM-friendly reconstruction, the decoder is further fine-tuned with LoRA. The proposed codec is evaluated by downstream VSLAM trajectory quality rather than pixel fidelity alone, including absolute pose error, relative pose error, trajectory completeness, bandwidth reduction, and runtime.
+Edge--cloud visual simultaneous localization and mapping (VSLAM) can exploit cloud-side perception and mapping, but it requires transmitting dense visual streams from resource-constrained edge devices, causing substantial bandwidth and energy costs. Conventional image and video codecs mainly optimize pixel-level or perceptual fidelity, which may not preserve the geometric continuity and trackable structures needed by VSLAM. This paper proposes \HVM, a human-inspired image--text visual memory coding framework for VSLAM-oriented edge--cloud visual transmission. Instead of sending dense frames, the edge encoder represents a visual sequence using sparse boundary frames, motion memory, visual novelty anchors, and compact language memory. On the cloud side, an image--text conditioned world-model decoder reconstructs task-usable intermediate views under the transmitted constraints, and Low-Rank Adaptation (LoRA) is used to bias the decoder toward VSLAM-oriented reconstruction. The proposed codec is evaluated using downstream absolute pose error (APE) RMSE, transmission reduction, edge-side motion-estimation cost, and auxiliary LPIPS, SSIM, and FID metrics. Experiments show an average 96.8\% transmission reduction, GEN APE RMSE close to ORI APE RMSE on average, low-cost phase-correlation motion memory, and a reduction in GEN APE with LoRA in the reported decoder ablation.
 \end{abstract}
 
 % -------------------- Keywords --------------------

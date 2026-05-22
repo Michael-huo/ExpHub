@@ -1,19 +1,21 @@
 % This table is included by sections/04_experiments.tex.
 \begin{table}[!t]
-\renewcommand{\arraystretch}{1.12}
+\renewcommand{\arraystretch}{1.14}
 \caption{Runtime comparison of edge-side motion estimation methods.}
 \label{tab:motion_benchmark}
 \centering
 \footnotesize
-\resizebox{\columnwidth}{!}{%
+\setlength{\tabcolsep}{3pt}
 \begin{tabular}{lrrrr}
 \toprule
-Method & Runtime (s) & Time / Pair (ms) & Relative Cost vs. PC & Valid Output (\%) \\
+Method & Time (s) & ms/pair & Rel. cost & Valid (\%) \\
 \midrule
 Phase Correlation (PC) & 4.51 & 4.70 & 1.00x & 100.0 \\
 ORB Feature Tracking & 11.73 & 12.22 & 2.60x & 85.7 \\
 Farneback Optical Flow (OF) & 29.75 & 30.99 & 6.59x & 100.0 \\
 \bottomrule
 \end{tabular}%
-}
+\vspace{0.2em}
+
+\parbox{\columnwidth}{\footnotesize Rel. cost is normalized by PC runtime. Valid denotes the percentage of frame pairs with usable motion evidence.}
 \end{table}
