@@ -7,6 +7,14 @@
 
 \IEEEPARstart{V}{isual} simultaneous localization and mapping (VSLAM) is a fundamental capability for mobile robots, autonomous platforms, and embodied intelligent systems. With the increasing availability of cloud-side computation, edge--cloud VSLAM has become an attractive paradigm: the edge device captures visual observations with limited onboard resources, while the cloud can execute more powerful perception, optimization, and mapping modules. However, this paradigm introduces a critical communication bottleneck. A monocular or RGB-D camera continuously produces high-frame-rate image streams, and transmitting dense visual data from the edge to the cloud incurs substantial bandwidth, energy, and latency costs. This bottleneck becomes more severe in long-term navigation, large-scale deployment, and bandwidth-constrained wireless environments.
 
+% Suggested Fig. 1: human-inspired concept figure.
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.95\columnwidth]{figures/fig1.png}
+\caption{Motivation of human-inspired visual memory coding for edge--cloud VSLAM. Dense visual transmission requires high bandwidth, whereas the proposed memory-based formulation transmits sparse visual anchors and compact language memories for task-oriented reconstruction.}
+\label{fig:concept}
+\end{figure}
+
 Existing image and video compression standards reduce visual data by exploiting spatial and temporal pixel redundancy. Although such codecs are highly effective for human viewing, their objectives are not directly aligned with VSLAM. VSLAM does not require every pixel to be faithfully reconstructed; instead, it relies on task-usable geometric continuity, stable local structures, trackable visual textures, and temporally consistent camera motion. Under aggressive compression, images that remain visually acceptable to humans may lose feature repeatability, introduce temporal artifacts, or distort geometric cues that are essential for downstream pose estimation. Therefore, edge--cloud VSLAM transmission should not be treated merely as conventional video delivery, but as a task-oriented coding problem in which the transmitted representation is optimized for downstream localization and mapping.
 
 This paper is motivated by a human-inspired view of visual memory. Humans do not memorize every pixel of every frame when navigating through an environment. Instead, they tend to retain sparse key scenes, salient landmarks, motion transitions, and high-level semantic impressions, while reconstructing the continuous visual experience from memory and prior knowledge. For example, when recalling a route, one may remember the entrance of a corridor, a left turn, a distinctive object, and the final destination, rather than all intermediate images. This observation suggests a different formulation for edge--cloud VSLAM image transmission: a dense visual stream can be compressed into sparse image-text visual memories, where images provide geometric anchors, language provides compact high-level information, and a cloud-side generative model reconstructs the missing visual continuity.
@@ -26,12 +34,3 @@ The main contributions of this paper are summarized as follows:
 \end{itemize}
 
 The remainder of this paper is organized as follows. Section~\ref{sec:related_work} reviews related work on edge--cloud VSLAM transmission, human-inspired visual memory, and world-model-based generative reconstruction. Section~\ref{sec:methodology} presents the proposed HVM-Codec framework. Section~\ref{sec:experiments} reports the experimental evaluation and ablation studies. Section~\ref{sec:discussion} discusses the characteristics and limitations of the proposed method. Section~\ref{sec:conclusion} concludes the paper.
-
-
-% Suggested Fig. 1: human-inspired concept figure.
-\begin{figure*}[!t]
-\centering
-\placeholderfig{1.55in}{0.92\textwidth}
-\caption{Conceptual illustration of human-inspired image--text visual memory coding. Instead of transmitting all visual frames, the edge remembers sparse boundary frames, motion transitions, visual anchors, and compact language memories. The cloud-side world model reconstructs task-usable visual continuity for downstream VSLAM.}
-\label{fig:concept}
-\end{figure*}
