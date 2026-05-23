@@ -59,6 +59,15 @@ The sequence-level differences should be interpreted cautiously. Some generated 
 
 Fig.~\ref{fig:trajectory_map} complements Table~\ref{tab:compression_accuracy} by comparing trajectories and point-cloud reconstructions on NCD, TUM, and GDUT. The generated sequences retain the main route structure and support trackable reconstruction in these examples, which provides qualitative evidence for task-usable geometric continuity under aggressive transmission reduction.
 
+\subsection{Payload Size and Runtime Breakdown}
+\label{subsec:payload_runtime}
+
+To further analyze transmission behavior, we enable the compression benchmark on a representative 80 s GDUT sequence containing 1921 frames. Table~\ref{tab:payload_runtime} compares raw image ZIP, H.265 MP4 at 10 Mbps, and the \HVM{} payload. The raw ZIP requires 777.55 MiB, the H.265 reference requires 101.51 MiB, and the \HVM{} payload requires 15.26 MiB. Thus, on this sequence, the raw ZIP and the 10 Mbps H.265 reference are 51.0$\times$ and 6.7$\times$ larger than the \HVM{} payload, respectively.
+
+\input{tables/tab_exp4_payload_runtime}
+
+The \HVM{} memory construction takes 51.80 s, mainly including 40.13 s for phase-correlation motion memory, 10.43 s for visual-anchor extraction, and 0.69 s for result writing. Cloud-side generation takes 296.64 s, corresponding to 6.59 FPS. Therefore, the current prototype is primarily bottlenecked by cloud-side world-model generation rather than by the compact memory representation. This compute-bound cost depends on the generation backend, accelerator memory, and parallel serving strategy; real-time optimized cloud deployment is left for future work.
+
 \subsection{Edge-Side Motion Estimation Benchmark}
 \label{subsec:motion_benchmark}
 
