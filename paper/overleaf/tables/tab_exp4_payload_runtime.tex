@@ -1,0 +1,21 @@
+% This table is included by sections/04_experiments.tex.
+\begin{table}[!t]
+\renewcommand{\arraystretch}{1.12}
+\caption{Payload size and encoding cost on a representative GDUT sequence.}
+\label{tab:payload_runtime}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.8pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}lccc@{}}
+\toprule
+Representation & Payload & Time (s) & Size/HVM \\
+\midrule
+Raw image ZIP & 777.55 MiB & 25.51 & 51.0$\times$ \\
+H.265 MP4, 10 Mbps & 101.51 MiB & 97.71 & 6.7$\times$ \\
+HVM payload & 15.26 MiB & 51.80 & 1.0$\times$ \\
+\bottomrule
+\end{tabular*}%
+\vspace{0.2em}
+
+\parbox{\columnwidth}{\footnotesize The sequence contains 1921 frames at 24 FPS. H.265 uses a 10 Mbps setting. Time reports payload construction or encoding time; HVM cloud-side generation time is excluded and discussed in text. Size/HVM denotes the payload-size ratio relative to the HVM payload.}
+\end{table}
