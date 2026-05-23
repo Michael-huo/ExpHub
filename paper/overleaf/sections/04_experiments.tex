@@ -31,11 +31,11 @@ The evaluation uses three types of sequences: NCD, TUM, and GDUT. NCD and TUM pr
 \label{fig:experimental_platform}
 \end{figure}
 
-The edge platform consists of an AGV equipped with a RealSense D455 camera, an onboard NUC, and a Livox MID-360 LiDAR. The cloud platform is a multi-GPU server connected through a sparse transmission setting. In this configuration, the edge device prepares image--text visual memory from raw visual streams, and the cloud performs world-model decoding and VSLAM evaluation.
+The edge platform consists of an AGV equipped with a RealSense D455 camera, an onboard NUC, and a Livox MID-360 LiDAR. The cloud platform is a multi-GPU server connected through a sparse transmission setting. In this configuration, the edge device encodes vision--language memory from raw visual streams, and the cloud performs world-model decoding and VSLAM evaluation.
 
-All experiments follow a unified prepare--encode--decode--eval pipeline. The preparation stage organizes image sequences and trajectory references; the encoder converts dense frames into the transmitted \HVM{} representation; the decoder produces a generated visual sequence from the image--text memory; and the evaluation stage runs the VSLAM backend on both original and generated sequences. Unless otherwise stated, phase correlation (PC) is used as the default lightweight motion estimator on the edge. The cloud uses an image--text conditioned world-model decoder, with Base and LoRA variants compared in the ablation study.
+All experiments follow a unified end-to-end evaluation pipeline. The preparation stage organizes image sequences and trajectory references; the encoder converts dense frames into the transmitted \HVM{} representation; the decoder produces a reconstructed sequence from the vision--language memory; and the evaluation stage runs the VSLAM estimator on both original and reconstructed sequences. Unless otherwise stated, phase correlation (PC) is used as the edge-side motion estimator. The cloud uses a vision--language conditioned world-model decoder. We compare the original world-model decoder (WM decoder) with the same decoder equipped with LoRA weights (WM+LoRA decoder).
 
-Trajectory quality is measured from the VSLAM backend output using evo after Sim(3) alignment, and the reported task metric is APE RMSE. Compression is measured by comparing the size of the original image sequence with the size of the transmitted \HVM{} representation. LPIPS, SSIM, and FID are used only as auxiliary image-fidelity metrics in the LoRA ablation; they are not the final task-level objective of \HVM.
+Trajectory quality is measured from the VSLAM estimator output using evo after Sim(3) alignment, and the reported task metric is APE RMSE. Compression is measured by comparing the size of the original image sequence with the size of the transmitted \HVM{} representation. LPIPS, SSIM, and FID are used only as auxiliary image-fidelity metrics in the LoRA ablation; they are not the final task-level objective of \HVM.
 
 \subsection{End-to-End Compression and VSLAM Accuracy}
 \label{subsec:compression_accuracy}
@@ -53,11 +53,11 @@ The first experiment evaluates end-to-end transmission reduction and VSLAM traje
 
 Table~\ref{tab:compression_accuracy} reports that, on average, the raw image sequence size is 404.16 MiB, while the transmitted \HVM{} representation is 11.12 MiB. This corresponds to an average data reduction of 96.8\%, indicating that the proposed representation substantially reduces transmitted visual data.
 
-The VSLAM results indicate that this reduction can retain task-usable geometric information. The average ORI APE RMSE is 0.694 m, while the average GEN APE RMSE is 0.707 m. The derived \(\Delta\)APE row reports GEN--ORI differences, where positive values indicate higher APE for generated sequences and negative values indicate lower APE. The average \(\Delta\)APE is +0.013 m, showing that GEN APE is close to ORI APE on average.
+The VSLAM results indicate that this reduction can retain task-usable geometric information. ORI and REC denote the original and reconstructed sequences, respectively. \(\Delta\)APE RMSE is computed as REC APE minus ORI APE. The average ORI APE is 0.694 m, while the average REC APE is 0.707 m. The derived \(\Delta\)APE RMSE row reports REC--ORI differences, where positive values indicate higher APE for reconstructed sequences and negative values indicate lower APE. The average \(\Delta\)APE RMSE is +0.013 m, showing that REC APE is close to ORI APE on average.
 
-The sequence-level differences should be interpreted cautiously. Some generated sequences obtain lower APE than their original counterparts, whereas others obtain higher APE. A negative \(\Delta\)APE is not a physical-quality claim about generated frames; it only indicates that the VSLAM backend estimated a lower aligned trajectory error on that reconstructed sequence. This behavior is expected because \HVM{} does not aim to reconstruct pixel-identical videos, but to retain enough geometric continuity and trackable texture for downstream VSLAM.
+The sequence-level differences should be interpreted cautiously. Some reconstructed sequences obtain lower APE than their original counterparts, whereas others obtain higher APE. A negative \(\Delta\)APE is not a physical-quality claim about reconstructed frames; it only indicates that the VSLAM estimator estimated a lower aligned trajectory error on that reconstructed sequence. This behavior is expected because \HVM{} does not aim to reconstruct pixel-identical videos, but to retain enough geometric continuity and trackable texture for downstream VSLAM.
 
-Fig.~\ref{fig:trajectory_map} complements Table~\ref{tab:compression_accuracy} by comparing trajectories and point-cloud reconstructions on NCD, TUM, and GDUT. The generated sequences retain the main route structure and support trackable reconstruction in these examples, which provides qualitative evidence for task-usable geometric continuity under aggressive transmission reduction.
+Fig.~\ref{fig:trajectory_map} complements Table~\ref{tab:compression_accuracy} by comparing trajectories and point-cloud reconstructions on NCD, TUM, and GDUT. The reconstructed sequences retain the main route structure and support trackable reconstruction in these examples, which provides qualitative evidence for task-usable geometric continuity under aggressive transmission reduction.
 
 \subsection{Payload Size and Runtime Breakdown}
 \label{subsec:payload_runtime}
@@ -66,7 +66,7 @@ To further analyze transmission behavior, we enable the compression benchmark on
 
 \input{tables/tab_exp4_payload_runtime}
 
-The \HVM{} memory construction takes 51.80 s, mainly including 40.13 s for phase-correlation motion memory, 10.43 s for visual-anchor extraction, and 0.69 s for result writing. Cloud-side generation takes 296.64 s, corresponding to 6.59 FPS. Therefore, the current prototype is primarily bottlenecked by cloud-side world-model generation rather than by the compact memory representation. This compute-bound cost depends on the generation backend, accelerator memory, and parallel serving strategy; real-time optimized cloud deployment is left for future work.
+The \HVM{} memory encoding takes 51.80 s, mainly including 40.13 s for phase-correlation motion memory, 10.43 s for semantic-anchor extraction, and 0.69 s for payload serialization. Cloud-side reconstruction takes 296.64 s, corresponding to 6.59 FPS. Therefore, the current prototype is primarily bottlenecked by cloud-side world-model reconstruction rather than by the compact memory representation. This compute-bound cost depends on the world-model decoder, accelerator memory, and parallel serving strategy; real-time optimized cloud deployment is left for future work.
 
 \subsection{Edge-Side Motion Estimation Benchmark}
 \label{subsec:motion_benchmark}
@@ -82,33 +82,33 @@ The second experiment compares three edge-side motion estimation choices for con
 \label{fig:motion_benchmark}
 \end{figure*}
 
-Table~\ref{tab:motion_benchmark} reports the runtime cost of the three edge-side motion estimation choices. The relative cost is normalized by the PC runtime, and the valid-output ratio denotes the fraction of frame pairs for which a method produced usable motion evidence.
+Table~\ref{tab:motion_benchmark} reports the runtime cost of the three edge-side motion estimation choices. The relative cost is normalized by the PC runtime, and the valid ratio denotes the fraction of frame pairs for which a method produced usable motion evidence.
 
 PC is the lightest option, requiring 4.51 s in total and 4.70 ms per frame pair. ORB feature tracking requires 11.73 s, or 2.60x the PC cost, and produces usable motion evidence for 85.7\% of the evaluated pairs. Farneback optical flow (OF) provides a denser motion field, but its runtime increases to 29.75 s, or 6.59x the PC cost.
 
 Fig.~\ref{fig:motion_benchmark} provides the corresponding qualitative evidence. The three temporal color bands indicate the main turning intervals, and PC identifies these event-level turns consistently with ORB and OF. ORB can lose valid output in difficult intervals because it depends on repeatable feature tracks, while OF provides dense local motion at substantially higher cost. PC is therefore not used as a replacement for dense optical flow; it is used as a lightweight cue that is sufficient for coarse, language-level motion memory.
 
-The lower-right GEN a / GEN b comparison in Fig.~\ref{fig:motion_benchmark} further illustrates the role of motion--semantic constraints. Without motion-estimation guidance, generation can produce an implausible intermediate viewpoint during a right turn. With the full motion--semantic dual constraint, the generated sequence shows a smoother and more plausible right-turn transition. This example is qualitative evidence for the encoder design, not a general claim about reconstruction accuracy.
+The lower-right REC a / REC b comparison in Fig.~\ref{fig:motion_benchmark} further illustrates the role of motion--semantic response fusion. Without motion-estimation guidance, reconstruction can produce an implausible intermediate viewpoint during a right turn. With the full motion--semantic response fusion, the reconstructed sequence shows a smoother and more plausible right-turn transition. This example is qualitative evidence for the encoder design, not a general claim about reconstruction accuracy.
 
 \subsection{LoRA Ablation for the World-Model Decoder}
 \label{subsec:lora_ablation}
 
-The final experiment ablates the Base and LoRA variants of the world-model decoder.
+The final experiment compares the WM and WM+LoRA decoders.
 
 \input{tables/tab_exp3_lora_ablation}
 
-Table~\ref{tab:lora_ablation} reports APE values as RMSE in meters, while LPIPS, SSIM, and FID are auxiliary image-fidelity metrics. The average GEN APE RMSE decreases from 0.609 m with the Base decoder to 0.321 m with LoRA, while the average ORI APE RMSE remains 0.240 m because the original sequences are not affected by the decoder. This suggests that LoRA appears to bias the decoder toward VSLAM-oriented reconstruction in the reported ablation.
+Table~\ref{tab:lora_ablation} reports APE values as RMSE in meters, while LPIPS, SSIM, and FID are auxiliary image-fidelity metrics. The average REC APE decreases from 0.609 m with WM to 0.321 m with WM+LoRA, while the average ORI APE remains 0.240 m because the original sequences are not affected by the decoder. This suggests that LoRA appears to bias the decoder toward VSLAM-oriented reconstruction in the reported ablation.
 
-The image-fidelity metrics do not improve in the same direction. On average, LPIPS changes from 0.335 to 0.398, SSIM changes from 0.604 to 0.515, and FID changes from 61.286 to 66.552. Since LPIPS, SSIM, and FID measure image fidelity and are not the optimization target of \HVM, these changes do not by themselves indicate system failure or success.
+The image-fidelity metrics do not improve in the same direction. On average, LPIPS changes from 0.335 to 0.398, SSIM changes from 0.604 to 0.515, and FID changes from 61.286 to 66.552. Since LPIPS, SSIM, and FID measure image fidelity and are not the optimization target of \HVM, these changes do not by themselves determine task-level performance.
 
-Instead, the ablation indicates that traditional image similarity and VSLAM trajectory quality are not fully aligned in this setting. LoRA encourages reconstruction behavior that is more useful to the VSLAM backend, rather than uniformly improving pixel-level similarity or perceptual image quality.
+Instead, the ablation indicates that traditional image similarity and VSLAM trajectory quality are not fully aligned in this setting. LoRA encourages reconstruction behavior that is more useful to the VSLAM estimator, rather than uniformly improving pixel-level similarity or perceptual image quality.
 
-Fig.~\ref{fig:lora_qualitative} provides qualitative evidence for this mismatch. In the shown transitional views, the LoRA-adapted decoder reduces VSLAM-harmful local geometric distortion, implausible structure generation, and hallucinated content compared with the base world-model decoder. The red-circled regions indicate representative base-decoder failures that may damage feature tracking and geometric continuity, which is more consistent with the observed reduction in downstream GEN APE RMSE than with conventional image-fidelity metrics alone.
+Fig.~\ref{fig:lora_qualitative} provides qualitative evidence for this mismatch. In the shown transitional views, WM+LoRA reduces VSLAM-harmful local geometric distortion, implausible reconstructed structures, and hallucinated content compared with WM. The red-circled regions indicate representative WM failures that may damage feature tracking and geometric continuity, which is more consistent with the observed reduction in downstream REC APE than with conventional image-fidelity metrics alone.
 
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig8.png}
-\caption{Qualitative comparison between the base world-model decoder (WM) and the LoRA-adapted decoder (WM + LoRA). Red circles mark representative VSLAM-harmful artifacts.}
+\caption{Qualitative comparison between WM and WM+LoRA behavior. Red circles mark representative VSLAM-harmful artifacts.}
 \label{fig:lora_qualitative}
 \vspace{-3pt}
 \end{figure}
