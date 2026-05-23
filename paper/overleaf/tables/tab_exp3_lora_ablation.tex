@@ -8,16 +8,16 @@
 \setlength{\tabcolsep}{2pt}
 \begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}llrrrrr@{}}
 \toprule
-Data & Dec. & ORI APE & GEN APE & LPIPS & SSIM & FID \\
+Data & Dec. & ORI APE & REC APE & LPIPS & SSIM & FID \\
 \midrule
-NCD & Base & 0.142 & 0.539 & 0.270 & 0.593 & 50.151 \\
-NCD & LoRA & 0.142 & \textbf{0.289} & 0.307 & 0.507 & 23.950 \\
-TUM & Base & 0.224 & 0.320 & 0.392 & 0.634 & 71.539 \\
-TUM & LoRA & 0.224 & \textbf{0.224} & 0.514 & 0.480 & 104.861 \\
-GDUT & Base & 0.354 & 0.968 & 0.345 & 0.587 & 62.169 \\
-GDUT & LoRA & 0.354 & \textbf{0.451} & 0.372 & 0.559 & 70.845 \\
-Avg. & Base & 0.240 & 0.609 & 0.335 & 0.604 & 61.286 \\
-Avg. & LoRA & 0.240 & \textbf{0.321} & 0.398 & 0.515 & 66.552 \\
+NCD & WM & 0.142 & 0.539 & 0.270 & 0.593 & 50.151 \\
+NCD & WM+LoRA & 0.142 & \textbf{0.289} & 0.307 & 0.507 & 23.950 \\
+TUM & WM & 0.224 & 0.320 & 0.392 & 0.634 & 71.539 \\
+TUM & WM+LoRA & 0.224 & \textbf{0.224} & 0.514 & 0.480 & 104.861 \\
+GDUT & WM & 0.354 & 0.968 & 0.345 & 0.587 & 62.169 \\
+GDUT & WM+LoRA & 0.354 & \textbf{0.451} & 0.372 & 0.559 & 70.845 \\
+Avg. & WM & 0.240 & 0.609 & 0.335 & 0.604 & 61.286 \\
+Avg. & WM+LoRA & 0.240 & \textbf{0.321} & 0.398 & 0.515 & 66.552 \\
 \bottomrule
 \end{tabular*}%
 \vspace{0.2em}
