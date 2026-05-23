@@ -46,7 +46,7 @@ The first experiment evaluates end-to-end transmission reduction and VSLAM traje
 
 \begin{figure*}[!t]
 \centering
-\includegraphics[width=\textwidth]{figures/fig_exp1_trajectory_map.png}
+\includegraphics[width=\textwidth]{figures/fig6.png}
 \caption{Trajectory comparison and point-cloud reconstruction results on NCD, TUM, and GDUT.}
 \label{fig:trajectory_map}
 \end{figure*}
@@ -77,7 +77,7 @@ The second experiment compares three edge-side motion estimation choices for con
 
 \begin{figure*}[!t]
 \centering
-\includegraphics[width=\textwidth]{figures/fig_exp2_motion_benchmark.png}
+\includegraphics[width=\textwidth]{figures/fig7.png}
 \caption{Qualitative comparison of phase correlation, ORB feature tracking, and Farneback optical flow for edge-side motion estimation.}
 \label{fig:motion_benchmark}
 \end{figure*}
@@ -102,3 +102,13 @@ Table~\ref{tab:lora_ablation} reports APE values as RMSE in meters, while LPIPS,
 The image-fidelity metrics do not improve in the same direction. On average, LPIPS changes from 0.335 to 0.398, SSIM changes from 0.604 to 0.515, and FID changes from 61.286 to 66.552. Since LPIPS, SSIM, and FID measure image fidelity and are not the optimization target of \HVM, these changes do not by themselves indicate system failure or success.
 
 Instead, the ablation indicates that traditional image similarity and VSLAM trajectory quality are not fully aligned in this setting. LoRA encourages reconstruction behavior that is more useful to the VSLAM backend, rather than uniformly improving pixel-level similarity or perceptual image quality.
+
+Fig.~\ref{fig:lora_qualitative} provides qualitative evidence for this mismatch. In the shown transitional views, the LoRA-adapted decoder reduces VSLAM-harmful local geometric distortion, implausible structure generation, and hallucinated content compared with the base world-model decoder. The red-circled regions indicate representative base-decoder failures that may damage feature tracking and geometric continuity, which is more consistent with the observed reduction in downstream GEN APE RMSE than with conventional image-fidelity metrics alone.
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig8.png}
+\caption{Qualitative comparison between the base world-model decoder (WM) and the LoRA-adapted decoder (WM + LoRA). Red circles mark representative VSLAM-harmful artifacts.}
+\label{fig:lora_qualitative}
+\vspace{-3pt}
+\end{figure}
