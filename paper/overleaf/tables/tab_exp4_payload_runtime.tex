@@ -8,14 +8,14 @@
 \setlength{\tabcolsep}{3.8pt}
 \begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}lccc@{}}
 \toprule
-Representation & Payload & Time (s) & Size/HVM \\
+Representation & Payload & Time (s) & Size/VLMem \\
 \midrule
 Raw image ZIP & 777.55 MiB & 25.51 & 51.0$\times$ \\
 H.265 MP4, 10 Mbps & 101.51 MiB & 97.71 & 6.7$\times$ \\
-HVM payload & 15.26 MiB & 51.80 & 1.0$\times$ \\
+VLMem payload & 15.26 MiB & 51.80 & 1.0$\times$ \\
 \bottomrule
 \end{tabular*}%
 \vspace{0.2em}
 
-\parbox{\columnwidth}{\footnotesize The sequence contains 1921 frames at 24 FPS. H.265 uses a 10 Mbps setting. Time reports payload encoding time; HVM cloud-side reconstruction time is excluded and discussed in text. Size/HVM denotes the payload-size ratio relative to the HVM payload.}
+\parbox{\columnwidth}{\footnotesize The sequence contains 1921 frames at 24 FPS. H.265 uses a 10 Mbps setting. Time reports payload encoding time; VLMem cloud-side reconstruction time is excluded and discussed in text. Size/VLMem denotes the payload-size ratio relative to the VLMem payload.}
 \end{table}

@@ -1,5 +1,5 @@
 %% main.tex
-%% HVM-Codec IEEE T-ITS manuscript skeleton.
+%% VLMem-Codec IEEE T-ITS manuscript skeleton.
 %% Modified from the IEEEtran bare_jrnl.tex journal template.
 %% Keep IEEEtran.cls and IEEE publication rules unchanged when preparing the final submission.
 
@@ -16,7 +16,7 @@
 \usepackage{url}
 
 % -------------------- Project Macros --------------------
-\newcommand{\HVM}{HVM-Codec}
+\newcommand{\VLMemCodec}{VLMem-Codec}
 \newcommand{\Iseq}{\mathcal{I}}
 \newcommand{\Mmem}{\mathcal{M}}
 \newcommand{\Kframes}{\mathcal{K}}
@@ -44,7 +44,7 @@ Replace this box with the final vector figure or high-resolution image.
 \begin{document}
 
 % -------------------- Title --------------------
-\title{\HVM: Human-Inspired Vision--Language Memory Coding for Edge--Cloud Visual SLAM}
+\title{\VLMemCodec: Vision--Language Memory Coding with World-Model Reconstruction for Efficient Visual Transmission in Edge--Cloud VSLAM}
 
 % -------------------- Authors --------------------
 % TODO: Replace author names, memberships, affiliations, and funding/manuscript information.
@@ -58,18 +58,18 @@ Replace this box with the final vector figure or high-resolution image.
 
 % -------------------- Running Header --------------------
 \markboth{IEEE Transactions on Intelligent Transportation Systems}%
-{First Author \MakeLowercase{\textit{et al.}}: \HVM: Human-Inspired Vision--Language Memory Coding for Edge--Cloud VSLAM}
+{First Author \MakeLowercase{\textit{et al.}}: \VLMemCodec: Vision--Language Memory Coding with World-Model Reconstruction for Efficient Visual Transmission in Edge--Cloud VSLAM}
 
 \maketitle
 
 % -------------------- Abstract --------------------
 \begin{abstract}
-Edge--cloud visual simultaneous localization and mapping (VSLAM) can exploit cloud-side perception and mapping, but it requires transmitting dense visual streams from resource-constrained edge devices, causing substantial bandwidth and energy costs. Conventional image and video codecs mainly optimize pixel-level or perceptual fidelity, and their objectives are not explicitly designed around the geometric continuity and trackable structures needed by VSLAM. This paper proposes \HVM, a human-inspired vision--language memory coding framework for VSLAM-oriented visual transmission. Instead of sending dense frames, the edge encoder represents a visual sequence using sparse boundary frames, motion memory, semantic anchors, and compact language memory. On the cloud side, a vision--language conditioned world-model decoder reconstructs task-usable intermediate views under the transmitted vision--language conditions, and memory-guided world-model refinement, implemented with Low-Rank Adaptation (LoRA), is used to bias the decoder toward VSLAM-oriented reconstruction. The proposed codec is evaluated using downstream absolute pose error (APE) RMSE, transmission reduction, edge-side motion-estimation cost, and auxiliary LPIPS, SSIM, and FID metrics. Experiments show an average 96.8\% transmission reduction, reconstructed-sequence APE close to original-sequence APE on average, low-cost phase-correlation motion memory, and a reduction in reconstructed-sequence APE with LoRA in the reported decoder ablation.
+Edge--cloud visual simultaneous localization and mapping (VSLAM) can exploit cloud-side perception and mapping, but it requires transmitting dense visual streams from resource-constrained edge devices, creating a bandwidth bottleneck with substantial energy and latency costs. Conventional image and video codecs mainly optimize pixel-level or perceptual fidelity, and their objectives are not explicitly designed around the geometric continuity and trackable structures needed by VSLAM. This paper proposes \VLMemCodec, a Vision--Language Memory coding framework with world-model reconstruction for efficient visual transmission in Edge--Cloud VSLAM. The edge encoder converts a dense visual sequence into VLMem, or Vision--Language Memory, and transmits it as a compact VLMem payload. Each VLMem payload unit combines visual anchors and language cues: visual anchors are boundary visual anchors that constrain start/end views, appearance, and geometry, while language cues provide compact motion, semantic, and reconstruction conditions. On the cloud side, world-model reconstruction reconstructs omitted frames from the transmitted VLMem conditions, and Memory-Guided Decoder Refinement (MGDR), implemented with LoRA-based low-rank increments, biases the decoder toward VSLAM-useful visual continuity without retraining the whole world model. The proposed codec is evaluated using downstream absolute pose error (APE) RMSE, transmission reduction, edge-side motion-estimation cost, and auxiliary LPIPS, SSIM, and FID metrics. Experiments show an average 96.8\% transmission reduction, reconstructed-sequence APE close to original-sequence APE on average, low-cost phase-correlation motion cues, and a reduction in reconstructed-sequence APE with MGDR in the reported decoder ablation.
 \end{abstract}
 
 % -------------------- Keywords --------------------
 \begin{IEEEkeywords}
-Edge--cloud VSLAM, vision--language memory coding, VSLAM-oriented visual transmission, world model, task-usable visual reconstruction, memory-guided world-model refinement.
+\VLMemCodec, Vision--Language Memory, efficient visual transmission, Edge--Cloud VSLAM, world model, world-model reconstruction, Memory-Guided Decoder Refinement (MGDR).
 \end{IEEEkeywords}
 
 \IEEEpeerreviewmaketitle

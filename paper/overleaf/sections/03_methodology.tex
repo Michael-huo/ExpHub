@@ -12,16 +12,16 @@
 \subsection{Framework Overview and Problem Formulation}
 \label{subsec:framework_formulation}
 
-\HVM{} formulates edge--cloud VSLAM transmission as a VSLAM-oriented vision--language memory coding problem. Instead of sending a dense image stream to the cloud, the edge device selects sparse boundary frames and summarizes the omitted intervals with motion memory, semantic anchors, and language memory. The cloud then reconstructs task-usable intermediate views with a vision--language conditioned world-model decoder, and the resulting visual stream is consumed by a conventional cloud-side VSLAM estimator.
+\VLMemCodec{} formulates Edge--Cloud VSLAM transmission as a communication-constrained visual transmission problem. Instead of sending a dense image stream to the cloud, the edge device constructs a VLMem payload from sparse visual anchors and compact language cues. The visual anchors are boundary visual anchors that constrain the start/end views, appearance, and geometry of each memory unit, while the language cues summarize motion and reconstruction conditions for the omitted interval. The cloud then performs World-Model Reconstruction to recover task-usable intermediate views, and the resulting visual stream is consumed by a conventional cloud-side VSLAM estimator.
 
 \begin{figure*}[!t]
 \centering
 \includegraphics[width=\textwidth]{figures/fig2.png}
-\caption{Overall framework of HVM-Codec for edge--cloud VSLAM visual transmission. The edge-side encoder converts dense visual streams into boundary frames, motion memory, semantic anchors, and compact language memory, while the cloud-side world-model decoder reconstructs task-usable visual sequences for downstream VSLAM. The same memory format is used for inference and memory-guided refinement.}
+\caption{Overall framework of VLMem-Codec for Edge--Cloud VSLAM. VLMem denotes Vision--Language Memory, and the transmitted VLMem payload consists of visual anchors and language cues. The cloud-side world-model decoder reconstructs omitted frames from the VLMem payload, while MGDR (Memory-Guided Decoder Refinement) uses the same conditions to refine the decoder for downstream VSLAM.}
 \label{fig:framework}
 \end{figure*}
 
-Fig.~\ref{fig:framework} gives the global pipeline. The edge device performs lightweight memory encoding over a fixed set of admissible temporal positions, transmits sparse vision--language memory, and leaves dense visual reconstruction to the cloud. The same memory format is used offline to prepare memory-guided refinement pairs, so the decoder observes consistent boundary-frame and language-memory conditions during refinement and inference.
+Fig.~\ref{fig:framework} gives the global pipeline. The edge device performs lightweight VLMem encoding over a fixed set of admissible temporal positions, transmits the compact VLMem payload, and leaves dense visual reconstruction to the cloud. The same VLMem format is used offline to prepare MGDR pairs, so the decoder observes consistent visual-anchor and language-cue conditions during refinement and inference.
 
 Let the dense visual stream captured by the edge device be
 \begin{equation}
@@ -32,7 +32,7 @@ I_t\in\mathbb{R}^{H\times W\times C}.
 \end{equation}
 Here \(I_t\) is the \(t\)-th image in a sequence of length \(T\), and \(H\), \(W\), and \(C\) denote image height, width, and channels.
 
-The edge encoder represents omitted intervals by vision--language memory units. Let \(\mathcal{P}\subseteq\{1,\ldots,T\}\) denote the admissible temporal positions from which boundaries and anchor candidates may be selected. Unit \(i\) is
+The edge encoder represents omitted intervals by VLMem units. Let \(\mathcal{P}\subseteq\{1,\ldots,T\}\) denote the admissible temporal positions from which visual anchors and event candidates may be selected. Unit \(i\) is
 \begin{equation}
 \begin{aligned}
 \mathcal{U}_i
@@ -42,7 +42,7 @@ b_i^-,b_i^+\in\mathcal{P}.
 \end{aligned}
 \label{eq:vl_memory_unit}
 \end{equation}
-The boundary frames \(I_{b_i^-}\) and \(I_{b_i^+}\) provide geometric and appearance constraints at the ends of the unit. The variable \(\mathcal{S}_i\) is motion memory, \(\mathcal{A}_i\) is the set of semantic anchors, and \(\mathcal{L}_i\) and \(\mathcal{L}_i^{-}\) are positive and negative language memory.
+The visual anchors \(I_{b_i^-}\) and \(I_{b_i^+}\) provide geometric and appearance constraints at the ends of the unit. The variable \(\mathcal{S}_i\) is the compact motion cue, \(\mathcal{A}_i\) is the set of semantic event anchors used during unit construction, and \(\mathcal{L}_i\) and \(\mathcal{L}_i^{-}\) are positive and negative language cues.
 
 The edge-side memory encoder \(\mathcal{E}_{\phi}\) and cloud-side world-model decoder \(\mathcal{G}_{\theta+\Delta\theta}\) are written compactly as
 \begin{equation}
@@ -55,9 +55,9 @@ The edge-side memory encoder \(\mathcal{E}_{\phi}\) and cloud-side world-model d
 \end{aligned}
 \label{eq:memory_coding}
 \end{equation}
-The memory \(\mathcal{M}\) is not a conventional pixel bitstream. It is sparse vision--language memory containing boundary frames, motion memory, semantic-anchor indicators, language memory, and metadata needed for task-usable visual reconstruction on the cloud side. The increment \(\Delta\theta\) denotes optional decoder refinement increments applied to the pretrained decoder; Sec.~\ref{subsec:wm_lora_decoding} instantiates these increments with LoRA. With \(\Delta\theta=0\), the same notation describes the original unrefined world-model decoder. The small constant \(\epsilon\) used in later normalized ratios is introduced only for stable normalization.
+The memory \(\mathcal{M}\) is not a conventional pixel bitstream. It is the VLMem payload containing visual anchors, compact motion cues, semantic event indicators, language cues, and metadata needed for task-usable visual reconstruction on the cloud side. The increment \(\Delta\theta\) denotes optional MGDR increments applied to the pretrained decoder; Sec.~\ref{subsec:wm_lora_decoding} instantiates these increments with LoRA-based low-rank updates. With \(\Delta\theta=0\), the same notation describes the original unrefined world-model decoder. The small constant \(\epsilon\) used in later normalized ratios is introduced only for stable normalization.
 
-Let \(\mathcal{B}\) denote the boundary positions and let \(\mathcal{K}=\{I_b\mid b\in\mathcal{B}\}\) be the transmitted boundary-frame set. The transmission cost is
+Let \(\mathcal{B}\) denote the visual-anchor positions and let \(\mathcal{K}=\{I_b\mid b\in\mathcal{B}\}\) be the transmitted visual-anchor image set. The transmission cost is
 \begin{equation}
 \begin{aligned}
 \mathcal{R}(\mathcal{M})
@@ -69,9 +69,9 @@ Let \(\mathcal{B}\) denote the boundary positions and let \(\mathcal{K}=\{I_b\mi
 \end{aligned}
 \label{eq:transmission_cost}
 \end{equation}
-Here \(\mathcal{R}(\cdot)\) denotes payload size. The compact memory term covers motion memory, semantic-anchor indicators, and language memory; Eq.~\eqref{eq:transmission_cost} is a rate model for reasoning about payload, not a claim that all components contribute equally.
+Here \(\mathcal{R}(\cdot)\) denotes payload size. The compact memory term covers motion cues, semantic event indicators, and language cues; Eq.~\eqref{eq:transmission_cost} is a rate model for reasoning about the VLMem payload, not a claim that all components contribute equally.
 
-The VSLAM-oriented rate--trajectory design criterion is
+The task-aware rate--trajectory design criterion is
 \begin{equation}
 \begin{aligned}
 \mathcal{M}^{\star}
@@ -85,21 +85,21 @@ The VSLAM-oriented rate--trajectory design criterion is
 \end{equation}
 Here \(\Omega\) is the admissible family of memory representations, \(\lambda\) is the trade-off coefficient between transmission cost and downstream trajectory discrepancy, \(\mathcal{F}_{\mathrm{slam}}\) is the cloud-side VSLAM estimator, \(\mathcal{T}\) is the reference trajectory when available, and \(\mathcal{D}_{\mathrm{slam}}\) is evaluated through APE RMSE in the experiments.
 
-Eq.~\eqref{eq:rate_trajectory_design} is a VSLAM-oriented rate--trajectory design criterion rather than a closed-form optimization solved by the implementation. Conventional rate--distortion coding usually measures pixel distortion or perceptual reconstruction error. HVM-Codec instead treats task distortion as downstream VSLAM trajectory quality after task-usable visual reconstruction. In this paper, the two sides of the criterion are evaluated empirically through payload size and APE RMSE, while auxiliary image-fidelity metrics are reported separately.
+Eq.~\eqref{eq:rate_trajectory_design} is a rate--trajectory design criterion for efficient visual transmission rather than a closed-form optimization solved by the implementation. Conventional rate--distortion coding usually measures pixel distortion or perceptual reconstruction error. \VLMemCodec{} instead treats task distortion as downstream VSLAM trajectory quality after task-usable visual reconstruction. In this paper, the two sides of the criterion are evaluated empirically through payload size and APE RMSE, while auxiliary image-fidelity metrics are reported separately.
 
-\subsection{Motion--Semantic Event Memory Encoding}
+\subsection{Motion--Semantic Event Segmentation}
 \label{subsec:motion_semantic_segmentation}
 
-The edge encoder constructs memory units from two complementary cues: a block-wise motion trend response and a semantic-anchor response. The motion trend response identifies forward motion, turning, and mixed transitions that affect viewpoint continuity. Semantic anchors capture embedding-level scene/content changes that should constrain admissible unit spans even when the coarse motion regime remains stable.
+The edge encoder constructs event units from two complementary cues: a block-wise Motion Response and a Semantic Response. The Motion Response identifies forward motion, turning, and mixed transitions that affect viewpoint continuity. The Semantic Response captures embedding-level scene/content changes that should constrain admissible unit spans even when the coarse motion regime remains stable. These event-segmentation concepts are intermediate steps used before the final VLMem payload is assembled.
 
 \begin{figure*}[!t]
 \centering
 \includegraphics[width=0.92\textwidth]{figures/fig3.png}
-\caption{Motion--semantic response fusion. Motion trend responses and semantic anchor responses are fused to divide the dense visual stream into vision--language memory units. Each unit is represented by boundary frames, motion memory, semantic anchors, and compact language memory.}
+\caption{Dual-response fusion event segmentation. Motion Response and Semantic Response are fused to identify Event Boundaries and Event Units; this intermediate stage precedes final VLMem payload construction from visual anchors and language cues.}
 \label{fig:event_segmentation}
 \end{figure*}
 
-As shown in Fig.~\ref{fig:event_segmentation}, the encoder estimates low-cost motion trend response between consecutive frames by block-wise phase correlation. The encoder does not require dense pixel-level correspondence; it needs motion-regime-level evidence for boundary construction and motion-conditioned language memory. Each frame is divided into spatial blocks indexed by \(g\), \(I_t^g\) denotes the corresponding image patch, and \(H\) is a local windowing mask. The phase-correlation response is
+As shown in Fig.~\ref{fig:event_segmentation}, the encoder estimates low-cost Motion Response between consecutive frames by block-wise phase correlation. The encoder does not require dense pixel-level correspondence; it needs motion-regime-level evidence for Event Boundary construction and motion-conditioned language cues. Each frame is divided into spatial blocks indexed by \(g\), \(I_t^g\) denotes the corresponding image patch, and \(H\) is a local windowing mask. The phase-correlation response is
 \begin{equation}
 \begin{aligned}
 \widetilde{I}_{t}^{g}
@@ -182,7 +182,7 @@ r_t^{\mathrm{fwd}},\rho_t\}_{t\in W_j}),\\
 \end{equation}
 Here \(W_j\) is an admissible temporal window, \(\rho_t\) is frame-level confidence aggregated from block responses, and \(\bar{\rho}_j\) is the window-average confidence. The label \(\ell_j\) is the window-level motion regime, while \(\widetilde{\ell}_j\) suppresses isolated low-confidence regime changes when neighboring windows agree. This stabilization is needed because frame-level motion evidence can be noisy, especially near weak texture or transient viewpoint changes. By preserving persistent transitions while suppressing unreliable one-window changes, it reduces unnecessary fragmentation of the memory representation.
 
-Semantic anchors complement motion memory by detecting embedding-level scene/content changes. For a candidate admissible position \(p\) and current semantic context \(c\), define
+The Semantic Response complements motion cues by detecting embedding-level scene/content changes. For a candidate admissible position \(p\) and current semantic context \(c\), define
 \begin{equation}
 \begin{aligned}
 \mathbf{z}_{p}
@@ -198,9 +198,9 @@ r_p^{\mathrm{sem}}(c)=1-\mathbf{z}_{p}^{\top}\mathbf{z}_{c},\\
 \end{aligned}
 \label{eq:semantic_anchor_admission}
 \end{equation}
-Here \(f_{\psi}\) is the image embedding encoder, \(\mathbf{z}_{p}\) and \(\mathbf{z}_{c}\) are normalized embeddings, and \(r_p^{\mathrm{sem}}(c)\) is the semantic-anchor response relative to the current semantic context \(c\). The context \(c\) need not be the immediately preceding frame; it represents the active scene/content reference used for the current interval. The operator \(\operatorname{Pers}_{P_{\min}}\) requires enough supporting admissible positions, and \(\operatorname{Sep}\) enforces separation from the semantic context and the unit boundary. The threshold \(\tau_a(s)\) depends on the motion regime \(s\), and \(\mathrm{turn}\) denotes either left-turn or right-turn regimes. Semantic anchors are embedding-level scene/content changes rather than hand-labeled object categories.
+Here \(f_{\psi}\) is the image embedding encoder, \(\mathbf{z}_{p}\) and \(\mathbf{z}_{c}\) are normalized embeddings, and \(r_p^{\mathrm{sem}}(c)\) is the Semantic Response relative to the current semantic context \(c\). The context \(c\) need not be the immediately preceding frame; it represents the active scene/content reference used for the current interval. The operator \(\operatorname{Pers}_{P_{\min}}\) requires enough supporting admissible positions, and \(\operatorname{Sep}\) enforces separation from the semantic context and the unit boundary. The threshold \(\tau_a(s)\) depends on the motion regime \(s\), and \(\mathrm{turn}\) denotes either left-turn or right-turn regimes. Semantic event anchors are embedding-level scene/content changes rather than hand-labeled object categories.
 
-Finally, semantic anchors and admissible unit spans are combined through sequential boundary construction. Let \(\Delta_s\) be the motion-regime-dependent admissible unit span set and \(e\) the endpoint of the current interval:
+Finally, semantic event anchors and admissible unit spans are combined through sequential Event Boundary construction. Let \(\Delta_s\) be the motion-regime-dependent admissible unit span set and \(e\) the endpoint of the current interval:
 \begin{equation}
 \begin{aligned}
 \mathcal{N}_k
@@ -217,23 +217,23 @@ b_{k+1}
 \end{aligned}
 \label{eq:admissible_boundary_construction}
 \end{equation}
-Here \(\mathcal{N}_k\) is the set of admissible next boundary positions from the current boundary \(b_k\), and \(\operatorname{Reach}(p,e;\Delta_s)\) ensures that the remaining interval can still be covered by valid spans. The construction chooses the earliest admissible semantic anchor when one is available; otherwise, it advances to the farthest reachable admissible boundary. This is a sequential construction, not a global optimization.
+Here \(\mathcal{N}_k\) is the set of admissible next Event Boundary positions from the current boundary \(b_k\), and \(\operatorname{Reach}(p,e;\Delta_s)\) ensures that the remaining interval can still be covered by valid spans. The construction chooses the earliest admissible semantic event anchor when one is available; otherwise, it advances to the farthest reachable admissible boundary. This is a sequential construction, not a global optimization.
 
-The complete event-memory encoding in III-B therefore has three stages. Block-wise phase correlation provides a low-cost motion trend response, semantic-anchor response adds embedding-level scene/content-change constraints, and admissible boundary construction combines both cues into vision--language memory units. The two responses are complementary: motion cues shorten difficult turn and mixed intervals where viewpoint change is harder to reconstruct, while semantic anchors prevent long stable-motion intervals from becoming visually underconstrained.
+The complete event encoding in III-B therefore has three stages. Block-wise phase correlation provides a low-cost Motion Response, the Semantic Response adds embedding-level scene/content-change constraints, and admissible Event Boundary construction combines both cues into Event Units. The two responses are complementary: motion cues shorten difficult turn and mixed intervals where viewpoint change is harder to reconstruct, while semantic event anchors prevent long stable-motion intervals from becoming visually underconstrained. These Event Units are then converted into VLMem units by attaching visual anchors and language cues for transmission.
 
 \subsection{Dual-Branch World-Model Decoding}
 \label{subsec:wm_lora_decoding}
 
-The cloud-side decoder has two coupled branches. The inference branch reconstructs task-usable intermediate frames from the transmitted vision--language memory, while the refinement branch performs \emph{memory-guided world-model refinement}. This refinement uses the same memory format as inference, exposing the decoder during refinement to the same type of boundary frames and language memory that it receives during deployment.
+The cloud-side decoder has two coupled branches. The inference branch reconstructs task-usable intermediate frames from the transmitted VLMem payload, while the refinement branch performs \emph{Memory-Guided Decoder Refinement} (MGDR). MGDR uses the same VLMem format as inference, exposing the decoder during refinement to the same type of visual anchors and language cues that it receives during deployment.
 
 \begin{figure}[!t]
 \centering
 \includegraphics[width=0.95\columnwidth]{figures/fig4.png}
-\caption{Dual-branch world-model decoding. The inference branch reconstructs intermediate frames from transmitted boundary frames and language memory. The refinement branch uses the same memory format to construct LoRA-based refinement pairs while keeping the pretrained world model frozen.}
+\caption{MGDR mechanism for world-model reconstruction. The inference branch reconstructs intermediate frames from transmitted visual anchors and language cues, while the refinement branch constructs MGDR pairs and learns MGDR increments \(\Delta W\) as LoRA-based low-rank increments with the pretrained world model frozen.}
 \label{fig:lora_decoder}
 \end{figure}
 
-Fig.~\ref{fig:lora_decoder} illustrates the two branches. Boundary frames provide visual constraints that language memory cannot precisely express, while language memory supplies compact motion-conditioned priors for the omitted interval. First, each unit forms language memory from the shared navigation prior and the motion regime:
+Fig.~\ref{fig:lora_decoder} illustrates the two branches. Visual anchors provide appearance and geometry constraints that language cues cannot precisely express, while language cues supply compact motion-conditioned priors for the omitted interval. First, each unit forms language cues from the shared navigation prior and the motion regime:
 \begin{equation}
 \begin{aligned}
 \mathcal{L}_i
@@ -245,9 +245,9 @@ Fig.~\ref{fig:lora_decoder} illustrates the two branches. Boundary frames provid
 \end{aligned}
 \label{eq:language_memory_construction}
 \end{equation}
-The base term \(\mathcal{L}_{\mathrm{base}}\) provides the shared navigation-view prior, and \(\mathcal{L}_{\mathrm{motion}}(s_i)\) injects compact motion-conditioned language memory. The negative memory \(\mathcal{L}_{\mathrm{neg}}\) discourages blur, distortion, drift, sudden viewpoint jumps, and hallucinated objects. Semantic anchors influence unit boundaries and reconstruction intervals rather than being inserted as free-form text.
+The base term \(\mathcal{L}_{\mathrm{base}}\) provides the shared navigation-view prior, and \(\mathcal{L}_{\mathrm{motion}}(s_i)\) injects compact motion-conditioned language cues. The negative cue \(\mathcal{L}_{\mathrm{neg}}\) discourages blur, distortion, drift, sudden viewpoint jumps, and hallucinated objects. Semantic event anchors influence unit boundaries and reconstruction intervals rather than being inserted as free-form text.
 
-The decoder then reconstructs the omitted intermediate interval under boundary-frame and language-memory conditions:
+The decoder then reconstructs the omitted intermediate interval under visual-anchor and language-cue conditions:
 \begin{equation}
 \begin{aligned}
 \widehat{\mathcal{I}}_{i}^{\mathrm{mid}}
@@ -258,9 +258,9 @@ b_i^+&=b_{i+1}^{-}.
 \end{aligned}
 \label{eq:conditional_reconstruction}
 \end{equation}
-The two boundary frames retain endpoint appearance and geometric cues, while language memory provides the coarse motion and reconstruction-quality prior for the interval. The shared-boundary condition \(b_i^+=b_{i+1}^{-}\) preserves continuity between neighboring units before the reconstructed sequence is passed to the VSLAM estimator. This is conditional world-model reconstruction, not conventional bitstream decoding.
+The two visual anchors retain endpoint appearance and geometric cues, while language cues provide the coarse motion and reconstruction-quality prior for the interval. The shared-anchor condition \(b_i^+=b_{i+1}^{-}\) preserves continuity between neighboring units before the reconstructed sequence is passed to the VSLAM estimator. This is conditional World-Model Reconstruction, not conventional bitstream decoding.
 
-For memory-guided refinement, raw training sequences are converted into pairs that use the same memory format as deployment:
+For MGDR, raw training sequences are converted into MGDR pairs that use the same VLMem format as deployment:
 \begin{equation}
 \begin{aligned}
 \mathcal{D}_{\mathrm{ref}}
@@ -271,9 +271,9 @@ c_i
 \end{aligned}
 \label{eq:refinement_pairs}
 \end{equation}
-Here \(c_i\) is the conditioning tuple, and \(\mathcal{I}_{i}^{\mathrm{mid}}\) is the original intermediate-frame interval used as the target. These memory-guided refinement pairs use the same boundary-frame and language-memory format as inference, aligning refinement with deployment conditions and reducing the mismatch between refinement inputs and deployed memory units.
+Here \(c_i\) is the conditioning tuple, and \(\mathcal{I}_{i}^{\mathrm{mid}}\) is the target-frame interval for refinement. These MGDR pairs are visual-anchor/language-cue/target-frame refinement pairs that match the inference format, aligning refinement with deployment conditions and reducing the mismatch between refinement inputs and deployed VLMem units.
 
-The implementation realizes memory-guided refinement with LoRA while keeping the pretrained world model frozen. For a selected layer weight \(W_{\ell}\), the low-rank increment is
+The implementation realizes MGDR with LoRA while keeping the pretrained world model frozen. For a selected layer weight \(W_{\ell}\), the MGDR increment is
 \begin{equation}
 \begin{aligned}
 \Delta W_{\ell}
@@ -284,9 +284,9 @@ r\ll\min(d_{\ell},d'_{\ell}).
 \end{aligned}
 \label{eq:lora_refinement_space}
 \end{equation}
-Here \(W_\ell\) is a selected layer weight, \(\Delta W_{\ell}\) is its low-rank increment, \(r\) is the low rank, \(\alpha_{\ell}\) is a layer scale, and only \(A_{\ell}\) and \(B_{\ell}\) are trainable while the pretrained world model remains frozen. Across selected layers, \(\Delta\theta\) denotes the collection of these low-rank increments \(\{\Delta W_\ell\}\). LoRA is therefore the lightweight implementation mechanism for memory-guided world-model refinement, not the core coding representation itself.
+Here \(W_\ell\) is a selected layer weight, \(\Delta W_{\ell}\) is its LoRA-based low-rank MGDR increment, \(r\) is the low rank, \(\alpha_{\ell}\) is a layer scale, and only \(A_{\ell}\) and \(B_{\ell}\) are trainable while the pretrained world model remains frozen. Across selected layers, \(\Delta\theta\) denotes the collection of these MGDR increments \(\{\Delta W_\ell\}\). LoRA is therefore the lightweight implementation mechanism for MGDR, not the core coding representation itself.
 
-The refinement objective is defined over the memory-guided refinement pairs:
+The refinement objective is defined over the MGDR pairs:
 \begin{equation}
 \begin{aligned}
 \Delta\theta^{\star}
@@ -300,6 +300,6 @@ The refinement objective is defined over the memory-guided refinement pairs:
 \end{aligned}
 \label{eq:memory_guided_refinement}
 \end{equation}
-Here \(\mathcal{H}_{\mathrm{LoRA}}\) is the space of LoRA-constrained parameter increments, and \(\mathcal{L}_{\mathrm{gen}}\) is the generation training loss of the underlying video world model. The objective exposes the decoder to the same memory-guided refinement pairs used to define the conditional reconstruction interface, so refinement follows the memory format rather than a separate supervision view.
+Here \(\mathcal{H}_{\mathrm{LoRA}}\) is the LoRA-constrained implementation space for MGDR increments, and \(\mathcal{L}_{\mathrm{gen}}\) is the training loss of the underlying video world model. The objective exposes the decoder to the same MGDR pairs used to define the conditional reconstruction interface, so refinement follows the VLMem format rather than a separate supervision view.
 
-The purpose of memory-guided refinement is to bias reconstruction toward navigation-style transitions, viewpoint stability, geometric continuity, and trackable structures under the same memory conditions used at inference. This bias does not imply artifact-free reconstruction or physical accuracy. The reconstructed frames remain task-usable visual reconstructions, and their value is assessed primarily through downstream VSLAM trajectory quality and the ablation study.
+The purpose of MGDR is to bias reconstruction toward navigation-style transitions, viewpoint stability, geometric continuity, and trackable structures under the same VLMem conditions used at inference. MGDR does not imply the absence of artifacts or physical accuracy. The reconstructed frames remain task-usable visual reconstructions, and their value is assessed primarily through downstream VSLAM trajectory quality and the ablation study.
