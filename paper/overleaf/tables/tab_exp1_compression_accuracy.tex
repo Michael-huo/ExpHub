@@ -4,10 +4,9 @@
 \caption{End-to-end compression and VSLAM trajectory accuracy with GT path-length context.}
 \label{tab:compression_accuracy}
 \centering
-\scriptsize
-\setlength{\tabcolsep}{3pt}
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{@{}cc*{8}{c}@{}}
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}cc*{8}{c}@{}}
 \toprule
 \multirow{2}{*}{Dataset} & \multirow{2}{*}{Seq.} & \multirow{2}{*}{$L_{\mathrm{GT}}$ (m)} & \multicolumn{3}{c}{Payload} & \multicolumn{3}{c}{APE RMSE} & \multirow{2}{*}{$|\Delta|/L_{\mathrm{GT}}$ (\%)} \\
 \cmidrule(lr){4-6}\cmidrule(lr){7-9}
@@ -30,8 +29,7 @@
 \midrule
 Overall & Avg. & 32.45 & 403.42 & 11.06 & 96.8 & 0.698 & 0.735 & +0.037 & 0.898 \\
 \bottomrule
-\end{tabular}%
-}
+\end{tabular*}%
 \par\vspace{2pt}
 \parbox{\textwidth}{\emph{Note:} $L_{\mathrm{GT}}$ is the GT path length. ORI and REC denote VSLAM results from original and reconstructed frames, respectively. $\Delta\mathrm{APE}=\mathrm{APE}_{\mathrm{REC}}-\mathrm{APE}_{\mathrm{ORI}}$ is signed, and $|\Delta|/L_{\mathrm{GT}}$ is a path-normalized deviation. Average rows are arithmetic means over sequence rows; normalized averages are computed from sequence-wise normalized deviations. Negative $\Delta$APE indicates lower aligned REC APE RMSE, not physically superior reconstructed observations.}
 \end{table*}
