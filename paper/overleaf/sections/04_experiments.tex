@@ -49,13 +49,18 @@ Fig.~\ref{fig:trajectory_map} complements Table~\ref{tab:compression_accuracy} b
 \subsection{Payload Size and Runtime Breakdown}
 \label{subsec:payload_runtime}
 
-To further analyze transmission behavior, we enable the compression benchmark on a representative 80 s GDUT sequence containing 1921 frames. Table~\ref{tab:payload_runtime} compares raw image ZIP, H.265 MP4 at 10 Mbps, and the VLMem payload. The raw ZIP requires 777.55 MiB, the H.265 reference requires 101.51 MiB, and the VLMem payload requires 15.26 MiB. Thus, on this sequence, the raw ZIP and the 10 Mbps H.265 reference are 51.0$\times$ and 6.7$\times$ larger than the VLMem payload, respectively.
+To further analyze transmission behavior, we evaluate representative 10 s, 20 s, and 40 s GDUT clips at 24 FPS. The clips contain 241, 481, and 961 frames, cover 7.19 m, 14.48 m, and 28.97 m GT paths, and transmit 5, 8, and 13 visual anchors, respectively. Table~\ref{tab:payload_runtime} reports the clip-level payload and encoding-time comparison among VLMem, fixed 10 Mbps H.265, and Raw ZIP. Fig.~\ref{fig:exp2_payload_runtime}(a)(b) visualizes the same horizontal comparison, while Fig.~\ref{fig:exp2_payload_runtime}(c) separately summarizes the VLMem-Codec internal runtime composition, including VLMem encoding and cloud-side decoding.
+
+The results show that VLMem payload growth is slower than clip-duration growth: payloads increase from 1.98 MiB to 5.10 MiB, while the advantage over the fixed 10 Mbps H.265 reference increases from 6.0$\times$ to 9.2$\times$. VLMem encoding is lower than H.265 encoding for the 20 s and 40 s clips. H.265 is included only as a payload-size and encoding-time reference, not as a downstream VSLAM accuracy baseline, and no real-time deployment claim is made from these prototype timings.
 
 \input{tables/tab_exp4_payload_runtime}
 
-VLMem payload encoding takes 51.80 s, mainly including 40.13 s for phase-correlation motion cues, 10.43 s for semantic event-anchor extraction, and 0.69 s for payload serialization. Cloud-side reconstruction takes 296.64 s, corresponding to 6.59 FPS. Therefore, the current prototype is primarily bottlenecked by cloud-side world-model reconstruction rather than by the compact memory representation. This compute-bound cost depends on the world-model decoder, accelerator memory, and parallel serving strategy; real-time optimized cloud deployment is left for future work.
-
-Table~\ref{tab:payload_runtime} should be read as a comparison of payload size and payload encoding time, not as a comparison of downstream VSLAM accuracy for H.265. On the representative sequence, \VLMemCodec{} shows a strong payload-size reduction relative to raw image ZIP and the 10 Mbps H.265 reference, while the cloud-side reconstruction time remains the dominant compute cost. Communication reduction and reconstruction runtime are therefore separate deployment dimensions: the former is improved by the compact VLMem payload, whereas the latter depends on the world-model backend and serving configuration.
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/fig7.png}
+\caption{Payload and runtime analysis on representative GDUT clips with different durations. (a) Payload size comparison among VLMem, the fixed 10 Mbps H.265 reference, and raw ZIP representations. (b) Encoding-time comparison for constructing the transmitted representation. (c) VLMem-Codec runtime breakdown, where only VLMem encoding and cloud-side decoding are included; downstream VSLAM evaluation is excluded.}
+\label{fig:exp2_payload_runtime}
+\end{figure*}
 
 \subsection{Edge-Side Motion Estimation Benchmark}
 \label{subsec:motion_benchmark}
@@ -66,7 +71,7 @@ The second experiment compares three edge-side motion estimation choices for con
 
 \begin{figure*}[!t]
 \centering
-\includegraphics[width=\textwidth]{figures/fig7.png}
+\includegraphics[width=\textwidth]{figures/fig8.png}
 \caption{Qualitative comparison of phase correlation, ORB feature tracking, and Farneback optical flow for edge-side motion estimation.}
 \label{fig:motion_benchmark}
 \end{figure*}
@@ -98,7 +103,7 @@ Fig.~\ref{fig:lora_qualitative} provides representative qualitative evidence for
 
 \begin{figure}[!ht]
 \centering
-\includegraphics[width=\columnwidth]{figures/fig8.png}
+\includegraphics[width=\columnwidth]{figures/fig9.png}
 \caption{Qualitative comparison between WM and WM+MGDR behavior. Red circles mark representative VSLAM-harmful artifacts.}
 \label{fig:lora_qualitative}
 \vspace{-3pt}
