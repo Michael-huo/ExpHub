@@ -65,26 +65,26 @@ The results show that VLMem payload growth is slower than clip-duration growth: 
 \subsection{Edge-Side Motion Estimation Benchmark}
 \label{subsec:motion_benchmark}
 
-The second experiment compares three edge-side motion estimation choices for constructing motion cues. This benchmark evaluates qualitative segmentation consistency and runtime efficiency, rather than supervised motion-label accuracy.
+The third experiment compares three edge-side motion estimation choices for VLMem event encoding. The encoder requires coarse but reliable motion-trend evidence for event segmentation and motion-conditioned language cues. It does not require accurate camera-trajectory recovery, dense pixelwise correspondence, or long-term feature tracks, so the comparison focuses on lightweight global motion evidence rather than precise trajectory estimation.
+
+Table~\ref{tab:motion_benchmark} summarizes the benchmark on the 40 s GDUT clip.
 
 \input{tables/tab_exp2_motion_benchmark}
 
 \begin{figure*}[!t]
 \centering
 \includegraphics[width=\textwidth]{figures/fig8.png}
-\caption{Qualitative comparison of phase correlation, ORB feature tracking, and Farneback optical flow for edge-side motion estimation.}
+\caption{Edge-side motion estimation comparison for VLMem event encoding. PC provides lightweight coarse motion-response evidence, ORB reflects feature-tracking reliability, and Farneback optical flow provides dense but more expensive motion cues. The colored temporal bands mark three right-turn intervals, and the lower-right comparison illustrates the effect of motion-aware language cues on right-turn reconstruction.}
 \label{fig:motion_benchmark}
 \end{figure*}
 
-Table~\ref{tab:motion_benchmark} reports the runtime cost of the three edge-side motion estimation choices. The relative cost is normalized by the PC runtime, and the valid ratio denotes the fraction of frame pairs for which a method produced usable motion evidence.
+PC is used here as a motion-response generator, not as a precise trajectory estimator. It is the lightest option, requiring 4.51 s in total and 4.70 ms per frame pair. ORB feature tracking requires 11.73 s, or 2.60$\times$ the PC cost, and produces usable motion evidence for 85.7\% of the evaluated pairs. Farneback optical flow (OF) provides a dense motion field, but its runtime increases to 29.75 s, or 6.59$\times$ the PC cost.
 
-PC is the lightest option, requiring 4.51 s in total and 4.70 ms per frame pair. ORB feature tracking requires 11.73 s, or 2.60x the PC cost, and produces usable motion evidence for 85.7\% of the evaluated pairs. Farneback optical flow (OF) provides a denser motion field, but its runtime increases to 29.75 s, or 6.59x the PC cost.
+This comparison reflects the abstraction level required by the encoder. The motion response does not need pixelwise correspondence or dense local motion; it needs low-cost evidence for coarse motion states and event boundaries that can be converted into language cues. ORB is a useful comparison because it is closer to VSLAM front-end feature-tracking evidence, but rapid viewpoint changes, sparse features, blur, or low texture can make its valid response unreliable. OF is useful as a dense-motion reference, but its edge-side computational cost is higher than needed for VLMem event encoding. PC therefore provides the best trade-off for this paper's abstraction level: coarse motion trend, low cost, and robust valid response.
 
-This comparison reflects the abstraction level required by the encoder. The motion cue does not require pixelwise correspondence or dense local motion; it needs low-cost evidence for coarse motion states and event boundaries that can be converted into language-level motion conditions. ORB is a useful comparison because it is closer to feature-tracking evidence, but it can lose valid output in difficult intervals. OF is useful as a dense-motion reference, but it is substantially more expensive for the edge-side VLMem role.
+Fig.~\ref{fig:motion_benchmark} provides the corresponding qualitative evidence. The three colored temporal bands indicate three right-turn intervals, and PC consistently captures the turning trends in the shown benchmark. Unlike local feature tracking, PC does not rely on maintaining stable local feature matches, which makes it suitable for robust coarse motion-response evidence when local features are sparse or unstable.
 
-Fig.~\ref{fig:motion_benchmark} provides the corresponding qualitative evidence. The three temporal color bands indicate the main turning intervals, and PC identifies these event-level turns consistently with ORB and OF in the shown benchmark. PC is therefore not used as a replacement for dense optical flow or feature tracking; it is used as a lightweight cue that is sufficient for coarse, language-level motion conditions in this setting.
-
-The lower-right REC a / REC b comparison in Fig.~\ref{fig:motion_benchmark} further illustrates the role of motion--semantic response fusion. Without motion-estimation guidance, reconstruction can produce an implausible intermediate viewpoint during a right turn. With the full motion--semantic response fusion, the reconstructed sequence shows a smoother and more plausible right-turn transition. This example is qualitative evidence for the encoder design, not a general claim about reconstruction accuracy.
+The lower-right REC comparison in Fig.~\ref{fig:motion_benchmark} further illustrates the role of motion-aware language cues. REC-A denotes reconstruction without motion-aware language cues, whereas REC-B uses the full motion--semantic response fusion. Without motion-estimation guidance, reconstruction can produce an implausible intermediate viewpoint during a right turn. With the full motion--semantic response fusion, the reconstructed sequence shows a smoother and more plausible right-turn viewpoint. This example is qualitative evidence for the encoder design, not a general claim about reconstruction accuracy. These results indicate that PC is not used as a precise trajectory estimator, but as a lightweight and robust motion-response generator that matches the abstraction level required by VLMem encoding.
 
 \subsection{MGDR Ablation for the World-Model Decoder}
 \label{subsec:lora_ablation}
