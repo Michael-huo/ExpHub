@@ -5,17 +5,17 @@
 \label{tab:motion_benchmark}
 \centering
 \footnotesize
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{lrrrr}
+\setlength{\tabcolsep}{1.5pt}
+\begin{tabular}{@{}lrrrr@{}}
 \toprule
-Method & Time (s) & ms/pair & Rel. cost & Valid (\%) \\
+Method & Time (s) $\downarrow$ & ms/pair $\downarrow$ & Rel. Cost $\downarrow$ & Valid (\%) $\uparrow$ \\
 \midrule
-Phase Correlation (PC) & 4.51 & 4.70 & 1.00x & 100.0 \\
-ORB Feature Tracking & 11.73 & 12.22 & 2.60x & 85.7 \\
-Farneback Optical Flow (OF) & 29.75 & 30.99 & 6.59x & 100.0 \\
+Phase Correlation (PC) & 4.51 & 4.70 & 1.00$\times$ & 100.0 \\
+ORB Feature Tracking & 11.73 & 12.22 & 2.60$\times$ & 85.7 \\
+Farneback Optical Flow (OF) & 29.75 & 30.99 & 6.59$\times$ & 100.0 \\
 \bottomrule
 \end{tabular}%
 \vspace{0.2em}
 
-\parbox{\columnwidth}{\footnotesize Rel. cost is normalized by PC runtime. Valid denotes the percentage of frame pairs with usable motion evidence.}
+\parbox{\columnwidth}{\footnotesize The benchmark is computed on the 40 s GDUT clip with 961 frames, corresponding to 960 adjacent frame pairs. Rel. Cost is normalized by PC runtime. Valid ratio denotes the percentage of adjacent frame pairs that produce usable motion evidence.}
 \end{table}
