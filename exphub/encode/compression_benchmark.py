@@ -36,7 +36,7 @@ class CompressionBenchmark:
         self.hvm_payload_dir = Path(hvm_payload_dir).resolve() if hvm_payload_dir is not None else None
         self.hvm_algorithmic_time = self._validate_nonnegative_float(
             hvm_algorithmic_time,
-            "hvm_algorithmic_time",
+            "ours_algorithmic_time",
         )
         self.ffmpeg_bin = str(ffmpeg_bin or shutil.which("ffmpeg") or "")
 
@@ -103,7 +103,7 @@ class CompressionBenchmark:
 
     def _write_hvm_payload_zip(self):
         if self.hvm_payload_dir is None:
-            raise RuntimeError("compression benchmark requires hvm_payload_dir")
+            raise RuntimeError("compression benchmark requires Ours payload dir")
         return write_hvm_payload_zip(self.hvm_payload_dir, self.hvm_payload_zip_path)
 
     @staticmethod
@@ -189,7 +189,7 @@ class CompressionBenchmark:
         started = time.perf_counter()
         hvm_payload_zip = self._write_hvm_payload_zip()
         hvm_zip_sec = float(time.perf_counter() - started)
-        # HVM Total = formal encode/payload algorithm time + payload zip I/O time.
+        # Ours Total = formal encode/Ours payload algorithm time + payload zip I/O time.
         hvm_total_sec = float(self.hvm_algorithmic_time) + float(hvm_zip_sec)
 
         concat_file = None
@@ -215,7 +215,7 @@ class CompressionBenchmark:
                     pass
 
         log_info(
-            "[Compression Benchmark] Time Stats -> Raw ZIP: {:.2f}s | H.265 MP4: {:.2f}s | HVM Total: {:.2f}s".format(
+            "[Compression Benchmark] Time Stats -> Raw ZIP: {:.2f}s | H.265 MP4: {:.2f}s | Ours Total: {:.2f}s".format(
                 float(raw_zip_sec),
                 float(h265_sec),
                 float(hvm_total_sec),
@@ -227,13 +227,17 @@ class CompressionBenchmark:
             "raw_zip": self.raw_zip_path,
             "h265_video": self.h265_path,
             "hvm_payload_zip": hvm_payload_zip,
+            "ours_payload_zip": hvm_payload_zip,
             "frame_count": int(len(frames)),
             "fps": int(self.fps),
             "bitrate": str(self.bitrate),
             "raw_zip_sec": float(raw_zip_sec),
             "h265_sec": float(h265_sec),
             "hvm_algorithmic_sec": float(self.hvm_algorithmic_time),
+            "ours_algorithmic_sec": float(self.hvm_algorithmic_time),
             "hvm_zip_sec": float(hvm_zip_sec),
+            "ours_zip_sec": float(hvm_zip_sec),
             "hvm_total_sec": float(hvm_total_sec),
+            "ours_total_sec": float(hvm_total_sec),
             "ffmpeg_command": list(command),
         }

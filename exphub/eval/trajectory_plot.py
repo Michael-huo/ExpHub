@@ -167,86 +167,62 @@ def _warn_pair_mismatch(label, plot_pairs, evo_pairs, warnings):
     if int(plot_pairs) != int(evo_pairs):
         warnings.append(
             "trajectory plot {label} association pairs differ from evo_ape pose pairs: plot={plot}, evo={evo}".format(
-                label=label.upper(),
+                label=str(label).upper(),
                 plot=int(plot_pairs),
                 evo=int(evo_pairs),
             )
         )
 
 
-def generate_trajectory_overlay(
-    out_dir,
-    exp_dir,
-    gt_path,
-    ori_path,
-    gen_path,
-    t_max_diff,
-    ori_pose_pairs=None,
-    gen_pose_pairs=None,
-    plot_plane="auto",
+def _plot_endpoint_markers(ax, xy, color, zorder):
+    if xy is None or len(xy) == 0:
+        return
+    ax.plot(
+        xy[0, 0],
+        xy[0, 1],
+        marker="o",
+        linestyle="None",
+        color=color,
+        markerfacecolor=color,
+        markeredgecolor="white",
+        markeredgewidth=0.7,
+        markersize=5.5,
+        label="_nolegend_",
+        zorder=zorder,
+    )
+    ax.plot(
+        xy[-1, 0],
+        xy[-1, 1],
+        marker="s",
+        linestyle="None",
+        color=color,
+        markerfacecolor=color,
+        markeredgecolor="white",
+        markeredgewidth=0.7,
+        markersize=5.5,
+        label="_nolegend_",
+        zorder=zorder,
+    )
+
+
+def _save_trajectory_overlay(
+    plt,
+    output_path,
+    gt_xy,
+    ori_xy,
+    rec_xy,
+    xlabel,
+    ylabel,
+    xlim,
+    ylim,
+    show_legend,
+    fig_size,
+    fig_dpi,
+    save_dpi,
+    margins,
 ):
-    from evo.core import sync
-
-    out_dir = Path(out_dir).resolve()
-    exp_dir = Path(exp_dir).resolve()
-    plot_path = out_dir / "trajectory_overlay_auto2d.png"
-    warnings = []
-
+    fig, ax = plt.subplots(figsize=fig_size, dpi=fig_dpi)
     try:
-        gt = _load_tum_trajectory(gt_path)
-        ori = _load_tum_trajectory(ori_path)
-        gen = _load_tum_trajectory(gen_path)
-
-        gt_ori, ori_assoc = sync.associate_trajectories(gt, ori, max_diff=float(t_max_diff))
-        gt_gen, gen_assoc = sync.associate_trajectories(gt, gen, max_diff=float(t_max_diff))
-        gt_ori_pairs = _num_poses(gt_ori)
-        gt_gen_pairs = _num_poses(gt_gen)
-        _warn_pair_mismatch("ori", gt_ori_pairs, ori_pose_pairs, warnings)
-        _warn_pair_mismatch("gen", gt_gen_pairs, gen_pose_pairs, warnings)
-
-        gt_ori_times = _timestamps(gt_ori)
-        gt_gen_times = _timestamps(gt_gen)
-        if gt_ori_times is None or gt_gen_times is None:
-            raise RuntimeError("associated GT timestamps are unavailable for plotting")
-        common_start = max(float(gt_ori_times[0]), float(gt_gen_times[0]))
-        common_end = min(float(gt_ori_times[-1]), float(gt_gen_times[-1]))
-        if common_end <= common_start:
-            raise RuntimeError(
-                "no valid common trajectory plot window: start={} end={}".format(common_start, common_end)
-            )
-
-        ori_aligned = copy.deepcopy(ori_assoc)
-        ori_aligned.align(gt_ori, correct_scale=True)
-        gen_aligned = copy.deepcopy(gen_assoc)
-        gen_aligned.align(gt_gen, correct_scale=True)
-
-        gt_positions, _gt_mask = _clipped_positions(gt, common_start, common_end, "GT")
-        ori_mask = _mask_for_time_range(gt_ori_times, common_start, common_end)
-        gen_mask = _mask_for_time_range(gt_gen_times, common_start, common_end)
-        ori_positions_all = _positions(ori_aligned)
-        gen_positions_all = _positions(gen_aligned)
-        if ori_positions_all is None or gen_positions_all is None:
-            raise RuntimeError("aligned ORI/GEN trajectory positions are unavailable for plotting")
-        if not np.any(ori_mask) or not np.any(gen_mask):
-            raise RuntimeError("ORI/GEN aligned trajectories have no samples in the common plot window")
-        ori_positions = ori_positions_all[ori_mask]
-        gen_positions = gen_positions_all[gen_mask]
-
-        selected_plane = _select_plane(gt_positions) if plot_plane == "auto" else str(plot_plane)
-        i, j, xlabel, ylabel = _plane_columns(selected_plane)
-        gt_xy = gt_positions[:, [i, j]]
-        ori_xy = ori_positions[:, [i, j]]
-        gen_xy = gen_positions[:, [i, j]]
-        fig_size = (4.8, 3.8)
-        fig_dpi = 180
-        save_dpi = 300
-        margins = {"left": 0.16, "right": 0.98, "bottom": 0.17, "top": 0.97}
-        axes_aspect = (fig_size[0] * (margins["right"] - margins["left"])) / (
-            fig_size[1] * (margins["top"] - margins["bottom"])
-        )
-        xlim, ylim = _fixed_equal_limits((gt_xy, ori_xy, gen_xy), axes_aspect=axes_aspect)
-        plt = _setup_matplotlib()
-        fig, ax = plt.subplots(figsize=fig_size, dpi=fig_dpi)
         fig.subplots_adjust(**margins)
         fig.patch.set_facecolor("white")
         ax.set_facecolor("white")
@@ -267,52 +243,153 @@ def generate_trajectory_overlay(
             label="ORI",
             color="#4C78A8",
             linestyle="--",
-            linewidth=2.0,
+            linewidth=1.9,
             solid_capstyle="round",
             solid_joinstyle="round",
             dash_capstyle="round",
             zorder=2,
         )
         ax.plot(
-            gen_xy[:, 0],
-            gen_xy[:, 1],
-            label="GEN",
+            rec_xy[:, 0],
+            rec_xy[:, 1],
+            label="REC",
             color="#C06C5B",
             linestyle="-",
-            linewidth=2.0,
+            linewidth=2.05,
             solid_capstyle="round",
             solid_joinstyle="round",
             zorder=2,
         )
+        _plot_endpoint_markers(ax, gt_xy, "#222222", zorder=4)
+        _plot_endpoint_markers(ax, ori_xy, "#4C78A8", zorder=3)
+        _plot_endpoint_markers(ax, rec_xy, "#C06C5B", zorder=3)
         ax.set_aspect("equal", adjustable="box")
         ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
         ax.set_axisbelow(True)
-        ax.set_xlabel(xlabel, fontsize=11)
-        ax.set_ylabel(ylabel, fontsize=11)
-        ax.tick_params(axis="both", labelsize=10)
-        ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.22)
+        ax.set_xlabel(xlabel, fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.tick_params(axis="both", labelsize=9, width=0.7, color="#444444")
+        ax.grid(True, linestyle="--", linewidth=0.4, alpha=0.16)
         for spine in ax.spines.values():
             spine.set_color("#444444")
-        legend = ax.legend(
-            loc="upper right",
-            bbox_to_anchor=(0.97, 0.95),
-            frameon=True,
-            framealpha=0.92,
-            facecolor="white",
-            edgecolor="#D0D0D0",
-            fontsize=10,
-            handlelength=2.4,
-            borderpad=0.4,
-            labelspacing=0.35,
-        )
-        legend.set_zorder(10)
-        fig.savefig(str(plot_path), dpi=save_dpi, facecolor="white")
+            spine.set_linewidth(0.7)
+        if show_legend:
+            legend = ax.legend(
+                loc="upper right",
+                bbox_to_anchor=(0.97, 0.95),
+                frameon=True,
+                framealpha=0.92,
+                facecolor="white",
+                edgecolor="#D0D0D0",
+                fontsize=10,
+                handlelength=2.4,
+                borderpad=0.4,
+                labelspacing=0.35,
+            )
+            legend.set_zorder(10)
+        fig.savefig(str(output_path), dpi=save_dpi, facecolor="white")
+    finally:
         plt.close(fig)
+
+
+def generate_trajectory_overlay(
+    out_dir,
+    exp_dir,
+    gt_path,
+    ori_path,
+    rec_path,
+    t_max_diff,
+    ori_pose_pairs=None,
+    rec_pose_pairs=None,
+    plot_plane="auto",
+):
+    from evo.core import sync
+
+    out_dir = Path(out_dir).resolve()
+    exp_dir = Path(exp_dir).resolve()
+    plot_path = out_dir / "trajectory_overlay_auto2d.png"
+    paper_path = out_dir / "trajectory_overlay_paper.png"
+    paper_pdf_path = out_dir / "trajectory_overlay_paper.pdf"
+    warnings = []
+
+    try:
+        gt = _load_tum_trajectory(gt_path)
+        ori = _load_tum_trajectory(ori_path)
+        rec = _load_tum_trajectory(rec_path)
+
+        gt_ori, ori_assoc = sync.associate_trajectories(gt, ori, max_diff=float(t_max_diff))
+        gt_rec, rec_assoc = sync.associate_trajectories(gt, rec, max_diff=float(t_max_diff))
+        gt_ori_pairs = _num_poses(gt_ori)
+        gt_rec_pairs = _num_poses(gt_rec)
+        _warn_pair_mismatch("ori", gt_ori_pairs, ori_pose_pairs, warnings)
+        _warn_pair_mismatch("rec", gt_rec_pairs, rec_pose_pairs, warnings)
+
+        gt_ori_times = _timestamps(gt_ori)
+        gt_rec_times = _timestamps(gt_rec)
+        if gt_ori_times is None or gt_rec_times is None:
+            raise RuntimeError("associated GT timestamps are unavailable for plotting")
+        common_start = max(float(gt_ori_times[0]), float(gt_rec_times[0]))
+        common_end = min(float(gt_ori_times[-1]), float(gt_rec_times[-1]))
+        if common_end <= common_start:
+            raise RuntimeError(
+                "no valid common trajectory plot window: start={} end={}".format(common_start, common_end)
+            )
+
+        ori_aligned = copy.deepcopy(ori_assoc)
+        ori_aligned.align(gt_ori, correct_scale=True)
+        rec_aligned = copy.deepcopy(rec_assoc)
+        rec_aligned.align(gt_rec, correct_scale=True)
+
+        gt_positions, _gt_mask = _clipped_positions(gt, common_start, common_end, "GT")
+        ori_mask = _mask_for_time_range(gt_ori_times, common_start, common_end)
+        rec_mask = _mask_for_time_range(gt_rec_times, common_start, common_end)
+        ori_positions_all = _positions(ori_aligned)
+        rec_positions_all = _positions(rec_aligned)
+        if ori_positions_all is None or rec_positions_all is None:
+            raise RuntimeError("aligned ORI/REC trajectory positions are unavailable for plotting")
+        if not np.any(ori_mask) or not np.any(rec_mask):
+            raise RuntimeError("ORI/REC aligned trajectories have no samples in the common plot window")
+        ori_positions = ori_positions_all[ori_mask]
+        rec_positions = rec_positions_all[rec_mask]
+
+        selected_plane = _select_plane(gt_positions) if plot_plane == "auto" else str(plot_plane)
+        i, j, xlabel, ylabel = _plane_columns(selected_plane)
+        gt_xy = gt_positions[:, [i, j]]
+        ori_xy = ori_positions[:, [i, j]]
+        rec_xy = rec_positions[:, [i, j]]
+        fig_size = (4.8, 3.8)
+        fig_dpi = 180
+        save_dpi = 300
+        margins = {"left": 0.16, "right": 0.98, "bottom": 0.17, "top": 0.97}
+        axes_aspect = (fig_size[0] * (margins["right"] - margins["left"])) / (
+            fig_size[1] * (margins["top"] - margins["bottom"])
+        )
+        xlim, ylim = _fixed_equal_limits((gt_xy, ori_xy, rec_xy), axes_aspect=axes_aspect, padding_ratio=0.05)
+        plt = _setup_matplotlib()
+        for path, show_legend in ((plot_path, True), (paper_path, False), (paper_pdf_path, False)):
+            _save_trajectory_overlay(
+                plt=plt,
+                output_path=path,
+                gt_xy=gt_xy,
+                ori_xy=ori_xy,
+                rec_xy=rec_xy,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                xlim=xlim,
+                ylim=ylim,
+                show_legend=show_legend,
+                fig_size=fig_size,
+                fig_dpi=fig_dpi,
+                save_dpi=save_dpi,
+                margins=margins,
+            )
 
         return {
             "plot_status": "success",
             "trajectory_overlay_path": _relative_path(exp_dir, plot_path),
+            "trajectory_overlay_paper_path": _relative_path(exp_dir, paper_path),
+            "trajectory_overlay_paper_pdf_path": _relative_path(exp_dir, paper_pdf_path),
             "selected_plot_plane": selected_plane,
             "gt_plot_mode": "common_overlap_segment",
             "plot_common_start": common_start,
@@ -325,6 +402,8 @@ def generate_trajectory_overlay(
         return {
             "plot_status": "skipped",
             "trajectory_overlay_path": None,
+            "trajectory_overlay_paper_path": None,
+            "trajectory_overlay_paper_pdf_path": None,
             "selected_plot_plane": None,
             "gt_plot_mode": None,
             "plot_common_start": None,

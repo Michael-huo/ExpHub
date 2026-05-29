@@ -186,6 +186,14 @@ def _extract_stats(zip_path, comparison, warnings):
     return stats, pose_pairs
 
 
+def _display_track_label(name):
+    return str(name or "").upper()
+
+
+def _display_comparison_name(name):
+    return str(name or "")
+
+
 def _stderr_summary(text):
     lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
     if not lines:
@@ -203,7 +211,7 @@ def _format_stream(text):
 def _write_failure_log(out_dir, name, cmd, completed, filename="evo_failure.log"):
     path = Path(out_dir).resolve() / str(filename)
     lines = [
-        "comparison: {}".format(name),
+        "comparison: {}".format(_display_comparison_name(name)),
         "command: {}".format(" ".join(str(item) for item in cmd)),
         "return_code: {}".format(completed.returncode),
         "",
@@ -327,13 +335,13 @@ def _run_evo_ape(evo_cmd, name, gt_traj, est_traj, result_zip, out_dir, t_max_di
         "--save_results",
         str(result_zip),
     ]
-    log_prog("evo_ape {} vs GT".format(name.upper()))
+    log_prog("evo_ape {} vs GT".format(_display_track_label(name)))
     completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if completed.returncode != 0:
         _write_failure_log(out_dir, name, cmd, completed)
         raise RuntimeError(
             "evo_ape failed for {name}: return code {code}; stderr: {stderr}; output directory: {out_dir}".format(
-                name=name,
+                name=_display_comparison_name(name),
                 code=completed.returncode,
                 stderr=_stderr_summary(completed.stderr),
                 out_dir=Path(out_dir).resolve(),
@@ -371,7 +379,7 @@ def _run_evo_rpe(
         "--save_results",
         str(result_zip),
     ]
-    log_prog("evo_rpe {} {} vs GT".format(name.upper(), str(relation_label)))
+    log_prog("evo_rpe {} {} vs GT".format(_display_track_label(name), str(relation_label)))
     completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if completed.returncode != 0:
         _write_failure_log(
@@ -383,7 +391,7 @@ def _run_evo_rpe(
         )
         raise RuntimeError(
             "evo_rpe failed for {name} {relation}: return code {code}; stderr: {stderr}".format(
-                name=name,
+                name=_display_comparison_name(name),
                 relation=relation_label,
                 code=completed.returncode,
                 stderr=_stderr_summary(completed.stderr),
@@ -392,10 +400,10 @@ def _run_evo_rpe(
     return cmd
 
 
-def _safe_delta(ori_rmse, gen_rmse):
-    if ori_rmse is None or gen_rmse is None:
+def _safe_delta(ori_rmse, rec_rmse):
+    if ori_rmse is None or rec_rmse is None:
         return None
-    return float(gen_rmse) - float(ori_rmse)
+    return float(rec_rmse) - float(ori_rmse)
 
 
 def _load_tum_trajectory(path_obj):
@@ -446,22 +454,22 @@ def _path_length_for_window(gt_traj, start, end):
     return float(np.sum(np.linalg.norm(deltas, axis=1)))
 
 
-def _associated_gt_window(gt_traj, ori_traj, gen_traj, t_max_diff, warnings):
+def _associated_gt_window(gt_traj, ori_traj, rec_traj, t_max_diff, warnings):
     from evo.core import sync
 
     gt_ori, _ori_assoc = sync.associate_trajectories(gt_traj, ori_traj, max_diff=float(t_max_diff))
-    gt_gen, _gen_assoc = sync.associate_trajectories(gt_traj, gen_traj, max_diff=float(t_max_diff))
+    gt_rec, _rec_assoc = sync.associate_trajectories(gt_traj, rec_traj, max_diff=float(t_max_diff))
     ori_ts = _timestamps(gt_ori)
-    gen_ts = _timestamps(gt_gen)
-    if ori_ts is None or gen_ts is None:
+    rec_ts = _timestamps(gt_rec)
+    if ori_ts is None or rec_ts is None:
         warnings.append("gt path length unavailable: associated GT timestamps are missing")
         return None, None
-    common_start = max(float(ori_ts[0]), float(gen_ts[0]))
-    common_end = min(float(ori_ts[-1]), float(gen_ts[-1]))
+    common_start = max(float(ori_ts[0]), float(rec_ts[0]))
+    common_end = min(float(ori_ts[-1]), float(rec_ts[-1]))
     if common_end > common_start:
         return common_start, common_end
-    fallback_start = min(float(ori_ts[0]), float(gen_ts[0]))
-    fallback_end = max(float(ori_ts[-1]), float(gen_ts[-1]))
+    fallback_start = min(float(ori_ts[0]), float(rec_ts[0]))
+    fallback_end = max(float(ori_ts[-1]), float(rec_ts[-1]))
     if fallback_end > fallback_start:
         warnings.append("gt path length used associated timestamp span because common overlap was unavailable")
         return fallback_start, fallback_end
@@ -469,12 +477,12 @@ def _associated_gt_window(gt_traj, ori_traj, gen_traj, t_max_diff, warnings):
     return None, None
 
 
-def _compute_gt_path_length(gt_path, ori_path, gen_path, t_max_diff, warnings):
+def _compute_gt_path_length(gt_path, ori_path, rec_path, t_max_diff, warnings):
     try:
         gt = _load_tum_trajectory(gt_path)
         ori = _load_tum_trajectory(ori_path)
-        gen = _load_tum_trajectory(gen_path)
-        start, end = _associated_gt_window(gt, ori, gen, t_max_diff, warnings)
+        rec = _load_tum_trajectory(rec_path)
+        start, end = _associated_gt_window(gt, ori, rec, t_max_diff, warnings)
         if start is None or end is None:
             return None
         length = _path_length_for_window(gt, start, end)
@@ -503,7 +511,11 @@ def _rpe_eval(evo_cmd, name, gt_traj, est_traj, out_dir, exp_dir, t_max_diff, rp
                 t_max_diff,
                 int(rpe_delta["frames"]),
             )
-            stats, pose_pairs = _extract_stats(result_zip, "{} rpe {}".format(name, relation_label), warnings)
+            stats, pose_pairs = _extract_stats(
+                result_zip,
+                "{} rpe {}".format(_display_comparison_name(name), relation_label),
+                warnings,
+            )
             results[relation_label] = {
                 "status": "success",
                 "command": cmd,
@@ -525,7 +537,7 @@ def _rpe_eval(evo_cmd, name, gt_traj, est_traj, out_dir, exp_dir, t_max_diff, rp
             }
         except Exception as exc:
             message = "evo_rpe {} {} failed; RPE {} metrics unavailable".format(
-                str(name).upper(),
+                _display_track_label(name),
                 relation_label,
                 relation_label,
             )
@@ -554,15 +566,15 @@ def _rpe_eval(evo_cmd, name, gt_traj, est_traj, out_dir, exp_dir, t_max_diff, rp
 
 
 def _reliability(summary):
-    ape_ok = summary.get("ori_ape_rmse") is not None and summary.get("gen_ape_rmse") is not None
+    ape_ok = summary.get("ori_ape_rmse") is not None and summary.get("rec_ape_rmse") is not None
     if not ape_ok:
         return "FAIL"
-    for key in ("ori_pose_pairs", "gen_pose_pairs"):
+    for key in ("ori_pose_pairs", "rec_pose_pairs"):
         value = summary.get(key)
         if value is None or int(value) < 2:
             return "WARN"
     rpe = summary.get("rpe") if isinstance(summary.get("rpe"), dict) else {}
-    for name in ("ori", "gen"):
+    for name in ("ori", "rec"):
         item = rpe.get(name) if isinstance(rpe.get(name), dict) else {}
         for relation_label in ("trans", "rot"):
             relation = item.get(relation_label) if isinstance(item.get(relation_label), dict) else {}
@@ -597,7 +609,7 @@ def run_evo_eval(config):
     out_dir.mkdir(parents=True, exist_ok=True)
     gt_traj = ensure_file(_get_arg(config, "gt_traj"), "ground truth trajectory")
     ori_traj = ensure_file(_get_arg(config, "ori_traj"), "ORI trajectory")
-    gen_traj = ensure_file(_get_arg(config, "gen_traj"), "GEN trajectory")
+    rec_traj = ensure_file(_get_arg(config, "rec_traj"), "REC trajectory")
     skip_plots = bool(_get_arg(config, "skip_plots", False))
     t_max_diff = float(_get_arg(config, "t_max_diff", T_MAX_DIFF))
 
@@ -613,25 +625,25 @@ def run_evo_eval(config):
         log_warn(message)
 
     ori_zip = out_dir / "ori" / "evo_ape.zip"
-    gen_zip = out_dir / "gen" / "evo_ape.zip"
+    rec_zip = out_dir / "rec" / "evo_ape.zip"
     ori_zip.parent.mkdir(parents=True, exist_ok=True)
-    gen_zip.parent.mkdir(parents=True, exist_ok=True)
+    rec_zip.parent.mkdir(parents=True, exist_ok=True)
     ori_ape_command = _run_evo_ape(ape_cmd, "ori", gt_traj, ori_traj, ori_zip, out_dir, t_max_diff)
-    gen_ape_command = _run_evo_ape(ape_cmd, "gen", gt_traj, gen_traj, gen_zip, out_dir, t_max_diff)
+    rec_ape_command = _run_evo_ape(ape_cmd, "rec", gt_traj, rec_traj, rec_zip, out_dir, t_max_diff)
 
     ori_stats, ori_pose_pairs = _extract_stats(ori_zip, "ori", warnings)
-    gen_stats, gen_pose_pairs = _extract_stats(gen_zip, "gen", warnings)
+    rec_stats, rec_pose_pairs = _extract_stats(rec_zip, "rec", warnings)
     ori_rmse = ori_stats.get("rmse")
-    gen_rmse = gen_stats.get("rmse")
-    delta = _safe_delta(ori_rmse, gen_rmse)
+    rec_rmse = rec_stats.get("rmse")
+    delta = _safe_delta(ori_rmse, rec_rmse)
 
     rpe_ori = _rpe_eval(rpe_cmd, "ori", gt_traj, ori_traj, out_dir, exp_dir, t_max_diff, rpe_delta, warnings)
-    rpe_gen = _rpe_eval(rpe_cmd, "gen", gt_traj, gen_traj, out_dir, exp_dir, t_max_diff, rpe_delta, warnings)
+    rpe_rec = _rpe_eval(rpe_cmd, "rec", gt_traj, rec_traj, out_dir, exp_dir, t_max_diff, rpe_delta, warnings)
     ori_rpe_trans_rmse = _as_float(rpe_ori.get("trans", {}).get("stats", {}).get("rmse"))
-    gen_rpe_trans_rmse = _as_float(rpe_gen.get("trans", {}).get("stats", {}).get("rmse"))
+    rec_rpe_trans_rmse = _as_float(rpe_rec.get("trans", {}).get("stats", {}).get("rmse"))
     ori_rpe_rot_rmse = _as_float(rpe_ori.get("rot", {}).get("stats", {}).get("rmse"))
-    gen_rpe_rot_rmse = _as_float(rpe_gen.get("rot", {}).get("stats", {}).get("rmse"))
-    gt_path_length_m = _compute_gt_path_length(gt_traj, ori_traj, gen_traj, t_max_diff, warnings)
+    rec_rpe_rot_rmse = _as_float(rpe_rec.get("rot", {}).get("stats", {}).get("rmse"))
+    gt_path_length_m = _compute_gt_path_length(gt_traj, ori_traj, rec_traj, t_max_diff, warnings)
 
     summary = {
         "version": 2,
@@ -640,7 +652,7 @@ def run_evo_eval(config):
         "metric_source": "evo",
         "ape_command": {
             "ori": list(ori_ape_command),
-            "gen": list(gen_ape_command),
+            "rec": list(rec_ape_command),
         },
         "ape_parameters": {
             "format": "tum",
@@ -679,16 +691,16 @@ def run_evo_eval(config):
         "pose_relation": "trans_part",
         "gt_path": str(gt_traj),
         "ori_path": str(ori_traj),
-        "gen_path": str(gen_traj),
+        "rec_path": str(rec_traj),
         "ori_result_zip": _relative_path(exp_dir, ori_zip),
-        "gen_result_zip": _relative_path(exp_dir, gen_zip),
+        "rec_result_zip": _relative_path(exp_dir, rec_zip),
         "ori_ape_rmse": ori_rmse,
-        "gen_ape_rmse": gen_rmse,
-        "rmse_delta_gen_minus_ori": delta,
+        "rec_ape_rmse": rec_rmse,
+        "rmse_delta_rec_minus_ori": delta,
         "ori_pose_pairs": ori_pose_pairs,
-        "gen_pose_pairs": gen_pose_pairs,
+        "rec_pose_pairs": rec_pose_pairs,
         "ori_stats": ori_stats,
-        "gen_stats": gen_stats,
+        "rec_stats": rec_stats,
         "ape": {
             "ori": {
                 "rmse": ori_rmse,
@@ -697,31 +709,31 @@ def run_evo_eval(config):
                 "result_zip": _relative_path(exp_dir, ori_zip),
                 "command": list(ori_ape_command),
             },
-            "gen": {
-                "rmse": gen_rmse,
-                "stats": gen_stats,
-                "pose_pairs": gen_pose_pairs,
-                "result_zip": _relative_path(exp_dir, gen_zip),
-                "command": list(gen_ape_command),
+            "rec": {
+                "rmse": rec_rmse,
+                "stats": rec_stats,
+                "pose_pairs": rec_pose_pairs,
+                "result_zip": _relative_path(exp_dir, rec_zip),
+                "command": list(rec_ape_command),
             },
-            "delta_gen_minus_ori": delta,
+            "delta_rec_minus_ori": delta,
         },
         "rpe": {
             "ori": rpe_ori,
-            "gen": rpe_gen,
-            "delta_trans": _safe_delta(ori_rpe_trans_rmse, gen_rpe_trans_rmse),
-            "delta_rot_deg": _safe_delta(ori_rpe_rot_rmse, gen_rpe_rot_rmse),
+            "rec": rpe_rec,
+            "delta_trans": _safe_delta(ori_rpe_trans_rmse, rec_rpe_trans_rmse),
+            "delta_rot_deg": _safe_delta(ori_rpe_rot_rmse, rec_rpe_rot_rmse),
         },
         "ori_rpe_trans_rmse": ori_rpe_trans_rmse,
-        "gen_rpe_trans_rmse": gen_rpe_trans_rmse,
-        "rpe_delta_trans": _safe_delta(ori_rpe_trans_rmse, gen_rpe_trans_rmse),
+        "rec_rpe_trans_rmse": rec_rpe_trans_rmse,
+        "rpe_delta_trans": _safe_delta(ori_rpe_trans_rmse, rec_rpe_trans_rmse),
         "ori_rpe_rot_rmse_deg": ori_rpe_rot_rmse,
-        "gen_rpe_rot_rmse_deg": gen_rpe_rot_rmse,
-        "rpe_delta_rot_deg": _safe_delta(ori_rpe_rot_rmse, gen_rpe_rot_rmse),
+        "rec_rpe_rot_rmse_deg": rec_rpe_rot_rmse,
+        "rpe_delta_rot_deg": _safe_delta(ori_rpe_rot_rmse, rec_rpe_rot_rmse),
         "ori_rpe_trans_pose_pairs": rpe_ori.get("trans", {}).get("pose_pairs"),
-        "gen_rpe_trans_pose_pairs": rpe_gen.get("trans", {}).get("pose_pairs"),
+        "rec_rpe_trans_pose_pairs": rpe_rec.get("trans", {}).get("pose_pairs"),
         "ori_rpe_rot_pose_pairs": rpe_ori.get("rot", {}).get("pose_pairs"),
-        "gen_rpe_rot_pose_pairs": rpe_gen.get("rot", {}).get("pose_pairs"),
+        "rec_rpe_rot_pose_pairs": rpe_rec.get("rot", {}).get("pose_pairs"),
         "gt_path_length_m": gt_path_length_m,
         "plot_status": "skipped",
         "trajectory_overlay_path": None,
@@ -732,7 +744,6 @@ def run_evo_eval(config):
         "status": "success",
         "warnings": warnings,
     }
-
     if skip_plots:
         summary["warnings"].append("trajectory overlay skipped by --skip_plots/--no_viz")
     else:
@@ -746,10 +757,10 @@ def run_evo_eval(config):
                     exp_dir=exp_dir,
                     gt_path=gt_traj,
                     ori_path=ori_traj,
-                    gen_path=gen_traj,
+                    rec_path=rec_traj,
                     t_max_diff=t_max_diff,
                     ori_pose_pairs=ori_pose_pairs,
-                    gen_pose_pairs=gen_pose_pairs,
+                    rec_pose_pairs=rec_pose_pairs,
                 ),
             )
         except Exception as exc:
@@ -770,7 +781,7 @@ def _build_arg_parser():
     parser.add_argument("--exp_dir", required=False)
     parser.add_argument("--gt_traj", required=True)
     parser.add_argument("--ori_traj", required=True)
-    parser.add_argument("--gen_traj", required=True)
+    parser.add_argument("--rec_traj", required=True)
     parser.add_argument("--t_max_diff", type=float, default=T_MAX_DIFF)
     parser.add_argument("--fps", type=float, default=None)
     parser.add_argument("--prepare_result", default="")

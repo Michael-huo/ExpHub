@@ -23,6 +23,15 @@ def _as_dict(value):
     return value if isinstance(value, dict) else {}
 
 
+def _first_present(mapping, *keys):
+    if not isinstance(mapping, dict):
+        return None
+    for key in keys:
+        if key in mapping and mapping.get(key) is not None:
+            return mapping.get(key)
+    return None
+
+
 def _relative_path(base_dir, target_path):
     base = Path(base_dir).resolve()
     target = Path(target_path).resolve()
@@ -138,7 +147,7 @@ def _input_paths(exp_dir, config):
         "decode_report": Path(_get_arg(config, "decode_report")).resolve(),
         "decode_merge_report": Path(_get_arg(config, "decode_merge_report")).resolve(),
         "ori_run_meta": Path(_get_arg(config, "ori_run_meta")).resolve(),
-        "gen_run_meta": Path(_get_arg(config, "gen_run_meta")).resolve(),
+        "rec_run_meta": Path(_get_arg(config, "rec_run_meta")).resolve(),
         "evo_summary": Path(_get_arg(config, "evo_summary")).resolve(),
     }
 
@@ -234,6 +243,7 @@ def _build_compression_report(exp_dir, out_dir, inputs, reports, warnings):
         "definition": "unique generation unit boundary frames plus prompt/unit JSON payload",
         "orig_size_bytes": int(orig_size_bytes),
         "comp_size_bytes": int(comp_size_bytes),
+        "ours_size_bytes": int(comp_size_bytes),
         "raw_frame_count": int(len(frame_files)),
         "transmitted_frame_count": int(len(boundary_frame_paths)),
         "ratio": ratio,
@@ -252,7 +262,7 @@ def _build_compression_report(exp_dir, out_dir, inputs, reports, warnings):
         },
         "excluded_from_comp_size": {
             "encode_result": "local validation/summary metadata, not required by backend execution payload",
-            "decode_frames": "generated output, not compressed input",
+            "decode_frames": "reconstructed output, not compressed input",
         },
         "warnings": list(warnings),
     }
@@ -292,8 +302,13 @@ def _write_csv(path_obj, fieldnames, rows):
 
 def _write_details(out_dir, evo_summary):
     rows = []
-    for prefix, name in [("ori", "ape_ori_vs_gt"), ("gen", "ape_gen_vs_gt")]:
-        item = _as_dict(evo_summary.get("{}_stats".format(prefix)))
+    for name, stats_key, pose_pair_key, result_zip_key in [
+        ("ape_ori_vs_gt", "ori_stats", "ori_pose_pairs", "ori_result_zip"),
+        ("ape_rec_vs_gt", "rec_stats", "rec_pose_pairs", "rec_result_zip"),
+    ]:
+        item = _as_dict(evo_summary.get(stats_key))
+        pose_pairs = evo_summary.get(pose_pair_key)
+        result_zip = evo_summary.get(result_zip_key)
         rows.append(
             {
                 "comparison": name,
@@ -306,13 +321,13 @@ def _write_details(out_dir, evo_summary):
                 "min": item.get("min", ""),
                 "max": item.get("max", ""),
                 "sse": item.get("sse", ""),
-                "pose_pairs": evo_summary.get("{}_pose_pairs".format(prefix), ""),
-                "result_zip": evo_summary.get("{}_result_zip".format(prefix), ""),
+                "pose_pairs": pose_pairs if pose_pairs is not None else "",
+                "result_zip": result_zip if result_zip is not None else "",
             }
         )
     rpe = _as_dict(evo_summary.get("rpe"))
-    for prefix, name in [("ori", "rpe_ori"), ("gen", "rpe_gen")]:
-        track = _as_dict(rpe.get(prefix))
+    for name, track_key in [("rpe_ori", "ori"), ("rpe_rec", "rec")]:
+        track = _as_dict(rpe.get(track_key))
         for relation_label, suffix in [("trans", "trans"), ("rot", "rot")]:
             item = _as_dict(track.get(relation_label))
             stats = _as_dict(item.get("stats"))
@@ -418,19 +433,35 @@ def _summary_lines(exp_dir, inputs, reports, compression_report, warnings, eval_
     _row(lines, "alignment", alignment_text)
     _row(lines, "gt_path_length_m", _fmt_number(evo_summary.get("gt_path_length_m")))
     _row(lines, "ape.ori_rmse_m", _fmt_number(evo_summary.get("ori_ape_rmse"), digits=3))
-    _row(lines, "ape.gen_rmse_m", _fmt_number(evo_summary.get("gen_ape_rmse"), digits=3))
-    _row(lines, "ape.delta_gen_minus_ori_m", _fmt_number(evo_summary.get("rmse_delta_gen_minus_ori"), digits=3))
+    _row(lines, "ape.rec_rmse_m", _fmt_number(evo_summary.get("rec_ape_rmse"), digits=3))
+    _row(
+        lines,
+        "ape.delta_rec_minus_ori_m",
+        _fmt_number(evo_summary.get("rmse_delta_rec_minus_ori"), digits=3),
+    )
     _row(lines, "rpe.ori_trans_rmse_m", _fmt_number(evo_summary.get("ori_rpe_trans_rmse"), digits=3))
-    _row(lines, "rpe.gen_trans_rmse_m", _fmt_number(evo_summary.get("gen_rpe_trans_rmse"), digits=3))
+    _row(
+        lines,
+        "rpe.rec_trans_rmse_m",
+        _fmt_number(evo_summary.get("rec_rpe_trans_rmse"), digits=3),
+    )
     _row(lines, "rpe.delta_trans_m", _fmt_number(evo_summary.get("rpe_delta_trans"), digits=3))
     _row(lines, "rpe.ori_rot_rmse_deg", _fmt_number(evo_summary.get("ori_rpe_rot_rmse_deg"), digits=2))
-    _row(lines, "rpe.gen_rot_rmse_deg", _fmt_number(evo_summary.get("gen_rpe_rot_rmse_deg"), digits=2))
+    _row(
+        lines,
+        "rpe.rec_rot_rmse_deg",
+        _fmt_number(evo_summary.get("rec_rpe_rot_rmse_deg"), digits=2),
+    )
     _row(lines, "rpe.delta_rot_deg", _fmt_number(evo_summary.get("rpe_delta_rot_deg"), digits=2))
     _row(lines, "eval_reliability", str(evo_summary.get("eval_reliability") or "n/a"))
 
     lines.extend(["", "[Compression]"])
     _row(lines, "raw_size_mib", _fmt_number(_bytes_to_mib(compression_report.get("orig_size_bytes"))))
-    _row(lines, "hvm_size_mib", _fmt_number(_bytes_to_mib(compression_report.get("comp_size_bytes"))))
+    _row(
+        lines,
+        "ours_size_mib",
+        _fmt_number(_bytes_to_mib(_first_present(compression_report, "ours_size_bytes", "comp_size_bytes"))),
+    )
     _row(lines, "transmission_ratio", _fmt_ratio(compression_report.get("ratio")))
     _row(lines, "reduction_pct", _fmt_number(compression_report.get("reduction_pct")))
     _row(lines, "raw_frames", compression_report.get("raw_frame_count", "n/a"))
@@ -449,11 +480,14 @@ def _summary_lines(exp_dir, inputs, reports, compression_report, warnings, eval_
             ),
         )
     _row(lines, "ape.ori_pose_pairs", evo_summary.get("ori_pose_pairs") if evo_summary.get("ori_pose_pairs") is not None else "n/a")
-    _row(lines, "ape.gen_pose_pairs", evo_summary.get("gen_pose_pairs") if evo_summary.get("gen_pose_pairs") is not None else "n/a")
+    rec_pose_pairs = evo_summary.get("rec_pose_pairs")
+    _row(lines, "ape.rec_pose_pairs", rec_pose_pairs if rec_pose_pairs is not None else "n/a")
     _row(lines, "rpe.ori_trans_pose_pairs", evo_summary.get("ori_rpe_trans_pose_pairs") if evo_summary.get("ori_rpe_trans_pose_pairs") is not None else "n/a")
-    _row(lines, "rpe.gen_trans_pose_pairs", evo_summary.get("gen_rpe_trans_pose_pairs") if evo_summary.get("gen_rpe_trans_pose_pairs") is not None else "n/a")
+    rec_rpe_trans_pose_pairs = evo_summary.get("rec_rpe_trans_pose_pairs")
+    _row(lines, "rpe.rec_trans_pose_pairs", rec_rpe_trans_pose_pairs if rec_rpe_trans_pose_pairs is not None else "n/a")
     _row(lines, "rpe.ori_rot_pose_pairs", evo_summary.get("ori_rpe_rot_pose_pairs") if evo_summary.get("ori_rpe_rot_pose_pairs") is not None else "n/a")
-    _row(lines, "rpe.gen_rot_pose_pairs", evo_summary.get("gen_rpe_rot_pose_pairs") if evo_summary.get("gen_rpe_rot_pose_pairs") is not None else "n/a")
+    rec_rpe_rot_pose_pairs = evo_summary.get("rec_rpe_rot_pose_pairs")
+    _row(lines, "rpe.rec_rot_pose_pairs", rec_rpe_rot_pose_pairs if rec_rpe_rot_pose_pairs is not None else "n/a")
     _row(lines, "trajectory_plot_status", str(evo_summary.get("plot_status") or "skipped"))
     if all_warnings:
         lines.append("warnings:")
@@ -479,7 +513,7 @@ def build_eval_summary(config):
         "decode_report": _read_required_json(inputs["decode_report"], "decode report", warnings),
         "decode_merge_report": _read_required_json(inputs["decode_merge_report"], "decode merge report", warnings),
         "ori_run_meta": _read_required_json(inputs["ori_run_meta"], "ORI run meta", warnings),
-        "gen_run_meta": _read_required_json(inputs["gen_run_meta"], "GEN run meta", warnings),
+        "rec_run_meta": _read_required_json(inputs["rec_run_meta"], "REC run meta", warnings),
         "evo_summary": _read_required_json(inputs["evo_summary"], "evo summary", warnings),
     }
 
@@ -524,7 +558,7 @@ def _build_arg_parser():
     parser.add_argument("--decode_report", required=True)
     parser.add_argument("--decode_merge_report", required=True)
     parser.add_argument("--ori_run_meta", required=True)
-    parser.add_argument("--gen_run_meta", required=True)
+    parser.add_argument("--rec_run_meta", required=True)
     parser.add_argument("--evo_summary", required=True)
     return parser
 
