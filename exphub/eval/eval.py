@@ -23,30 +23,31 @@ _STALE_EVAL_OUTPUTS = (
     "internal/eval_slam_report.json",
     "evo_summary.json",
     "evo_ori_ape.zip",
-    "evo_gen_ape.zip",
+    "evo_rec_ape.zip",
     "ori/evo_ape.zip",
-    "gen/evo_ape.zip",
+    "rec/evo_ape.zip",
     "ori/evo_rpe_trans.zip",
     "ori/evo_rpe_rot.zip",
-    "gen/evo_rpe_trans.zip",
-    "gen/evo_rpe_rot.zip",
+    "rec/evo_rpe_trans.zip",
+    "rec/evo_rpe_rot.zip",
     "ori/traj_est.npz",
-    "gen/traj_est.npz",
+    "rec/traj_est.npz",
     "evo_ori_stdout.txt",
     "evo_ori_stderr.txt",
-    "evo_gen_stdout.txt",
-    "evo_gen_stderr.txt",
+    "evo_rec_stdout.txt",
+    "evo_rec_stderr.txt",
     "evo_failure.log",
     "evo_rpe_ori_trans_failure.log",
     "evo_rpe_ori_rot_failure.log",
-    "evo_rpe_gen_trans_failure.log",
-    "evo_rpe_gen_rot_failure.log",
+    "evo_rpe_rec_trans_failure.log",
+    "evo_rpe_rec_rot_failure.log",
     "eval_compression_report.json",
     "eval_summary.txt",
     "eval_details.csv",
     "eval_metrics_overview.png",
     "trajectory_overlay_auto2d.png",
     "trajectory_plot_data.json",
+    "gen",
 )
 
 
@@ -137,7 +138,7 @@ def run_eval_mainline(args):
             "exp_dir": str(exp_dir),
             "gt_traj": str(gt_traj_path),
             "ori_traj": str((out_dir / "ori" / "traj_est.tum").resolve()),
-            "gen_traj": str((out_dir / "gen" / "traj_est.tum").resolve()),
+            "rec_traj": str((out_dir / "rec" / "traj_est.tum").resolve()),
             "t_max_diff": float(args.t_max_diff),
             "skip_plots": bool(args.skip_plots),
             "fps": float(args.fps),
@@ -159,7 +160,7 @@ def run_eval_mainline(args):
             "decode_report": str(inputs["decode_report"]),
             "decode_merge_report": str(inputs["decode_merge_report"]),
             "ori_run_meta": str(out_dir / "ori" / "run_meta.json"),
-            "gen_run_meta": str(out_dir / "gen" / "run_meta.json"),
+            "rec_run_meta": str(out_dir / "rec" / "run_meta.json"),
             "evo_summary": str(out_dir / "evo_summary.json"),
             "eval_runtime_sec": float(time.time() - eval_started),
         }
@@ -257,11 +258,11 @@ def run(runtime):
         (runtime.paths.eval_details_path, "eval details"),
         (runtime.paths.eval_trajectory_overlay_path, "trajectory overlay"),
         (runtime.paths.eval_ori_traj_path, "ORI trajectory"),
-        (runtime.paths.eval_gen_traj_path, "GEN trajectory"),
+        (runtime.paths.eval_rec_traj_path, "REC trajectory"),
         (runtime.paths.eval_ori_run_meta_path, "ORI run meta"),
-        (runtime.paths.eval_gen_run_meta_path, "GEN run meta"),
+        (runtime.paths.eval_rec_run_meta_path, "REC run meta"),
         (runtime.paths.eval_evo_ori_ape_path, "ORI evo APE result"),
-        (runtime.paths.eval_evo_gen_ape_path, "GEN evo APE result"),
+        (runtime.paths.eval_evo_rec_ape_path, "REC evo APE result"),
     ]
     evo_summary = read_json_dict(runtime.paths.eval_evo_summary_path)
     plot_status = str(evo_summary.get("plot_status") or "skipped").strip().lower()
@@ -293,7 +294,7 @@ def _build_arg_parser():
     parser.add_argument("--decode_report", required=True)
     parser.add_argument("--decode_merge_report", required=True)
     parser.add_argument("--gt_traj", required=True)
-    parser.add_argument("--seq", default="both", choices=["auto", "ori", "gen", "both"])
+    parser.add_argument("--seq", default="both", choices=["auto", "ori", "rec", "both"])
     parser.add_argument("--droid_repo", required=True)
     parser.add_argument("--weights", required=True)
     parser.add_argument("--fps", type=float, default=0.0)

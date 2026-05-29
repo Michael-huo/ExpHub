@@ -130,6 +130,13 @@ def _get_nested(obj: Dict[str, object], path: List[str]) -> object:
     return cur
 
 
+def _first_not_none(*values: object) -> object:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _as_float_or_none(value: object) -> Optional[float]:
     try:
         if value is None:
@@ -238,6 +245,14 @@ def _pick_float(obj: Dict[str, object], path: List[str]) -> Optional[float]:
 
 def _pick_int(obj: Dict[str, object], path: List[str]) -> Optional[int]:
     return _as_int_or_none(_get_nested(obj, path))
+
+
+def _pick_first_int(obj: Dict[str, object], paths: List[List[str]]) -> Optional[int]:
+    for path in list(paths or []):
+        value = _pick_int(obj, path)
+        if value is not None:
+            return value
+    return None
 
 
 def _decode_generation_summary(exp_dir: Path) -> Dict[str, object]:
@@ -357,6 +372,7 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
 
     ori_bytes = _pick_int(compression_snapshot, ["orig_size_bytes"])
     comp_size = _pick_int(compression_snapshot, ["comp_size_bytes"])
+    ours_size = _pick_first_int(compression_snapshot, [["ours_size_bytes"], ["comp_size_bytes"]])
     ratio_bytes = _pick_float(compression_snapshot, ["ratio"])
     raw_frame_count = _pick_int(compression_snapshot, ["raw_frame_count"])
     transmitted_frame_count = _pick_int(compression_snapshot, ["transmitted_frame_count"])
@@ -381,13 +397,13 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
             "alignment": _get_nested(evo_summary, ["alignment"]),
             "gt_path_length_m": _pick_float(evo_summary, ["gt_path_length_m"]),
             "ori_ape_rmse": _pick_float(evo_summary, ["ori_ape_rmse"]),
-            "gen_ape_rmse": _pick_float(evo_summary, ["gen_ape_rmse"]),
-            "rmse_delta_gen_minus_ori": _pick_float(evo_summary, ["rmse_delta_gen_minus_ori"]),
+            "rec_ape_rmse": _pick_float(evo_summary, ["rec_ape_rmse"]),
+            "rmse_delta_rec_minus_ori": _pick_float(evo_summary, ["rmse_delta_rec_minus_ori"]),
             "ori_rpe_trans_rmse": _pick_float(evo_summary, ["ori_rpe_trans_rmse"]),
-            "gen_rpe_trans_rmse": _pick_float(evo_summary, ["gen_rpe_trans_rmse"]),
+            "rec_rpe_trans_rmse": _pick_float(evo_summary, ["rec_rpe_trans_rmse"]),
             "rpe_delta_trans": _pick_float(evo_summary, ["rpe_delta_trans"]),
             "ori_rpe_rot_rmse_deg": _pick_float(evo_summary, ["ori_rpe_rot_rmse_deg"]),
-            "gen_rpe_rot_rmse_deg": _pick_float(evo_summary, ["gen_rpe_rot_rmse_deg"]),
+            "rec_rpe_rot_rmse_deg": _pick_float(evo_summary, ["rec_rpe_rot_rmse_deg"]),
             "rpe_delta_rot_deg": _pick_float(evo_summary, ["rpe_delta_rot_deg"]),
             "eval_reliability": _get_nested(evo_summary, ["eval_reliability"]),
         },
@@ -396,6 +412,7 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
             "reduction_pct": reduction_pct,
             "orig_size": ori_bytes,
             "comp_size": comp_size,
+            "ours_size": ours_size,
             "raw_frames": raw_frame_count,
             "transmitted_frames": transmitted_frame_count,
         },
@@ -445,20 +462,23 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
         ("alignment", _alignment_label(quality.get("alignment"))),
         ("gt_path_length_m", _fmt_plain_metric(quality.get("gt_path_length_m"), digits=2)),
         ("ape.ori_rmse_m", _fmt_plain_metric(quality.get("ori_ape_rmse"), digits=3)),
-        ("ape.gen_rmse_m", _fmt_plain_metric(quality.get("gen_ape_rmse"), digits=3)),
-        ("ape.delta_gen_minus_ori_m", _fmt_plain_metric(quality.get("rmse_delta_gen_minus_ori"), digits=3)),
+        ("ape.rec_rmse_m", _fmt_plain_metric(quality.get("rec_ape_rmse"), digits=3)),
+        ("ape.delta_rec_minus_ori_m", _fmt_plain_metric(quality.get("rmse_delta_rec_minus_ori"), digits=3)),
         ("rpe.ori_trans_rmse_m", _fmt_plain_metric(quality.get("ori_rpe_trans_rmse"), digits=3)),
-        ("rpe.gen_trans_rmse_m", _fmt_plain_metric(quality.get("gen_rpe_trans_rmse"), digits=3)),
+        ("rpe.rec_trans_rmse_m", _fmt_plain_metric(quality.get("rec_rpe_trans_rmse"), digits=3)),
         ("rpe.delta_trans_m", _fmt_plain_metric(quality.get("rpe_delta_trans"), digits=3)),
         ("rpe.ori_rot_rmse_deg", _fmt_plain_metric(quality.get("ori_rpe_rot_rmse_deg"), digits=2)),
-        ("rpe.gen_rot_rmse_deg", _fmt_plain_metric(quality.get("gen_rpe_rot_rmse_deg"), digits=2)),
+        ("rpe.rec_rot_rmse_deg", _fmt_plain_metric(quality.get("rec_rpe_rot_rmse_deg"), digits=2)),
         ("rpe.delta_rot_deg", _fmt_plain_metric(quality.get("rpe_delta_rot_deg"), digits=2)),
         ("eval_reliability", str(quality.get("eval_reliability") or "n/a")),
     ]
 
     compression_rows = [
         ("raw_size_mib", _fmt_plain_metric(_bytes_to_mib(compression.get("orig_size")), digits=2)),
-        ("hvm_size_mib", _fmt_plain_metric(_bytes_to_mib(compression.get("comp_size")), digits=2)),
+        (
+            "ours_size_mib",
+            _fmt_plain_metric(_bytes_to_mib(_first_not_none(compression.get("ours_size"), compression.get("comp_size"))), digits=2),
+        ),
         ("transmission_ratio", _fmt_plain_ratio(compression.get("ratio"))),
         ("reduction_pct", _fmt_plain_metric(compression.get("reduction_pct"), digits=2)),
         ("raw_frames", _fmt_plain_int(compression.get("raw_frames"))),
@@ -594,8 +614,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--ros_setup", default=os.environ.get("ROS_SETUP", "/opt/ros/noetic/setup.bash"))
 
     # Eval-stage SLAM sequence selection.
-    # Default is "both" so eval can compare ori/gen unless explicitly overridden.
-    ap.add_argument("--droid_seq", default="both", choices=["auto", "ori", "gen", "both"])
+    # Default is "both" so eval can compare ORI/REC unless explicitly overridden.
+    ap.add_argument("--droid_seq", default="both", choices=["auto", "ori", "rec", "both"])
     ap.add_argument("--viz", action="store_true")
     ap.add_argument("--no_viz", action="store_true")
 

@@ -124,10 +124,10 @@ def _cleanup_min(exp_dir: Path) -> None:
             "eval_details.csv",
             "trajectory_overlay_auto2d.png",
             "ori",
-            "gen",
+            "rec",
         },
     )
-    for track in ("ori", "gen"):
+    for track in ("ori", "rec"):
         _prune_dir_keep_names(
             exp_dir,
             exp_dir / "eval" / track,

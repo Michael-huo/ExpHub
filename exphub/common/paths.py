@@ -228,8 +228,8 @@ class ExperimentPaths:
         return self.eval_dir / "ori" / "evo_ape.zip"
 
     @property
-    def eval_evo_gen_ape_path(self) -> Path:
-        return self.eval_dir / "gen" / "evo_ape.zip"
+    def eval_evo_rec_ape_path(self) -> Path:
+        return self.eval_dir / "rec" / "evo_ape.zip"
 
     @property
     def eval_compression_report_path(self) -> Path:
@@ -252,13 +252,13 @@ class ExperimentPaths:
         return self.eval_dir / "ori" / "traj_est.tum"
 
     @property
-    def eval_gen_traj_path(self) -> Path:
-        return self.eval_dir / "gen" / "traj_est.tum"
+    def eval_rec_traj_path(self) -> Path:
+        return self.eval_dir / "rec" / "traj_est.tum"
 
     @property
     def eval_ori_run_meta_path(self) -> Path:
         return self.eval_dir / "ori" / "run_meta.json"
 
     @property
-    def eval_gen_run_meta_path(self) -> Path:
-        return self.eval_dir / "gen" / "run_meta.json"
+    def eval_rec_run_meta_path(self) -> Path:
+        return self.eval_dir / "rec" / "run_meta.json"

@@ -229,7 +229,7 @@ def _save_trajectory(traj_est, timestamps_sec, tum_path, track_name):
     if matrices.shape[0] != timestamps.shape[0]:
         raise RuntimeError(
             "cannot assign absolute timestamps to {} trajectory: traj rows={}, source timestamps={}".format(
-                track_name,
+                _display_track_name(track_name),
                 int(matrices.shape[0]),
                 int(timestamps.shape[0]),
             )
@@ -327,7 +327,7 @@ def _timestamps_for_files(files, source_timestamps, track_name):
         if frame_idx < 0 or frame_idx >= len(source_timestamps):
             raise RuntimeError(
                 "cannot assign absolute timestamps to {} trajectory: frame index {} outside source timestamps count {}".format(
-                    track_name,
+                    str(track_name),
                     int(frame_idx),
                     int(len(source_timestamps)),
                 )
@@ -340,7 +340,7 @@ def _run_track(exp_dir, track_name, frames_dir, args, source_timestamps):
     import torch
 
     started = time.time()
-    frames_dir = ensure_dir(frames_dir, "{} frames dir".format(track_name))
+    frames_dir = ensure_dir(frames_dir, "{} frames dir".format(str(track_name)))
     calib_path = ensure_file(args.decode_calib, "decode calib")
     timestamps_path = ensure_file(args.decode_timestamps, "decode timestamps")
 
@@ -352,7 +352,7 @@ def _run_track(exp_dir, track_name, frames_dir, args, source_timestamps):
     if args.max_frames > 0:
         files = files[: args.max_frames]
     if not files:
-        raise RuntimeError("no frames available for slam track {}: {}".format(track_name, frames_dir))
+        raise RuntimeError("no frames available for slam track {}: {}".format(str(track_name), frames_dir))
 
     fx, fy, cx, cy, dist = _load_calib(calib_path)
     timestamps = _timestamps_for_files(files, source_timestamps, track_name)
@@ -383,12 +383,12 @@ def _run_track(exp_dir, track_name, frames_dir, args, source_timestamps):
 
     droid = None
     timestamps_used = []
-    log_info("slam tracking start: track={} frames={}".format(track_name, len(files)))
+    log_info("slam tracking start: track={} frames={}".format(str(track_name), len(files)))
 
     for t_int, image, intrinsics, timestamp in _maybe_tqdm(
         droid_stream(files, stream_cfg),
         disable=bool(args.no_tqdm),
-        desc="DROID {}".format(track_name),
+        desc="DROID {}".format(str(track_name).upper()),
         total=len(files),
     ):
         if not bool(args.disable_vis):
@@ -400,7 +400,7 @@ def _run_track(exp_dir, track_name, frames_dir, args, source_timestamps):
         timestamps_used.append(float(timestamp))
 
     if droid is None:
-        raise RuntimeError("no frames processed for slam track {}".format(track_name))
+        raise RuntimeError("no frames processed for slam track {}".format(str(track_name)))
 
     def stream_for_terminate():
         for t_int, image, intrinsics, _timestamp in droid_stream(files, stream_cfg):
@@ -443,7 +443,7 @@ def _run_track(exp_dir, track_name, frames_dir, args, source_timestamps):
     }
     run_meta_path = (track_dir / "run_meta.json").resolve()
     write_json_atomic(run_meta_path, run_meta, indent=2)
-    log_prog("slam summary: track={} frames_processed={}".format(track_name, int(len(timestamps_used))))
+    log_prog("slam summary: track={} frames_processed={}".format(str(track_name), int(len(timestamps_used))))
 
     return {
         "frames_dir": _relative_path(exp_dir, frames_dir),
@@ -478,15 +478,15 @@ def run_slam(config):
     seq = str(args.seq or "both").strip().lower()
     if seq == "auto":
         seq = "both"
-    if seq not in ("ori", "gen", "both"):
+    if seq not in ("ori", "rec", "both"):
         raise RuntimeError("unsupported slam seq: {}".format(seq))
 
     source_timestamps = _load_prepare_ros_timestamps(prepare_result_path)
     tracks = {}
     if seq in ("ori", "both"):
         tracks["ori"] = _run_track(exp_dir, "ori", args.prepare_frames_dir, args, source_timestamps)
-    if seq in ("gen", "both"):
-        tracks["gen"] = _run_track(exp_dir, "gen", args.decode_frames_dir, args, source_timestamps)
+    if seq in ("rec", "both"):
+        tracks["rec"] = _run_track(exp_dir, "rec", args.decode_frames_dir, args, source_timestamps)
 
     return {
         "tracks": tracks,
@@ -508,7 +508,7 @@ def _build_arg_parser():
     parser.add_argument("--decode_timestamps", required=True)
     parser.add_argument("--decode_report", required=True)
     parser.add_argument("--decode_merge_report", required=True)
-    parser.add_argument("--seq", default="both", choices=["auto", "ori", "gen", "both"])
+    parser.add_argument("--seq", default="both", choices=["auto", "ori", "rec", "both"])
     parser.add_argument("--droid_repo", required=True)
     parser.add_argument("--weights", required=True)
     parser.add_argument("--t0", default=0, type=int)

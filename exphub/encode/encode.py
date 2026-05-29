@@ -170,9 +170,9 @@ def _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_h
         payload_dir=payload_dir,
     )
     payload_write_sec = float(time.perf_counter() - payload_started)
-    ensure_dir(payload_dir, "hvm payload")
+    ensure_dir(payload_dir, "Ours payload")
     log_info(
-        "hvm payload done: frames={} dir={}".format(
+        "Ours payload done: frames={} dir={}".format(
             int(payload_report.get("frame_count", 0) or 0),
             _relative_to_exp(runtime, payload_dir),
         )
@@ -193,9 +193,9 @@ def _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_h
     ).run()
     ensure_file(benchmark_report["raw_zip"], "compression benchmark raw zip")
     ensure_file(benchmark_report["h265_video"], "compression benchmark H.265 video")
-    ensure_file(benchmark_report["hvm_payload_zip"], "compression benchmark hvm payload zip")
+    ensure_file(benchmark_report["hvm_payload_zip"], "compression benchmark Ours payload zip")
     log_info(
-        "encode compression benchmark done: frames={} fps={} bitrate={} raw={} h265={} hvm={}".format(
+        "encode compression benchmark done: frames={} fps={} bitrate={} raw={} h265={} ours={}".format(
             int(benchmark_report.get("frame_count", 0) or 0),
             int(benchmark_report.get("fps", 0) or 0),
             str(benchmark_report.get("bitrate", "")),

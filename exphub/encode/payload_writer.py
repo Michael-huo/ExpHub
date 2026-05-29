@@ -42,7 +42,7 @@ def _boundary_indices(generation_units):
             out.append(idx)
     out.sort()
     if not out:
-        raise RuntimeError("hvm payload requires at least one generation unit boundary frame")
+        raise RuntimeError("Ours payload requires at least one generation unit boundary frame")
     return out
 
 
@@ -59,14 +59,14 @@ def _payload_motion_params(generation_units):
 def _validate_payload_dir(payload_dir, expected_frame_names=None):
     root = Path(payload_dir).resolve()
     if not root.is_dir():
-        raise RuntimeError("hvm payload directory missing: {}".format(root))
+        raise RuntimeError("Ours payload directory missing: {}".format(root))
 
     names = {item.name for item in root.iterdir()}
     unexpected = sorted(names - _ALLOWED_TOP_LEVEL)
     missing = sorted(_ALLOWED_TOP_LEVEL - names)
     if unexpected or missing:
         raise RuntimeError(
-            "hvm payload purity violation: missing={} unexpected={} dir={}".format(
+            "Ours payload purity violation: missing={} unexpected={} dir={}".format(
                 missing,
                 unexpected,
                 root,
@@ -75,30 +75,30 @@ def _validate_payload_dir(payload_dir, expected_frame_names=None):
 
     frames_dir = root / "frames"
     if not frames_dir.is_dir() or frames_dir.is_symlink():
-        raise RuntimeError("hvm payload frames must be a real directory: {}".format(frames_dir))
+        raise RuntimeError("Ours payload frames must be a real directory: {}".format(frames_dir))
     frame_files = sorted(frames_dir.iterdir(), key=lambda item: item.name)
     if not frame_files:
-        raise RuntimeError("hvm payload frames directory is empty: {}".format(frames_dir))
+        raise RuntimeError("Ours payload frames directory is empty: {}".format(frames_dir))
     if expected_frame_names is not None:
         actual_names = [item.name for item in frame_files]
         expected_names = sorted(str(item) for item in expected_frame_names)
         if actual_names != expected_names:
             raise RuntimeError(
-                "hvm payload frames purity violation: expected={} actual={}".format(
+                "Ours payload frames purity violation: expected={} actual={}".format(
                     expected_names,
                     actual_names,
                 )
             )
     for frame in frame_files:
         if frame.is_symlink() or not frame.is_file():
-            raise RuntimeError("hvm payload frame must be a regular deep-copied file: {}".format(frame))
+            raise RuntimeError("Ours payload frame must be a regular deep-copied file: {}".format(frame))
         if frame.suffix.lower() not in _FRAME_EXTS:
-            raise RuntimeError("hvm payload frame has unsupported extension: {}".format(frame))
+            raise RuntimeError("Ours payload frame has unsupported extension: {}".format(frame))
 
     for name in ("prompts.json", "motion_params.json"):
         path = root / name
         if path.is_symlink() or not path.is_file():
-            raise RuntimeError("hvm payload metadata must be a regular file: {}".format(path))
+            raise RuntimeError("Ours payload metadata must be a regular file: {}".format(path))
 
 
 def write_hvm_payload_zip(payload_dir, zip_path):
@@ -113,7 +113,7 @@ def write_hvm_payload_zip(payload_dir, zip_path):
                 continue
             arcname = path.relative_to(root).as_posix()
             if arcname.startswith("/") or ".." in Path(arcname).parts:
-                raise RuntimeError("unsafe hvm payload zip member: {}".format(arcname))
+                raise RuntimeError("unsafe Ours payload zip member: {}".format(arcname))
             zf.write(str(path), arcname)
     tmp_path.replace(out_path)
     return out_path
@@ -132,7 +132,7 @@ def write_hvm_payload(frames_dir, generation_units, prompts, payload_dir):
         dst = payload_frames / src.name
         shutil.copy2(str(src), str(dst), follow_symlinks=True)
         if dst.is_symlink() or not dst.is_file():
-            raise RuntimeError("failed to deep-copy hvm payload frame: {}".format(dst))
+            raise RuntimeError("failed to deep-copy Ours payload frame: {}".format(dst))
         copied_frames.append(dst.resolve())
 
     write_json_atomic(payload_root / "prompts.json", prompts, indent=2)
