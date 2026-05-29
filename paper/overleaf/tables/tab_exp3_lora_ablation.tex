@@ -1,14 +1,14 @@
 % This table is included by sections/04_experiments.tex.
-\begin{table}[!b]
+\begin{table}[!htbp]
 \renewcommand{\arraystretch}{1.14}
-\caption{MGDR ablation results for the world-model decoder.}
+\caption{MGDR ablation for downstream VSLAM and auxiliary image fidelity.}
 \label{tab:lora_ablation}
 \centering
 \footnotesize
 \setlength{\tabcolsep}{2pt}
 \begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}llrrrrr@{}}
 \toprule
-Data & Dec. & ORI APE & REC APE & LPIPS & SSIM & FID \\
+Data & Dec. & \shortstack{ORI APE (m)\\$\downarrow$} & \shortstack{REC APE (m)\\$\downarrow$} & \shortstack{LPIPS\\$\downarrow$} & \shortstack{SSIM\\$\uparrow$} & \shortstack{FID\\$\downarrow$} \\
 \midrule
 NCD & WM & 0.142 & 0.539 & 0.270 & 0.593 & 50.151 \\
 NCD & WM+MGDR & 0.142 & \textbf{0.289} & 0.307 & 0.507 & 23.950 \\
@@ -22,5 +22,5 @@ Avg. & WM+MGDR & 0.240 & \textbf{0.321} & 0.398 & 0.515 & 66.552 \\
 \end{tabular*}%
 \vspace{0.2em}
 
-\parbox{\columnwidth}{\footnotesize APE values are RMSE in meters. LPIPS, SSIM, and FID are auxiliary image-fidelity metrics and are not the final task-level objective.}
+\parbox{\columnwidth}{\footnotesize APE values are RMSE in meters. Arrows mark preferred directions: lower for APE/LPIPS/FID and higher for SSIM. LPIPS, SSIM, and FID are auxiliary image-fidelity metrics, not the final task-level objective.}
 \end{table}
