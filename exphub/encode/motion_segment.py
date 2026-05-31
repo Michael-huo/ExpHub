@@ -1285,8 +1285,8 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
             "savefig.facecolor": "white",
         }
     )
-    fig = plt.figure(figsize=(13.5, 4.7), constrained_layout=False, facecolor="white")
-    grid = fig.add_gridspec(2, 1, height_ratios=[2.55, 1.15])
+    fig = plt.figure(figsize=(13.5, 4.0), constrained_layout=False, facecolor="white")
+    grid = fig.add_gridspec(2, 1, height_ratios=[2.55, 0.60])
     ax0 = fig.add_subplot(grid[0, 0])
     ax1 = fig.add_subplot(grid[1, 0])
 
@@ -1298,11 +1298,9 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
     ax0.axis("off")
     ax0.text(-0.010, 0.745, "RGB", transform=ax0.transAxes, ha="right", va="center", fontsize=10.5, fontweight="bold", color="#4A4F55")
     ax0.text(-0.010, 0.255, "PC", transform=ax0.transAxes, ha="right", va="center", fontsize=10.5, fontweight="bold", color="#4A4F55")
-    ax0.set_title("Motion Overview Samples", pad=8, loc="left", fontsize=12, fontweight="bold")
 
     x = np.arange(len(pair_states))
     steering = _normalize01(np.abs([float(row.get("steering_response", 0.0) or 0.0) for row in pair_states]))
-    forward = _normalize01([float(row.get("forward_score", row.get("forward_response", 0.0)) or 0.0) for row in pair_states])
     state_labels = ["mixed" for _ in range(len(pair_states))]
     for state in motion_states:
         label = str(state.get("motion_label", "forward") or "forward")
@@ -1310,33 +1308,43 @@ def _plot_motion_overview(path, frames, grays, pair_states, motion_states, num_f
         end = min(len(pair_states) - 1, int(state.get("end_idx", start) or start) - 1)
         if end >= start:
             state_labels[start : end + 1] = [label for _ in range(end - start + 1)]
-    _plot_background(ax1, state_labels, 0, MOTION_COLORS, 0.42)
+    current = state_labels[0]
+    start = 0
+    for idx in range(1, len(state_labels)):
+        if state_labels[idx] != current:
+            color = MOTION_COLORS.get(current)
+            if color:
+                ax1.axvspan(start, idx, color=color, alpha=0.28, lw=0, zorder=0)
+            current = state_labels[idx]
+            start = idx
+    color = MOTION_COLORS.get(current)
+    if color:
+        ax1.axvspan(start, len(state_labels) - 1, color=color, alpha=0.28, lw=0, zorder=0)
     for state in motion_states:
         start = int(state.get("start_idx", 0) or 0)
-        ax1.axvline(start, color="#333333", linewidth=0.75, alpha=0.35)
-    ax1.axvline(int(motion_states[-1].get("end_idx", x_max)), color="#333333", linewidth=0.75, alpha=0.35)
-    ax1.plot(x, steering, color=PC_LINE_COLOR, linewidth=2.0, alpha=0.95, label="PC normalized yaw")
-    ax1.plot(x, forward, color=PC_LINE_COLOR, linewidth=1.7, alpha=0.72, linestyle="--", label="PC normalized expansion")
-    ax1.set_ylim(-0.05, 1.05)
-    ax1.set_title("Phase Correlation Motion Responses", pad=5, loc="left")
+        ax1.axvline(start, color="#333333", linewidth=0.6, alpha=0.25, zorder=2)
+    ax1.axvline(int(motion_states[-1].get("end_idx", x_max)), color="#333333", linewidth=0.6, alpha=0.25, zorder=2)
+    ax1.plot(x, steering, color=PC_LINE_COLOR, linewidth=2.0, alpha=0.95, label="PC motion response", zorder=3)
+    ax1.set_ylim(0.0, 1.0)
+    ax1.set_yticks([0, 1])
     _style_axis(ax1, "Response")
     ax1.set_xlabel("Frame / Pair Index", labelpad=8)
     ax1.set_xlim(0, x_max)
     ax1.margins(x=0)
 
-    handles = [Patch(color=MOTION_COLORS[label], label=label) for label in MAIN_MOTION_LABELS]
+    display_labels = {"forward": "Forward", "left_turn": "Left turn", "right_turn": "Right turn"}
+    handles = [Patch(color=MOTION_COLORS[label], label=display_labels[label]) for label in MAIN_MOTION_LABELS]
     handles += [
-        Line2D([0], [0], color=PC_LINE_COLOR, lw=2.0, label="PC normalized yaw"),
-        Line2D([0], [0], color=PC_LINE_COLOR, lw=1.7, linestyle="--", label="PC normalized expansion"),
+        Line2D([0], [0], color=PC_LINE_COLOR, lw=2.0, label="PC motion response"),
     ]
-    legend = fig.legend(handles=handles, loc="upper center", ncol=5, bbox_to_anchor=(0.5, 0.975), frameon=True)
+    legend = fig.legend(handles=handles, loc="upper center", ncol=4, bbox_to_anchor=(0.5, 0.975), frameon=True)
     frame = legend.get_frame()
     frame.set_facecolor("white")
     frame.set_alpha(0.96)
     frame.set_edgecolor("#D8DDE3")
     frame.set_linewidth(0.8)
     fig.align_ylabels([ax1])
-    fig.subplots_adjust(left=0.075, right=0.985, top=0.84, bottom=0.12, hspace=0.10)
+    fig.subplots_adjust(left=0.075, right=0.985, top=0.895, bottom=0.12, hspace=0.08)
     plt.savefig(str(path), dpi=230, facecolor="white", transparent=False)
     plt.close(fig)
     return True
