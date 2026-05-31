@@ -32,7 +32,7 @@ The first experiment evaluates end-to-end transmission reduction and VSLAM traje
 \begin{figure*}[!t]
 \centering
 \includegraphics[width=\textwidth]{figures/fig6.png}
-\caption{Trajectory comparison and point-cloud reconstruction results on NCD, TUM, and GDUT.}
+\caption{Representative trajectory preservation and visual-continuity evidence under VLMem compression. The top row compares global VSLAM trajectories on representative NCD and GDUT sequences. The highlighted regions indicate local motion segments selected for visual inspection, including a U-turn in NCD and a slight-turn segment in GDUT. The bottom row shows the corresponding start frames, reconstructed intermediate frames, and end frames. GT, ORI, and REC denote ground-truth trajectories, VSLAM trajectories from original frames, and VSLAM trajectories from reconstructed frames, respectively.}
 \label{fig:trajectory_map}
 \end{figure*}
 
@@ -44,7 +44,7 @@ The average ORI APE is 0.698 m, while the average REC APE is 0.735 m. \(\Delta\)
 
 The main interpretation of Table~\ref{tab:compression_accuracy} is therefore the compression--trajectory tradeoff: the transmitted VLMem payload greatly reduces visual data while REC APE remains close to ORI APE on average. This supports the use of Vision--Language Memory for task-usable visual reconstruction under the reported evaluation protocol, rather than claiming frame-level physical fidelity.
 
-Fig.~\ref{fig:trajectory_map} complements Table~\ref{tab:compression_accuracy} by comparing trajectories and point-cloud reconstructions on NCD, TUM, and GDUT. The trajectory and point-cloud similarity in the shown examples qualitatively supports route-level geometric continuity. The reconstructed sequences preserve the main route shape and enough spatial structure for VSLAM in these cases, which complements APE RMSE without implying exact map reconstruction.
+Fig.~\ref{fig:trajectory_map} complements the quantitative results in Table~\ref{tab:compression_accuracy} with representative visual evidence. The global trajectory overlays show that the REC trajectories preserve the main route structures relative to ORI and GT under high transmission reduction. To further examine regions where global plots alone are less informative, Fig.~\ref{fig:trajectory_map} highlights representative local turning segments and shows the corresponding start frames, reconstructed intermediate frames, and end frames. These examples indicate that world-model reconstruction can provide temporally continuous views around local motion changes, helping maintain task-usable visual structure for downstream VSLAM. This qualitative evidence supports the trajectory-preservation interpretation of VLMem-Codec, without implying pixel-identical or physically exact frame recovery.
 
 \subsection{Payload Size and Runtime Breakdown}
 \label{subsec:payload_runtime}
