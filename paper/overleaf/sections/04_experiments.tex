@@ -97,12 +97,12 @@ The auxiliary image-fidelity metrics do not follow the same trend as REC APE. On
 
 Instead, the ablation indicates that fidelity at the pixel or distribution level is not fully aligned with VSLAM-useful reconstruction in this setting. A reconstruction with weaker pixel-level similarity may be more compatible with VSLAM estimation if it better preserves geometric continuity, viewpoint stability, and trackable structures. MGDR should therefore be interpreted as task-oriented decoder refinement for VSLAM-useful reconstruction, rather than as a general perceptual enhancement module.
 
-Fig.~\ref{fig:lora_qualitative} provides representative qualitative evidence for this mismatch. In the shown transitional views, Fig.~\ref{fig:lora_qualitative} qualitatively suggests that WM+MGDR reduces VSLAM-harmful local geometric distortion, implausible reconstructed structures, and hallucinated content compared with WM. The red-circled regions indicate representative WM failures that may damage feature tracking and geometric continuity, which is more consistent with the observed reduction in downstream REC APE than with conventional image-fidelity metrics alone.
+Fig.~\ref{fig:lora_qualitative} provides representative qualitative evidence for this mismatch. The WM Only column shows local artifacts in reconstructed frames that can be harmful to downstream VSLAM, including spurious structures, texture degradation, and geometric distortion, as highlighted by the red dashed boxes. In the corresponding WM + MGDR reconstructions, these local artifacts are reduced and the scene structure is more continuous for tracking. This qualitative comparison complements Table~\ref{tab:lora_ablation}, where auxiliary image-fidelity metrics do not necessarily follow the same trend as REC APE, and supports interpreting MGDR as task-oriented decoder refinement for VSLAM-useful reconstruction rather than as a general perceptual enhancement module.
 
 \begin{figure}[!ht]
 \centering
 \includegraphics[width=\columnwidth]{figures/fig9.png}
-\caption{Qualitative comparison between WM and WM+MGDR behavior. Red circles mark representative VSLAM-harmful artifacts.}
+\caption{Qualitative comparison between WM Only and WM + MGDR. Red dashed boxes highlight representative VSLAM-harmful artifacts in WM-only reconstructions, including spurious structures, texture degradation, and geometric distortion. Compared with WM Only, WM + MGDR reduces these local artifacts and provides more task-usable structural continuity for downstream VSLAM, without implying pixel-identical or generally superior image reconstruction.}
 \label{fig:lora_qualitative}
 \vspace{-3pt}
 \end{figure}
