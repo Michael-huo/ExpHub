@@ -360,7 +360,7 @@ The cloud-side decoder contains two related branches: an inference branch and an
 \begin{figure}[!t]
 \centering
 \includegraphics[width=0.95\columnwidth]{figures/fig4.png}
-\caption{MGDR mechanism for world-model reconstruction. The inference branch reconstructs intermediate frames from transmitted visual anchors and language cues, while the refinement branch constructs MGDR pairs and learns MGDR increments \(\Delta W\) as LoRA-based low-rank increments with the pretrained world model frozen.}
+\caption{MGDR mechanism for world-model reconstruction. The inference branch reconstructs intermediate frames from transmitted visual anchors and language cues, while the refinement branch uses the same conditioning format with target frames to learn MGDR increments \(\Delta\theta=\{\Delta W_\ell\}\) as LoRA-based low-rank updates with the pretrained world model frozen.}
 \label{fig:lora_decoder}
 \end{figure}
 
