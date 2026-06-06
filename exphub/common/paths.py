@@ -248,6 +248,10 @@ class ExperimentPaths:
         return self.eval_dir / "trajectory_overlay_auto2d.png"
 
     @property
+    def eval_trajectory_interactive_path(self) -> Path:
+        return self.eval_dir / "trajectory_overlay_interactive.html"
+
+    @property
     def eval_ori_traj_path(self) -> Path:
         return self.eval_dir / "ori" / "traj_est.tum"
 

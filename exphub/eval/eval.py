@@ -46,6 +46,7 @@ _STALE_EVAL_OUTPUTS = (
     "eval_details.csv",
     "eval_metrics_overview.png",
     "trajectory_overlay_auto2d.png",
+    "trajectory_overlay_interactive.html",
     "trajectory_plot_data.json",
     "gen",
 )
@@ -143,6 +144,7 @@ def run_eval_mainline(args):
             "skip_plots": bool(args.skip_plots),
             "fps": float(args.fps),
             "prepare_result": str(inputs["prepare_result"]),
+            "generation_units": str(inputs["generation_units"]),
             "decode_report": str(inputs["decode_report"]),
         }
     )
@@ -257,6 +259,7 @@ def run(runtime):
         (runtime.paths.eval_summary_path, "eval summary"),
         (runtime.paths.eval_details_path, "eval details"),
         (runtime.paths.eval_trajectory_overlay_path, "trajectory overlay"),
+        (runtime.paths.eval_trajectory_interactive_path, "interactive trajectory overlay"),
         (runtime.paths.eval_ori_traj_path, "ORI trajectory"),
         (runtime.paths.eval_rec_traj_path, "REC trajectory"),
         (runtime.paths.eval_ori_run_meta_path, "ORI run meta"),
@@ -266,12 +269,23 @@ def run(runtime):
     ]
     evo_summary = read_json_dict(runtime.paths.eval_evo_summary_path)
     plot_status = str(evo_summary.get("plot_status") or "skipped").strip().lower()
+    interactive_status = str(evo_summary.get("trajectory_interactive_status") or "skipped_error").strip().lower()
     for artifact_path, label in required_artifacts:
         if label == "trajectory overlay" and runtime.args.no_viz:
             log_warn("trajectory overlay skipped by --no_viz")
             continue
+        if label == "interactive trajectory overlay" and runtime.args.no_viz:
+            log_warn("interactive trajectory overlay skipped by --no_viz")
+            continue
         if label == "trajectory overlay" and plot_status != "success":
             log_warn("trajectory overlay not required because plot_status={}".format(plot_status or "skipped"))
+            continue
+        if label == "interactive trajectory overlay" and interactive_status not in ("success", "ok_without_markers"):
+            log_warn(
+                "interactive trajectory overlay not required because trajectory_interactive_status={}".format(
+                    interactive_status or "skipped_error"
+                )
+            )
             continue
         ensure_file(artifact_path, label)
 
