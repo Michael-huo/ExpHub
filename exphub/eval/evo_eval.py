@@ -594,6 +594,12 @@ def _apply_plot_result(summary, plot_result):
     plot_result = plot_result if isinstance(plot_result, dict) else {}
     summary["plot_status"] = str(plot_result.get("plot_status") or "skipped")
     summary["trajectory_overlay_path"] = plot_result.get("trajectory_overlay_path")
+    summary["trajectory_interactive_path"] = plot_result.get("trajectory_interactive_path")
+    summary["trajectory_interactive_status"] = str(plot_result.get("trajectory_interactive_status") or "skipped_error")
+    summary["trajectory_interactive_marker_count"] = int(plot_result.get("trajectory_interactive_marker_count", 0) or 0)
+    summary["trajectory_interactive_unmatched_marker_count"] = int(
+        plot_result.get("trajectory_interactive_unmatched_marker_count", 0) or 0
+    )
     summary["selected_plot_plane"] = plot_result.get("selected_plot_plane")
     summary["gt_plot_mode"] = plot_result.get("gt_plot_mode")
     summary["plot_common_start"] = plot_result.get("plot_common_start")
@@ -612,6 +618,8 @@ def run_evo_eval(config):
     rec_traj = ensure_file(_get_arg(config, "rec_traj"), "REC trajectory")
     skip_plots = bool(_get_arg(config, "skip_plots", False))
     t_max_diff = float(_get_arg(config, "t_max_diff", T_MAX_DIFF))
+    prepare_result = _get_arg(config, "prepare_result", "")
+    generation_units = _get_arg(config, "generation_units", "")
 
     ape_cmd = _resolve_evo_ape()
     warnings = []
@@ -737,6 +745,10 @@ def run_evo_eval(config):
         "gt_path_length_m": gt_path_length_m,
         "plot_status": "skipped",
         "trajectory_overlay_path": None,
+        "trajectory_interactive_path": None,
+        "trajectory_interactive_status": "skipped_error",
+        "trajectory_interactive_marker_count": 0,
+        "trajectory_interactive_unmatched_marker_count": 0,
         "selected_plot_plane": None,
         "gt_plot_mode": None,
         "plot_common_start": None,
@@ -761,6 +773,8 @@ def run_evo_eval(config):
                     t_max_diff=t_max_diff,
                     ori_pose_pairs=ori_pose_pairs,
                     rec_pose_pairs=rec_pose_pairs,
+                    prepare_result_path=prepare_result,
+                    generation_units_path=generation_units,
                 ),
             )
         except Exception as exc:
@@ -785,6 +799,7 @@ def _build_arg_parser():
     parser.add_argument("--t_max_diff", type=float, default=T_MAX_DIFF)
     parser.add_argument("--fps", type=float, default=None)
     parser.add_argument("--prepare_result", default="")
+    parser.add_argument("--generation_units", default="")
     parser.add_argument("--decode_report", default="")
     parser.add_argument("--skip_plots", action="store_true")
     return parser

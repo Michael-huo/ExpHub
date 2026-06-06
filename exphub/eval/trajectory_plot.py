@@ -303,6 +303,8 @@ def generate_trajectory_overlay(
     ori_pose_pairs=None,
     rec_pose_pairs=None,
     plot_plane="auto",
+    prepare_result_path=None,
+    generation_units_path=None,
 ):
     from evo.core import sync
 
@@ -311,6 +313,7 @@ def generate_trajectory_overlay(
     plot_path = out_dir / "trajectory_overlay_auto2d.png"
     paper_path = out_dir / "trajectory_overlay_paper.png"
     paper_pdf_path = out_dir / "trajectory_overlay_paper.pdf"
+    interactive_path = out_dir / "trajectory_overlay_interactive.html"
     warnings = []
 
     try:
@@ -341,7 +344,7 @@ def generate_trajectory_overlay(
         rec_aligned = copy.deepcopy(rec_assoc)
         rec_aligned.align(gt_rec, correct_scale=True)
 
-        gt_positions, _gt_mask = _clipped_positions(gt, common_start, common_end, "GT")
+        gt_positions, gt_mask = _clipped_positions(gt, common_start, common_end, "GT")
         ori_mask = _mask_for_time_range(gt_ori_times, common_start, common_end)
         rec_mask = _mask_for_time_range(gt_rec_times, common_start, common_end)
         ori_positions_all = _positions(ori_aligned)
@@ -352,6 +355,12 @@ def generate_trajectory_overlay(
             raise RuntimeError("ORI/REC aligned trajectories have no samples in the common plot window")
         ori_positions = ori_positions_all[ori_mask]
         rec_positions = rec_positions_all[rec_mask]
+        gt_times = _timestamps(gt)
+        ori_assoc_times = _timestamps(ori_assoc)
+        rec_assoc_times = _timestamps(rec_assoc)
+        gt_plot_times = gt_times[gt_mask] if gt_times is not None else None
+        ori_plot_times = ori_assoc_times[ori_mask] if ori_assoc_times is not None else gt_ori_times[ori_mask]
+        rec_plot_times = rec_assoc_times[rec_mask] if rec_assoc_times is not None else gt_rec_times[rec_mask]
 
         selected_plane = _select_plane(gt_positions) if plot_plane == "auto" else str(plot_plane)
         i, j, xlabel, ylabel = _plane_columns(selected_plane)
@@ -385,16 +394,78 @@ def generate_trajectory_overlay(
                 margins=margins,
             )
 
+        interactive_result = {
+            "trajectory_interactive_status": "skipped_error",
+            "trajectory_interactive_path": None,
+            "trajectory_interactive_marker_count": 0,
+            "trajectory_interactive_unmatched_marker_count": 0,
+            "warnings": [],
+            "marker_warnings": [],
+        }
+        try:
+            from exphub.common.logging import log_info, log_warn
+            from exphub.eval.trajectory_interactive import write_interactive_trajectory_html
+
+            interactive_result = write_interactive_trajectory_html(
+                output_path=interactive_path,
+                exp_dir=exp_dir,
+                gt_xy=gt_xy,
+                ori_xy=ori_xy,
+                rec_xy=rec_xy,
+                selected_plane=selected_plane,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                gt_timestamps=gt_plot_times,
+                ori_timestamps=ori_plot_times,
+                rec_timestamps=rec_plot_times,
+                prepare_result_path=prepare_result_path,
+                generation_units_path=generation_units_path,
+                nearest_time_tolerance=float(t_max_diff),
+            )
+            status = str(interactive_result.get("trajectory_interactive_status") or "skipped_error")
+            saved_path = interactive_result.get("trajectory_interactive_path")
+            marker_count = int(interactive_result.get("trajectory_interactive_marker_count", 0) or 0)
+            unmatched_count = int(interactive_result.get("trajectory_interactive_unmatched_marker_count", 0) or 0)
+            if saved_path:
+                log_info("Interactive trajectory HTML saved to: {}".format(interactive_path))
+                log_info(
+                    "Interactive trajectory boundary markers: matched={} unmatched={}".format(
+                        marker_count,
+                        unmatched_count,
+                    )
+                )
+            if status.startswith("skipped"):
+                log_warn("interactive trajectory HTML not generated: status={}".format(status))
+            for warning in list(interactive_result.get("marker_warnings") or []):
+                log_warn(str(warning))
+            for message in list(interactive_result.get("messages") or []):
+                log_info(str(message))
+        except Exception as exc:
+            interactive_result = {
+                "trajectory_interactive_status": "skipped_error",
+                "trajectory_interactive_path": None,
+                "trajectory_interactive_marker_count": 0,
+                "trajectory_interactive_unmatched_marker_count": 0,
+                "warnings": ["interactive trajectory HTML skipped: {}".format(exc)],
+                "marker_warnings": [],
+            }
+
         return {
             "plot_status": "success",
             "trajectory_overlay_path": _relative_path(exp_dir, plot_path),
             "trajectory_overlay_paper_path": _relative_path(exp_dir, paper_path),
             "trajectory_overlay_paper_pdf_path": _relative_path(exp_dir, paper_pdf_path),
+            "trajectory_interactive_path": interactive_result.get("trajectory_interactive_path"),
+            "trajectory_interactive_status": interactive_result.get("trajectory_interactive_status"),
+            "trajectory_interactive_marker_count": interactive_result.get("trajectory_interactive_marker_count"),
+            "trajectory_interactive_unmatched_marker_count": interactive_result.get(
+                "trajectory_interactive_unmatched_marker_count"
+            ),
             "selected_plot_plane": selected_plane,
             "gt_plot_mode": "common_overlap_segment",
             "plot_common_start": common_start,
             "plot_common_end": common_end,
-            "warnings": warnings,
+            "warnings": warnings + list(interactive_result.get("warnings") or []),
         }
     except Exception as exc:
         reason = "trajectory overlay skipped: {}".format(exc)
@@ -404,6 +475,10 @@ def generate_trajectory_overlay(
             "trajectory_overlay_path": None,
             "trajectory_overlay_paper_path": None,
             "trajectory_overlay_paper_pdf_path": None,
+            "trajectory_interactive_path": None,
+            "trajectory_interactive_status": "skipped_error",
+            "trajectory_interactive_marker_count": 0,
+            "trajectory_interactive_unmatched_marker_count": 0,
             "selected_plot_plane": None,
             "gt_plot_mode": None,
             "plot_common_start": None,
