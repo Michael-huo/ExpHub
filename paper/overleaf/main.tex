@@ -517,20 +517,22 @@ Fig.~\ref{fig:trajectory_map} complements the quantitative results in Table~\ref
 \subsection{Payload Size and Runtime Breakdown}
 \label{subsec:payload_runtime}
 
-To further analyze transmission behavior, we evaluate representative 10 s, 20 s, and 40 s GDUT clips at 24 FPS. The clips contain 241, 481, and 961 frames, cover 7.19 m, 14.48 m, and 28.97 m GT paths, and transmit 5, 8, and 13 visual anchors, respectively. Table~\ref{tab:payload_runtime} compares the clip-level payload size and encoding time among VLMem, fixed 10 Mbps H.265, and Raw ZIP. Fig.~\ref{fig:exp2_payload_runtime}(a)(b) visualizes the same comparison, while Fig.~\ref{fig:exp2_payload_runtime}(c) separately reports the internal runtime composition of \VLMemCodec{}, including VLMem encoding and cloud-side decoding.
+To further analyze transmission behavior, we evaluate representative 10 s, 20 s, and 40 s GDUT clips at 24 FPS. The clips contain 241, 481, and 961 frames, cover 7.19 m, 14.48 m, and 28.97 m GT paths, and transmit 5, 8, and 13 visual anchors, respectively. Table~\ref{tab:payload_runtime} compares the clip-level payload size and encoding time among DCVC-FM q21, VLMem, fixed 10 Mbps H.265, and Raw ZIP. DCVC-FM q21 is included as a representative academic neural video-compression reference for constructing the transmitted representation. Fig.~\ref{fig:exp2_payload_runtime}(a)(b) visualizes the same comparison, while Fig.~\ref{fig:exp2_payload_runtime}(c) separately reports the internal runtime composition of \VLMemCodec{}, including VLMem encoding and cloud-side decoding.
 
 \input{tables/tab_exp4_payload_runtime}
 
 \begin{figure*}[!t]
 \centering
 \includegraphics[width=\textwidth]{figures/fig7.png}
-\caption{Payload and runtime analysis on representative GDUT clips with different durations. (a) Payload size comparison among VLMem, the fixed 10 Mbps H.265 reference, and raw ZIP representations. (b) Encoding-time comparison for constructing the transmitted representation. (c) VLMem-Codec runtime breakdown, where only VLMem encoding and cloud-side decoding are included; downstream VSLAM evaluation is excluded.}
+\caption{Payload and runtime analysis on representative GDUT clips with different durations. (a) Payload size comparison among DCVC-FM q21, VLMem, the fixed 10 Mbps H.265 reference, and raw ZIP representations. (b) Encoding-time comparison for constructing the transmitted representation, including DCVC-FM q21 as a representative academic neural video-compression baseline. (c) VLMem-Codec runtime breakdown, where only VLMem encoding and cloud-side decoding are included; downstream VSLAM evaluation is excluded.}
 \label{fig:exp2_payload_runtime}
 \end{figure*}
 
-The results show that VLMem payload growth is slower than dense-frame growth. From 10 s to 40 s, the VLMem payload increases from 1.98 MiB to 5.10 MiB, while the payload advantage over the fixed 10 Mbps H.265 reference increases from 6.0$\times$ to 9.2$\times$. This reflects that the VLMem payload grows mainly with selected visual anchors and event units, rather than linearly with every dense frame.
+Table~\ref{tab:payload_runtime} and Fig.~\ref{fig:exp2_payload_runtime} compare the payload size and encoding cost of different transmitted representations. DCVC-FM q21 produces the smallest bitstream, but at a much higher encoding cost: 39.81 s, 76.47 s, and 151.33 s for the 10 s, 20 s, and 40 s clips, respectively, even on a single RTX 4090. VLMem already reduces the transmitted data by 97.90\%--98.64\% relative to Raw ZIP without heavy neural pixel-level encoding. Thus, once the communication load is substantially reduced, further payload reduction through computationally expensive neural compression offers limited marginal transmission benefit relative to the added edge-side computational burden.
 
-In terms of encoding time, VLMem representation construction is faster than H.265 encoding for the 20 s and 40 s clips. H.265 is included only as a payload-size and encoding-time reference, not as a downstream VSLAM accuracy baseline. The reported runtime results are measured on the current prototype and do not imply real-time deployment. End-to-end latency also depends on cloud-side world-model decoding, hardware parallelism, batching, and inference optimization.
+\FloatBarrier
+
+The reported encoding-time results describe only the construction of the transmitted representation. H.265 and DCVC-FM q21 are included as payload-size and encoding-time references, not as downstream VSLAM accuracy baselines or equivalent end-to-end Edge--Cloud VSLAM systems. VLMem decode time is analyzed separately in Fig.~\ref{fig:exp2_payload_runtime}(c), and the reported runtime results do not imply real-time deployment. End-to-end latency also depends on cloud-side world-model decoding, hardware parallelism, batching, and inference optimization.
 
 \subsection{Edge-Side Motion Response Benchmark}
 \label{subsec:motion_benchmark}
