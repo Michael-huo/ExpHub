@@ -528,7 +528,7 @@ To further analyze transmission behavior, we evaluate representative 10 s, 20 s,
 \label{fig:exp2_payload_runtime}
 \end{figure*}
 
-Table~\ref{tab:payload_runtime} and Fig.~\ref{fig:exp2_payload_runtime} compare the payload size and encoding cost of different transmitted representations. DCVC-FM q21 produces the smallest bitstream, but at a much higher encoding cost: 39.81 s, 76.47 s, and 151.33 s for the 10 s, 20 s, and 40 s clips, respectively, even on a single RTX 4090. VLMem already reduces the transmitted data by 97.90\%--98.64\% relative to Raw ZIP without heavy neural pixel-level encoding. Thus, once the communication load is substantially reduced, further payload reduction through computationally expensive neural compression offers limited marginal transmission benefit relative to the added edge-side computational burden.
+Table~\ref{tab:payload_runtime} and Fig.~\ref{fig:exp2_payload_runtime} compare the payload size and encoding cost of different transmitted representations. Under the tested q21 setting and GDUT clips, DCVC-FM produces the smallest bitstream, but at a much higher encoding cost: 39.81 s, 76.47 s, and 151.33 s for the 10 s, 20 s, and 40 s clips, respectively, even on a single RTX 4090. VLMem already reduces the transmitted data by 97.90\%--98.64\% relative to Raw ZIP without heavy neural pixel-level encoding. Thus, once the communication load is substantially reduced, further payload reduction through computationally expensive neural compression offers limited marginal transmission benefit relative to the added edge-side computational burden.
 
 \FloatBarrier
 
