@@ -12,12 +12,12 @@
 \cmidrule(lr){4-7}\cmidrule(l){8-11}
  & & & DCVC-FM & VLMem & H.265 & Raw ZIP & DCVC-FM & VLMem & H.265 & Raw ZIP \\
 \midrule
-10 s & 241 & 97.90 & 0.05 & 1.98 & 11.82 & 94.37 & 39.81 & 15.07 & 12.56 & 3.73 \\
-20 s & 481 & 98.32 & 0.11 & 3.19 & 23.52 & 189.94 & 76.47 & 18.31 & 24.25 & 7.02 \\
-40 s & 961 & 98.64 & 0.18 & 5.10 & 46.77 & 374.39 & 151.33 & 33.47 & 46.80 & 15.18 \\
+10s & 241 & 97.90 & 0.05 & 1.98 & 11.82 & 94.37 & 39.81 & 15.07 & 12.56 & 3.73 \\
+20s & 481 & 98.32 & 0.11 & 3.19 & 23.52 & 189.94 & 76.47 & 18.31 & 24.25 & 7.02 \\
+40s & 961 & 98.64 & 0.18 & 5.10 & 46.77 & 374.39 & 151.33 & 33.47 & 46.80 & 15.18 \\
 \bottomrule
 \end{tabular*}%
 \vspace{0.2em}
 
-\parbox{\textwidth}{\footnotesize H.265 uses a fixed 10 Mbps setting. DCVC-FM denotes the q21 setting of the official neural video codec with actual bitstream output enabled. Red. (\%) reports the VLMem payload reduction relative to Raw ZIP. Encoding time denotes the time for constructing the transmitted representation; for DCVC-FM, it is measured per selected rate point on a single RTX 4090. VLMem decode time is not included in this table and is analyzed separately in Fig.~\ref{fig:exp2_payload_runtime}(c).}
+\parbox{\textwidth}{\footnotesize H.265 uses a fixed 10Mbps setting. DCVC-FM denotes the q21 setting of the official neural video codec with actual bitstream output enabled. Red. (\%) reports the VLMem payload reduction relative to Raw ZIP. Encoding time denotes the time for constructing the transmitted representation; for DCVC-FM, it is measured per selected rate point on a single RTX 4090. VLMem decode time is not included in this table and is analyzed separately in Fig.~\ref{fig:exp2_payload_runtime}(c).}
 \end{table*}
