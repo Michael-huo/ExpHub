@@ -4,6 +4,7 @@ from exphub.common.io import ensure_dir, ensure_file, read_json_dict
 from exphub.common.logging import log_info, log_prog
 from exphub.config import get_platform_config
 
+from .compression_benchmark import CompressionBenchmarkDecode
 from .comfyui_client import run_comfyui_decode_tasks
 from .image_quality_subprocess import run_decode_image_quality_subprocess
 from .task_build import build_generation_tasks
@@ -28,6 +29,12 @@ def _remove_decode_outputs(runtime):
 
 def run(runtime):
     _ensure_native_inputs(runtime)
+    compression_benchmark_enabled = bool(getattr(runtime.args, "compression_benchmark", False))
+    if compression_benchmark_enabled:
+        ensure_file(
+            runtime.paths.encode_compression_benchmark_report_path,
+            "compression benchmark encode report",
+        )
     _remove_decode_outputs(runtime)
 
     log_prog("decode native mainline: build generation tasks")
@@ -53,4 +60,21 @@ def run(runtime):
     ensure_file(runtime.paths.decode_calib_path, "decode calib")
     ensure_file(runtime.paths.decode_timestamps_path, "decode timestamps")
     ensure_dir(runtime.paths.decode_frames_dir, "decode frames dir")
+
+    if compression_benchmark_enabled:
+        log_prog("decode compression benchmark: materialize frame sources")
+        CompressionBenchmarkDecode(
+            exp_dir=runtime.paths.exp_dir,
+            output_dir=runtime.paths.decode_compression_benchmark_dir,
+            encode_report_path=runtime.paths.encode_compression_benchmark_report_path,
+            prepare_frames_dir=runtime.paths.prepare_frames_dir,
+            native_decode_frames_dir=runtime.paths.decode_frames_dir,
+            native_decode_report_path=runtime.paths.decode_report_path,
+            fps=getattr(runtime.args, "fps", runtime.spec.fps),
+            exphub_root=runtime.exphub_root,
+        ).run()
+        ensure_file(
+            runtime.paths.decode_compression_benchmark_report_path,
+            "compression benchmark decode report",
+        )
     return runtime.paths.decode_dir

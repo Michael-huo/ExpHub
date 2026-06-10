@@ -178,10 +178,10 @@ def _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_h
         )
     )
 
-    if not bool(getattr(runtime.args, "encode_compression_benchmark", False)):
+    if not bool(getattr(runtime.args, "compression_benchmark", False)):
         return
 
-    benchmark_dir = paths.encode_dir / "compression_benchmark"
+    benchmark_dir = runtime.paths.encode_compression_benchmark_dir
     runtime.remove_in_exp(benchmark_dir)
     benchmark_report = CompressionBenchmark(
         frames_dir=paths.prepare_frames_dir,
@@ -198,7 +198,7 @@ def _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_h
     ensure_file(benchmark_report["hvm_payload_zip"], "compression benchmark Ours payload zip")
     ensure_file(benchmark_report["benchmark_report"], "compression benchmark report")
     log_info(
-        "encode compression benchmark done: frames={} fps={} bitrate={} raw={} h265={} ours={}".format(
+        "compression benchmark encode stage done: frames={} fps={} bitrate={} zip={} h265={} vlmem={}".format(
             int(benchmark_report.get("frame_count", 0) or 0),
             int(benchmark_report.get("fps", 0) or 0),
             str(benchmark_report.get("bitrate", "")),
@@ -532,7 +532,7 @@ def run(runtime):
     if mode == "infer":
         return _run_single_encode(runtime, _infer_encode_paths(runtime))["result_path"]
     if mode == "train":
-        if bool(getattr(runtime.args, "encode_compression_benchmark", False)):
-            log_warn("encode compression benchmark is infer-only; skipping for train mode")
+        if bool(getattr(runtime.args, "compression_benchmark", False)):
+            log_warn("compression benchmark is infer-only; skipping for train mode")
         return _run_train_encode(runtime)
     raise RuntimeError("unsupported encode mode: {}".format(mode))
