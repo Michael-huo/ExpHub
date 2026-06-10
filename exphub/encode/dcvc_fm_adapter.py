@@ -157,6 +157,7 @@ class DcvcFmAdapter:
         fps,
         raw_reference_bytes=None,
         zip_reference_bytes=None,
+        save_decoded_frame=False,
     ):
         self.exphub_root = Path(exphub_root).resolve()
         self.frames_dir = Path(frames_dir).resolve()
@@ -165,6 +166,7 @@ class DcvcFmAdapter:
         self.fps = int(fps)
         self.raw_reference_bytes = raw_reference_bytes
         self.zip_reference_bytes = zip_reference_bytes
+        self.save_decoded_frame = bool(save_decoded_frame)
 
     def _base_report(self, status="skipped", error_message=""):
         staged_input_dir = self.output_dir / "staged_input"
@@ -177,17 +179,19 @@ class DcvcFmAdapter:
             "status": str(status),
             "error_message": str(error_message or ""),
             "source_frames_dir": _relative_path(self.exp_dir, self.frames_dir),
-            "decoded_frames_dir": _relative_path(self.exp_dir, self.output_dir / "decoded_frames"),
-            "payload_path": None,
-            "bitstream_dir": _relative_path(self.exp_dir, stream_dir),
+            "decoded_frames_dir": _relative_path(self.exp_dir, self.output_dir / "decoded_frames")
+            if self.save_decoded_frame
+            else None,
+            "encoded_artifact_path": None,
+            "encoded_artifact_dir": _relative_path(self.exp_dir, stream_dir),
             "payload_bytes": None,
             "payload_mib": None,
             "reduction_pct_vs_zip": None,
             "reduction_pct_vs_raw_frames": None,
-            "encode_time_sec": None,
+            "enc_time_sec": None,
             "decode_time_sec": None,
             "codec_wall_time_sec": None,
-            "codec_time_semantics": "unavailable",
+            "time_semantics": "unavailable",
             "frame_count": 0,
             "fps": int(self.fps),
             "trajectory_role": "codec_decoded",
@@ -202,6 +206,7 @@ class DcvcFmAdapter:
             "staged_input_dir": _relative_path(self.exp_dir, staged_input_dir),
             "resolved_sequence_path": str(resolved_sequence_path.resolve()),
             "stream_dir": _relative_path(self.exp_dir, stream_dir),
+            "decoded_frame_save_requested": bool(self.save_decoded_frame),
             "config": {},
         }
 
@@ -415,6 +420,7 @@ class DcvcFmAdapter:
             "cuda": "true" if bool(config["cuda"]) else "false",
             "force_intra_period": str(int(config["force_intra_period"])),
             "force_frame_num": str(-1),
+            "save_decoded_frame": "true" if bool(self.save_decoded_frame) else "false",
         }
         template = str(config.get("command_template") or "").strip()
         if template:
@@ -443,7 +449,7 @@ class DcvcFmAdapter:
             "--stream_path",
             str(Path(stream_dir).resolve()),
             "--save_decoded_frame",
-            "true",
+            "true" if bool(self.save_decoded_frame) else "false",
             "--output_path",
             str(Path(output_json).resolve()),
             "--force_intra_period",
@@ -554,9 +560,14 @@ class DcvcFmAdapter:
         report["staged_input_dir"] = _relative_path(self.exp_dir, stage_root)
         report["resolved_sequence_path"] = str(Path(sequence_dir).resolve())
         report["stream_dir"] = _relative_path(self.exp_dir, stream_dir)
+        report["encoded_artifact_dir"] = _relative_path(self.exp_dir, stream_dir)
         report["codec_wall_time_sec"] = float(wall_sec)
-        report["encode_time_sec"] = float(wall_sec)
-        report["codec_time_semantics"] = "combined_encode_decode_wall_time"
+        report["enc_time_sec"] = float(wall_sec)
+        report["decode_time_sec"] = None
+        report["time_semantics"] = (
+            "dcvc_fm_official_stream_writer_wall_time; official runner constructs the transmitted "
+            "bitstream and performs internal reconstruction for metrics even when decoded-frame saving is disabled"
+        )
         report["frame_count"] = int(len(frames))
 
         if proc.returncode != 0:
@@ -568,7 +579,7 @@ class DcvcFmAdapter:
             return report
 
         try:
-            decoded_dir = self._normalize_decoded_frames(stream_dir, frames)
+            decoded_dir = self._normalize_decoded_frames(stream_dir, frames) if self.save_decoded_frame else None
             payload_bytes, bitstreams = _sum_files(stream_dir, suffixes=(".bin",))
             if payload_bytes <= 0:
                 raise RuntimeError("DCVC-FM produced no bitstream bytes under {}".format(stream_dir))
@@ -576,9 +587,9 @@ class DcvcFmAdapter:
                 {
                     "status": "ok",
                     "error_message": "",
-                    "decoded_frames_dir": _relative_path(self.exp_dir, decoded_dir),
-                    "payload_path": _relative_path(self.exp_dir, bitstreams[0]) if len(bitstreams) == 1 else None,
-                    "bitstream_dir": _relative_path(self.exp_dir, stream_dir),
+                    "decoded_frames_dir": _relative_path(self.exp_dir, decoded_dir) if decoded_dir is not None else None,
+                    "encoded_artifact_path": _relative_path(self.exp_dir, bitstreams[0]) if len(bitstreams) == 1 else None,
+                    "encoded_artifact_dir": _relative_path(self.exp_dir, stream_dir),
                     "payload_bytes": int(payload_bytes),
                     "payload_mib": _bytes_to_mib(payload_bytes),
                     "reduction_pct_vs_zip": _reduction_pct(self.zip_reference_bytes, payload_bytes),

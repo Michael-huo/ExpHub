@@ -83,7 +83,7 @@ def _cleanup_min(exp_dir: Path) -> None:
             "motion_benchmark.csv",
             "motion_benchmark_overview.png",
             "hvm_payload",
-            "compression_benchmark",
+            "encode_compression_benchmark",
             "dataset_encode_index.json",
             "sequences",
         },
@@ -112,6 +112,7 @@ def _cleanup_min(exp_dir: Path) -> None:
             "image_quality_report.json",
             "image_quality_summary.txt",
             "image_quality_details.csv",
+            "decode_compression_benchmark",
         },
     )
     _prune_dir_keep_names(
@@ -125,7 +126,7 @@ def _cleanup_min(exp_dir: Path) -> None:
             "trajectory_overlay_auto2d.png",
             "ori",
             "rec",
-            "compression_downstream",
+            "eval_compression_benchmark",
         },
     )
     for track in ("ori", "rec"):

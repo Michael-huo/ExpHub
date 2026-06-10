@@ -369,6 +369,7 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
     decode_generation = _decode_generation_summary(exp_dir)
 
     compression_snapshot = _read_json_dict(eval_dir / "eval_compression_report.json")
+    benchmark_summary = _read_json_dict(eval_dir / "eval_compression_benchmark" / "compression_benchmark_summary.json")
 
     ori_bytes = _pick_int(compression_snapshot, ["orig_size_bytes"])
     comp_size = _pick_int(compression_snapshot, ["comp_size_bytes"])
@@ -416,6 +417,7 @@ def _load_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Dict
             "raw_frames": raw_frame_count,
             "transmitted_frames": transmitted_frame_count,
         },
+        "compression_benchmark": benchmark_summary,
     }
     return report
 
@@ -442,6 +444,7 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     decode_generation = dict(report.get("decode_generation") or {})
     quality = dict(report.get("quality") or {})
     compression = dict(report.get("compression") or {})
+    compression_benchmark = dict(report.get("compression_benchmark") or {})
 
     sep = "=" * 70
     div = "-" * 70
@@ -496,6 +499,26 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     _info(div)
     _info("[Compression]")
     _print_rows(compression_rows)
+    if compression_benchmark:
+        methods = dict(compression_benchmark.get("methods") or {})
+        order = list(compression_benchmark.get("methods_order") or ["zip", "h265", "dcvc_fm_q21", "vlmem"])
+        _info(div)
+        _info("[Compression Benchmark: Table II]")
+        for method_key in order:
+            row = dict(methods.get(method_key) or {})
+            if not row:
+                continue
+            _info(
+                "  - {name}: status={status} payload={payload}MiB reduction={reduction}% enc={enc}s ape={ape} norm={norm}%".format(
+                    name=str(row.get("display_name") or method_key),
+                    status=str(row.get("status") or "n/a"),
+                    payload=_fmt_plain_metric(row.get("payload_mib"), digits=2),
+                    reduction=_fmt_plain_metric(row.get("reduction_pct"), digits=2),
+                    enc=_fmt_plain_seconds(row.get("enc_time_sec")),
+                    ape=_fmt_plain_metric(row.get("ape_rmse_m"), digits=3),
+                    norm=_fmt_plain_metric(row.get("norm_ape_pct"), digits=2),
+                )
+            )
     _info(sep)
 
 
@@ -572,10 +595,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="run opt-in PC/ORB/Optical-Flow motion benchmark during encode",
     )
     ap.add_argument(
-        "--encode_compression_benchmark",
+        "--compression_benchmark",
         action="store_true",
         default=False,
-        help="开启并行生成基准压缩载荷（Raw 和 H.265）以进行网络传输测试。",
+        help="run the staged compression benchmark pipeline for Table II/Fig. 7 summaries",
     )
     ap.add_argument(
         "--video_bitrate",

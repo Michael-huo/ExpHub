@@ -106,6 +106,14 @@ class ExperimentPaths:
     def encode_dataset_index_path(self) -> Path:
         return self.encode_dir / "dataset_encode_index.json"
 
+    @property
+    def encode_compression_benchmark_dir(self) -> Path:
+        return self.encode_dir / "encode_compression_benchmark"
+
+    @property
+    def encode_compression_benchmark_report_path(self) -> Path:
+        return self.encode_compression_benchmark_dir / "compression_benchmark_encode_report.json"
+
     def encode_sequence_dir(self, sequence: str) -> Path:
         return self.encode_sequences_dir / str(sequence)
 
@@ -220,6 +228,14 @@ class ExperimentPaths:
         return self.decode_dir / "image_quality_details.csv"
 
     @property
+    def decode_compression_benchmark_dir(self) -> Path:
+        return self.decode_dir / "decode_compression_benchmark"
+
+    @property
+    def decode_compression_benchmark_report_path(self) -> Path:
+        return self.decode_compression_benchmark_dir / "compression_benchmark_decode_report.json"
+
+    @property
     def eval_evo_summary_path(self) -> Path:
         return self.eval_dir / "evo_summary.json"
 
@@ -266,3 +282,15 @@ class ExperimentPaths:
     @property
     def eval_rec_run_meta_path(self) -> Path:
         return self.eval_dir / "rec" / "run_meta.json"
+
+    @property
+    def eval_compression_benchmark_dir(self) -> Path:
+        return self.eval_dir / "eval_compression_benchmark"
+
+    @property
+    def eval_compression_benchmark_summary_path(self) -> Path:
+        return self.eval_compression_benchmark_dir / "compression_benchmark_summary.json"
+
+    @property
+    def eval_compression_benchmark_summary_csv_path(self) -> Path:
+        return self.eval_compression_benchmark_dir / "compression_benchmark_summary.csv"
