@@ -13,6 +13,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from exphub.common.io import ensure_dir, ensure_file, read_json_dict, remove_path
 from exphub.common.logging import log_info, log_prog, log_warn
+from exphub.eval.compression_downstream import run_compression_downstream
 from exphub.eval.evo_eval import run_evo_eval
 from exphub.eval.slam_run import run_slam
 from exphub.eval.summary_build import build_eval_summary
@@ -48,6 +49,7 @@ _STALE_EVAL_OUTPUTS = (
     "trajectory_overlay_auto2d.png",
     "trajectory_overlay_interactive.html",
     "trajectory_plot_data.json",
+    "compression_downstream",
     "gen",
 )
 
@@ -168,11 +170,43 @@ def run_eval_mainline(args):
         }
     )
 
+    downstream_result = None
+    if bool(getattr(args, "encode_compression_benchmark", False)):
+        benchmark_report = Path(str(getattr(args, "benchmark_report", "") or "")).resolve()
+        if benchmark_report.is_file():
+            log_prog("eval mainline: compression downstream")
+            downstream_result = run_compression_downstream(
+                {
+                    "exp_dir": str(exp_dir),
+                    "out_dir": str(out_dir / "compression_downstream"),
+                    "benchmark_report": str(benchmark_report),
+                    "main_evo_summary": str(out_dir / "evo_summary.json"),
+                    "prepare_result": str(inputs["prepare_result"]),
+                    "prepare_frames_dir": str(inputs["prepare_frames_dir"]),
+                    "generation_units": str(inputs["generation_units"]),
+                    "encode_result": str(inputs["encode_result"]),
+                    "decode_frames_dir": str(inputs["decode_frames_dir"]),
+                    "decode_calib": str(inputs["decode_calib"]),
+                    "decode_timestamps": str(inputs["decode_timestamps"]),
+                    "decode_report": str(inputs["decode_report"]),
+                    "decode_merge_report": str(inputs["decode_merge_report"]),
+                    "gt_traj": str(gt_traj_path),
+                    "droid_repo": str(args.droid_repo),
+                    "weights": str(args.weights),
+                    "fps": float(args.fps),
+                    "t_max_diff": float(args.t_max_diff),
+                    "disable_vis": bool(args.disable_vis),
+                }
+            )
+        else:
+            log_warn("compression downstream skipped: benchmark report not found: {}".format(benchmark_report))
+
     log_info("eval mainline complete: {}".format(out_dir))
     return {
         "slam": slam_result,
         "evo": evo_result,
         "summary": summary_result,
+        "compression_downstream": downstream_result,
         "out_dir": out_dir,
     }
 
@@ -241,6 +275,14 @@ def run(runtime):
         "--fps",
         runtime.fps_arg,
     ]
+    if bool(getattr(runtime.args, "encode_compression_benchmark", False)):
+        cmd.extend(
+            [
+                "--encode_compression_benchmark",
+                "--benchmark_report",
+                str(runtime.paths.encode_dir / "compression_benchmark" / "benchmark_report.json"),
+            ]
+        )
     if not runtime.viz_enable:
         cmd.append("--disable_vis")
     if runtime.args.no_viz:
@@ -315,6 +357,8 @@ def _build_arg_parser():
     parser.add_argument("--t_max_diff", type=float, default=0.03)
     parser.add_argument("--disable_vis", action="store_true")
     parser.add_argument("--skip_plots", action="store_true")
+    parser.add_argument("--encode_compression_benchmark", action="store_true")
+    parser.add_argument("--benchmark_report", default="")
     return parser
 
 

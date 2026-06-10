@@ -789,6 +789,133 @@ def run_evo_eval(config):
     return {"summary_path": summary_path, "summary": summary, "out_dir": out_dir}
 
 
+def run_evo_eval_single_track(config):
+    out_dir = Path(_get_arg(config, "out_dir")).resolve()
+    exp_dir = Path(_get_arg(config, "exp_dir", out_dir.parent)).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    gt_traj = ensure_file(_get_arg(config, "gt_traj"), "ground truth trajectory")
+    est_traj = ensure_file(_get_arg(config, "est_traj"), "estimated trajectory")
+    method_key = str(_get_arg(config, "method_key", "method") or "method")
+    display_name = str(_get_arg(config, "display_name", method_key) or method_key)
+    t_max_diff = float(_get_arg(config, "t_max_diff", T_MAX_DIFF))
+
+    warnings = []
+    ape_cmd = _resolve_evo_ape()
+    rpe_delta = _resolve_rpe_delta(config, exp_dir, warnings)
+    try:
+        rpe_cmd = _resolve_evo_rpe()
+    except Exception as exc:
+        rpe_cmd = None
+        message = "evo_rpe unavailable: {}".format(exc)
+        warnings.append(message)
+        log_warn(message)
+
+    ape_zip = out_dir / "evo_ape.zip"
+    ape_command = _run_evo_ape(ape_cmd, method_key, gt_traj, est_traj, ape_zip, out_dir, t_max_diff)
+    ape_stats, ape_pose_pairs = _extract_stats(ape_zip, method_key, warnings)
+
+    rpe_results = {}
+    for relation_label, pose_relation in [("trans", "trans_part"), ("rot", "angle_deg")]:
+        result_zip = out_dir / "evo_rpe_{}.zip".format(relation_label)
+        if rpe_cmd is None:
+            rpe_results[relation_label] = {
+                "status": "skipped",
+                "command": None,
+                "stats": {},
+                "pose_pairs": None,
+                "result_zip": _relative_path(exp_dir, result_zip),
+                "error": "evo_rpe unavailable",
+            }
+            continue
+        try:
+            rpe_command = _run_evo_rpe(
+                rpe_cmd,
+                method_key,
+                relation_label,
+                pose_relation,
+                gt_traj,
+                est_traj,
+                result_zip,
+                out_dir,
+                t_max_diff,
+                int(rpe_delta["frames"]),
+            )
+            rpe_stats, rpe_pose_pairs = _extract_stats(
+                result_zip,
+                "{} rpe {}".format(method_key, relation_label),
+                warnings,
+            )
+            rpe_results[relation_label] = {
+                "status": "success",
+                "command": list(rpe_command),
+                "parameters": {
+                    "format": "tum",
+                    "align": True,
+                    "correct_scale": True,
+                    "t_max_diff": float(t_max_diff),
+                    "delta": int(rpe_delta["frames"]),
+                    "delta_unit": str(rpe_delta["unit"]),
+                    "delta_seconds_approx": float(rpe_delta["seconds_approx"]),
+                    "delta_fps_source": str(rpe_delta["source"]),
+                    "pose_relation": pose_relation,
+                },
+                "stats": rpe_stats,
+                "pose_pairs": rpe_pose_pairs,
+                "result_zip": _relative_path(exp_dir, result_zip),
+                "error": None,
+            }
+        except Exception as exc:
+            message = "evo_rpe {} {} failed; metric unavailable".format(method_key, relation_label)
+            warnings.append(message)
+            log_warn(message)
+            rpe_results[relation_label] = {
+                "status": "failed",
+                "command": None,
+                "stats": {},
+                "pose_pairs": None,
+                "result_zip": _relative_path(exp_dir, result_zip),
+                "error": str(exc),
+            }
+
+    trans_rmse = _as_float(rpe_results.get("trans", {}).get("stats", {}).get("rmse"))
+    rot_rmse = _as_float(rpe_results.get("rot", {}).get("stats", {}).get("rmse"))
+    gt_path_length_m = _compute_gt_path_length(gt_traj, est_traj, est_traj, t_max_diff, warnings)
+    summary = {
+        "version": 1,
+        "source": "exphub.eval.evo_eval.single_track",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "method_key": method_key,
+        "display_name": display_name,
+        "metric_source": "evo",
+        "alignment": "sim3",
+        "align": True,
+        "correct_scale": True,
+        "t_max_diff": float(t_max_diff),
+        "pose_relation": "trans_part",
+        "gt_path": str(gt_traj),
+        "est_path": str(est_traj),
+        "ape_rmse": ape_stats.get("rmse"),
+        "ape_stats": ape_stats,
+        "ape_pose_pairs": ape_pose_pairs,
+        "ape_result_zip": _relative_path(exp_dir, ape_zip),
+        "ape_command": list(ape_command),
+        "rpe": rpe_results,
+        "rpe_trans_rmse": trans_rmse,
+        "rpe_rot_rmse_deg": rot_rmse,
+        "rpe_trans_pose_pairs": rpe_results.get("trans", {}).get("pose_pairs"),
+        "rpe_rot_pose_pairs": rpe_results.get("rot", {}).get("pose_pairs"),
+        "rpe_delta_frames": int(rpe_delta["frames"]),
+        "rpe_delta_unit": str(rpe_delta["unit"]),
+        "rpe_delta_seconds_approx": float(rpe_delta["seconds_approx"]),
+        "gt_path_length_m": gt_path_length_m,
+        "status": "success",
+        "warnings": warnings,
+    }
+    summary_path = out_dir / "evo_summary.json"
+    write_json_atomic(summary_path, summary, indent=2)
+    return {"summary_path": summary_path, "summary": summary, "out_dir": out_dir}
+
+
 def _build_arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out_dir", required=True)

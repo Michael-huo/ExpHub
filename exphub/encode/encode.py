@@ -190,10 +190,13 @@ def _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_h
         bitrate=getattr(runtime.args, "video_bitrate", "10M"),
         hvm_payload_dir=payload_dir,
         hvm_algorithmic_time=float(formal_hvm_algorithmic_sec) + float(payload_write_sec),
+        exphub_root=runtime.exphub_root,
+        exp_dir=paths.exp_dir,
     ).run()
     ensure_file(benchmark_report["raw_zip"], "compression benchmark raw zip")
     ensure_file(benchmark_report["h265_video"], "compression benchmark H.265 video")
     ensure_file(benchmark_report["hvm_payload_zip"], "compression benchmark Ours payload zip")
+    ensure_file(benchmark_report["benchmark_report"], "compression benchmark report")
     log_info(
         "encode compression benchmark done: frames={} fps={} bitrate={} raw={} h265={} ours={}".format(
             int(benchmark_report.get("frame_count", 0) or 0),

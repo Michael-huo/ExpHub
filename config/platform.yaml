@@ -25,6 +25,21 @@ repos:
   droid_slam: "/data/hx/DROID-SLAM"
   videox_fun: "/data/hx/VideoX-Fun"
 
+external_codecs:
+  dcvc_fm:
+    enabled: true
+    required: true
+    root: "/data/hx/DCVC/DCVC-family/DCVC-FM"
+    python: "/home/hx/anaconda3/envs/dcvc-fm/bin/python"
+    script: ""
+    model_path_i: ""
+    model_path_p: ""
+    q_index: 21
+    worker: 1
+    cuda: true
+    force_intra_period: 9999
+    command_template: ""
+
 services:
   comfyui:
     active_profile: "base"
