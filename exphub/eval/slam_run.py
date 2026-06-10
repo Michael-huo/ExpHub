@@ -494,6 +494,20 @@ def run_slam(config):
     }
 
 
+def run_single_slam_track(config, track_name, frames_dir):
+    args = _track_args(config)
+    exp_dir = Path(args.exp_dir).resolve()
+    out_dir = Path(args.out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    prepare_result_path = ensure_file(args.prepare_result, "prepare result")
+    ensure_file(args.decode_calib, "decode calib")
+    ensure_file(args.decode_timestamps, "decode timestamps")
+
+    source_timestamps = _load_prepare_ros_timestamps(prepare_result_path)
+    return _run_track(exp_dir, str(track_name), frames_dir, args, source_timestamps)
+
+
 def _build_arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-slam-mainline", action="store_true")

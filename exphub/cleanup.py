@@ -125,6 +125,7 @@ def _cleanup_min(exp_dir: Path) -> None:
             "trajectory_overlay_auto2d.png",
             "ori",
             "rec",
+            "compression_downstream",
         },
     )
     for track in ("ori", "rec"):
