@@ -1,7 +1,7 @@
 % This table is included by main.tex.
 \begin{table*}[!t]
 \renewcommand{\arraystretch}{1.10}
-\caption{Compression, encoder-side runtime, and downstream VSLAM accuracy on the GDUT sequence.}
+\caption{Compression, encoder-side construction time, and downstream VSLAM accuracy on the GDUT sequence.}
 \label{tab:payload_runtime}
 \centering
 \small
@@ -29,6 +29,6 @@ Clip & Frames & Path (m) & Method & Payload (MiB) & Reduction (\%) & Enc. Time (
 \vspace{0.2em}
 
 \begin{minipage}{\textwidth}
-\footnotesize \emph{Note:} Raw denotes ZIP-compressed original frames; H.265 uses 10Mbps; DCVC-FM uses q-index 21; and VLMem denotes the proposed payload with REC frames used for downstream VSLAM. Enc. Time measures encoder-side representation construction only, excluding decoding and frame generation. Norm. APE is APE RMSE divided by GT path length.
+\footnotesize \emph{Note:} Raw denotes ZIP-compressed original frames; H.265 uses 10Mbps; DCVC-FM uses q-index 21; and VLMem denotes the proposed payload with REC frames used for downstream VSLAM. Enc. Time measures encoder-side representation construction only, excluding decoding, frame generation, batching, and downstream VSLAM evaluation. Norm. APE is APE RMSE divided by GT path length.
 \end{minipage}
 \end{table*}
