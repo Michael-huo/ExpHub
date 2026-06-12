@@ -54,10 +54,10 @@ Replace this box with the final vector figure or high-resolution image.
         Sehua~Ji,
         Yisheng~Guan,
         Haifei~Zhu,
-        Boyu~Zhou,~\IEEEmembership{Member,~IEEE},
-        Hong~Zhang,~\IEEEmembership{Life Fellow,~IEEE},
-        and Weinan~Chen,~\IEEEmembership{Senior Member,~IEEE}%
-\thanks{This work was supported in part by XXX.}%
+        Boyu~Zhou,
+        Hong~Zhang,~\IEEEmembership{Life~Fellow,~IEEE},
+        and Weinan~Chen%
+\thanks{This work was supported in part by the National Natural Science Foundation of China under Grant 62103179 and Grant 52475008, in part by the Guangdong Basic and Applied Basic Research Foundation under Grant 2025A1515010194, in part by the Science and Technology Development Fund, Macau SAR (Grant no.~0092/2024/AFJ, 0003/2023/RIB1, 001/2024/SKL), and in part by the University of Macau (Grant No.:~MYRG-GRG2024-00299-FST-UMDF, MYRG-GRG2025-00312-FST).}%
 \thanks{Xiang Huo, Sehua Ji, Yisheng Guan, Haifei Zhu, and Weinan Chen are with the State Key Laboratory of Precision Electronic Manufacturing Technology and Equipment, School of Electromechanical Engineering, Guangdong University of Technology, Guangzhou 510006, China.}%
 \thanks{Boyu Zhou is with the Smart Autonomous Robotics (STAR) Group, Southern University of Science and Technology, Shenzhen, China.}%
 \thanks{Hong Zhang is with the Shenzhen Key Laboratory of Robotics and Computer Vision, Southern University of Science and Technology, Shenzhen, China.}%
@@ -71,12 +71,12 @@ Replace this box with the final vector figure or high-resolution image.
 
 % -------------------- Abstract --------------------
 \begin{abstract}
-Edge--cloud Visual Simultaneous Localization and Mapping (VSLAM) can exploit cloud-side computation for complex perception, optimization, and mapping tasks. However, it also requires transmitting dense visual streams from resource-constrained edge devices to the cloud, creating a bandwidth bottleneck with significant upload latency and communication overhead under constrained links. Conventional image and video codecs mainly optimize appearance fidelity, whereas VSLAM transmission requires geometric consistency, viewpoint stability, and trackable structures. Inspired by sparse key scenes and high-level semantic cues in human visual memory, this paper proposes VLMem-Codec, a Vision--Language Memory (VLMem) coding framework for efficient visual transmission in edge--cloud VSLAM. The edge encoder converts a dense visual sequence into a compact VLMem payload composed of visual anchors and language cues: visual anchors constrain endpoint appearance and geometry, while language cues provide compact motion, semantic, and reconstruction conditions. On the cloud side, world-model reconstruction recovers omitted frames from the transmitted VLMem conditions. Meanwhile, we introduce Memory-Guided Decoder Refinement (MGDR), implemented with LoRA-based low-rank increments, to bias the decoder toward VSLAM-usable structural continuity without retraining the whole world model. The proposed coding framework is evaluated using downstream VSLAM absolute pose error (APE) RMSE, transmission reduction, edge-side Motion Response generation cost, and auxiliary image-fidelity metrics. Experiments show an average 96.8\% transmission reduction, reconstructed-sequence APE close to original-sequence APE on average, low-cost phase-correlation Motion Response generation, and a reduction in reconstructed-sequence APE with MGDR in the decoder ablation. A compression benchmark further shows that VLMem provides a favorable tradeoff among payload size, encoder-side construction time, and downstream VSLAM usability compared with Raw, H.265, and DCVC-FM representations.
+Edge--cloud Visual Simultaneous Localization and Mapping (VSLAM) can exploit cloud-side computation for complex perception, optimization, and mapping tasks. However, it also requires transmitting dense visual streams from resource-constrained edge devices to the cloud, creating a bandwidth bottleneck with significant upload latency and communication overhead under constrained links. Conventional image and video codecs mainly optimize appearance fidelity, whereas VSLAM transmission requires geometric consistency, viewpoint stability, and trackable structures. Inspired by sparse key scenes and high-level semantic cues in human visual memory, this paper proposes VLMem-Codec, a Vision--Language Memory (VLMem) coding framework for efficient visual transmission in edge--cloud VSLAM. The edge encoder converts a dense visual sequence into a compact VLMem payload composed of visual anchors and language cues: visual anchors constrain endpoint appearance and geometry, while language cues provide compact motion, semantic, and reconstruction conditions. On the cloud side, world-model reconstruction recovers omitted frames from the transmitted VLMem conditions. Meanwhile, we introduce Memory-Guided Decoder Refinement (MGDR), implemented with LoRA-based low-rank increments, to bias the decoder toward VSLAM-usable structural continuity without retraining the whole world model. The proposed coding framework is evaluated using downstream VSLAM absolute pose error (APE) RMSE, transmission reduction, edge-side Motion Response generation cost, and auxiliary image-fidelity metrics. Experiments show an average 96.8\% transmission reduction, reconstructed-sequence APE close to original-sequence APE on average, low-cost phase-correlation Motion Response generation, and a reduction in reconstructed-sequence APE with MGDR in the decoder ablation. A compression benchmark further shows that VLMem provides a favorable tradeoff among payload size, encoder-side construction time, and downstream VSLAM usability compared with existing methods.
 \end{abstract}
 
 % -------------------- Keywords --------------------
 \begin{IEEEkeywords}
-Visual SLAM, edge--cloud computing, visual transmission, image compression, world models, vision--language models.
+VSLAM, edge--cloud computing, visual transmission, image compression, world models, vision--language models.
 \end{IEEEkeywords}
 
 \IEEEpeerreviewmaketitle
@@ -102,7 +102,7 @@ Existing image and video compression standards mainly reduce transmission load b
 
 This objective mismatch becomes more prominent when higher compression ratios are pursued. Distortions such as blur, blocking artifacts, texture loss, or temporal inconsistency may weaken feature repeatability, disturb trackable structures, and reduce the geometric cues used by downstream pose estimation. Conversely, VSLAM does not require pixel-identical or high-definition reconstruction of every frame; it requires sufficient geometric consistency, feature repeatability, trackable structures, and scene-motion continuity. Therefore, edge--cloud VSLAM transmission should not be treated merely as conventional video delivery, but as a task-oriented and communication-constrained visual transmission problem. In this problem, the transmitted representation should be constructed and evaluated around downstream VSLAM trajectory quality. Fig.~\ref{fig:concept} conceptually illustrates this bandwidth bottleneck and the corresponding memory-based transmission motivation, while the quantitative compression and trajectory tradeoffs are reported in Section~\ref{sec:experiments}.
 
-As an engineering analogy, this paper is inspired by human visual memory. When navigating through an environment, humans do not need to remember every pixel of every frame; they often retain sparse key scenes, landmarks, motion transitions, and high-level semantic impressions. This intuition suggests Vision--Language Memory (VLMem): a compact representation in which visual anchors preserve key endpoint appearance and geometry, while language cues describe motion state, scene context, and reconstruction constraints. The cloud can then use world-model reconstruction to infer omitted intervals from these sparse conditions, rather than treating adjacent anchors as disconnected keyframes.
+As an engineering analogy, this paper is inspired by human visual memory. When navigating through an environment, humans do not need to remember every pixel of every frame; they often retain sparse key scenes, landmarks, motion transitions, and high-level semantic impressions. This intuition suggests Vision--Language Memory (VLMem): a compact representation in which visual anchors preserve key endpoint appearance and geometry, while language cues describe motion state, scene context, and reconstruction constraints. A world model can then be used to infer omitted intervals from these sparse visual and language conditions, rather than treating adjacent anchors as disconnected keyframes.
 
 Based on this formulation, we propose VLMem-Codec, a vision--language memory coding framework for efficient visual transmission in edge--cloud VSLAM. For each VLMem unit, the edge transmits a compact VLMem payload composed of visual anchors and language cues. The visual anchors provide boundary views that are difficult to express precisely using language alone, while the language cues encode high-level motion and semantic priors with low communication cost. The reconstructed sequence is then fed into a cloud-side VSLAM estimator for localization and mapping, so dense visual upload is reformulated as task-oriented VLMem payload transmission rather than generic video delivery.
 
@@ -126,7 +126,7 @@ The remainder of this paper is organized as follows. Section~\ref{sec:related_wo
 
 \subsection{Edge--Cloud VSLAM}
 
-Visual SLAM enables robots and autonomous platforms to estimate camera motion and build maps from continuous visual observations. Classical VSLAM systems mainly rely on local feature matching, photometric consistency, and nonlinear optimization to achieve tracking and mapping. Representative systems such as ORB-SLAM2, ORB-SLAM3, LSD-SLAM, DSO, and SVO have established mature geometric pipelines with good engineering efficiency~\cite{murartal2017orbslam2,campos2021orbslam3,engel2014lsdslam,engel2018dso,forster2014svo}. However, their robustness is often tied to stable textures, reliable features, and favorable imaging conditions. In scenes with weak texture, dynamic interference, fast motion, or severe illumination variation, feature repeatability and data association may degrade, leading to tracking drift or failure. Recent learning-based VSLAM methods, such as DROID-SLAM, improve robustness by introducing deep networks, multi-frame recurrent optimization, and dense correspondence modeling~\cite{teed2021droidslam}. These advantages, however, come with higher computation, memory, and power requirements, making direct deployment on lightweight edge platforms difficult.
+VSLAM enables robots and autonomous platforms to estimate camera motion and build maps from continuous visual observations. Classical VSLAM systems mainly rely on local feature matching, photometric consistency, and nonlinear optimization to achieve tracking and mapping. Representative systems such as ORB-SLAM2, ORB-SLAM3, LSD-SLAM, DSO, and SVO have established mature geometric pipelines with good engineering efficiency~\cite{murartal2017orbslam2,campos2021orbslam3,engel2014lsdslam,engel2018dso,forster2014svo}. However, their robustness is often tied to stable textures, reliable features, and favorable imaging conditions. In scenes with weak texture, dynamic interference, fast motion, or severe illumination variation, feature repeatability and data association may degrade, leading to tracking drift or failure. Recent learning-based VSLAM methods, such as DROID-SLAM, improve robustness by introducing deep networks, multi-frame recurrent optimization, and dense correspondence modeling~\cite{teed2021droidslam}. These advantages, however, come with higher computation, memory, and power requirements, making direct deployment on lightweight edge platforms difficult.
 
 Edge--cloud VSLAM has therefore emerged as a natural system paradigm for reconciling edge deployability with cloud-side computational capacity. Existing studies mainly reduce system burden from two perspectives. The first line focuses on collaborative computation, where tracking, local mapping, loop closure, or global optimization are distributed between the edge and the cloud through task partitioning, asynchronous collaboration, or submap-level processing~\cite{rabaud2011c2tam,kuffner2010cloud,shankar2020fogros,chen2024reviewcloudedge,chen2024cloudlearning,chen2024implicittransmission}. The second line optimizes transmitted representations, such as submaps, compact map structures, implicit representations, or cross-representation associations, to reduce the amount of map or intermediate data exchanged between edge and cloud systems~\cite{chen2024reviewcloudedge,chen2024implicittransmission,huo2025vcslam,chen2024crossdata,chen2025xrepslam}. These studies have advanced the system design of edge--cloud SLAM and VSLAM, but they mainly address computation allocation, map-result representation, and structured-output exchange.
 
@@ -194,31 +194,26 @@ Here, \(I_{b_i^-}\) and \(I_{b_i^+}\) are the start and end visual anchors of th
 
 The edge-side memory encoder and cloud-side world-model decoder can be written compactly as
 \begin{equation}
-\begin{aligned}
-\mathcal{V}
-&=\mathcal{E}_{\phi}(I_{1:T};P)
-=\{U_i\}_{i=1}^{N},\\
-\hat{I}_{1:T}
-&=\mathcal{D}_{\theta+\Delta\theta}(\mathcal{V}).
-\end{aligned}
+\begin{gathered}
+\mathcal{V}=\mathcal{E}_{\phi}(I_{1:T};P)=\{U_i\}_{i=1}^{N},\\
+\hat{I}_{1:T}=\mathcal{D}_{\theta+\Delta\theta}(\mathcal{V}).
+\end{gathered}
 \label{eq:memory_coding}
 \end{equation}
 Here, \(\mathcal{E}_{\phi}\) denotes the edge-side VLMem encoder, \(\mathcal{V}\) denotes the transmitted VLMem payload, and \(\mathcal{D}_{\theta+\Delta\theta}\) denotes the cloud-side world-model decoder. The reconstructed sequence \(\hat{I}_{1:T}\) is composed of transmitted visual anchors and omitted intermediate frames filled in by the world-model decoder. The parameter \(\theta\) denotes the pretrained world-model parameters, and \(\Delta\theta\) denotes optional MGDR increments. When \(\Delta\theta=0\), the decoder reduces to the original world model without MGDR refinement.
 
 From the perspective of transmission cost, the VLMem payload size is modeled as
 \begin{equation}
-\begin{aligned}
-R(\mathcal{V})
-&=
-R(K)+\sum_{i=1}^{N}R(M_i,S_i,L_i,L_i^-)\\
-&\quad+R(\mathrm{meta}),\\
-K&=\{I_b\mid b\in B\}.
-\end{aligned}
+\begin{gathered}
+R(\mathcal{V})=
+R(K)+\sum_{i=1}^{N}R(M_i,S_i,L_i,L_i^-)+R_{\mathrm{meta}},\\
+K=\{I_b\mid b\in B\}.
+\end{gathered}
 \label{eq:transmission_cost}
 \end{equation}
-Here, \(K\) is the set of transmitted visual anchors, and \(R(K)\) is the main image payload contributed by visual-anchor frames. \(R(M_i,S_i,L_i,L_i^-)\) denotes the lightweight payload of compact motion cues, semantic event anchors, and language cues in each VLMem unit. \(R(\mathrm{meta})\) represents necessary metadata such as temporal indices and unit boundaries. This equation describes the composition and transmission cost of the VLMem payload; it does not assume that all components contribute equally to the total payload.
+Here, \(K\) is the set of transmitted visual anchors, and \(R(K)\) is the main image payload contributed by visual-anchor frames. \(R(M_i,S_i,L_i,L_i^-)\) denotes the lightweight payload of compact motion cues, semantic event anchors, and language cues in each VLMem unit. \(R_{\mathrm{meta}}\) represents necessary metadata such as temporal indices and unit boundaries. This equation describes the composition and transmission cost of the VLMem payload; it does not assume that all components contribute equally to the total payload.
 
-Rather than formulating VLMem construction as a closed-form optimization problem, this work adopts a rate--trajectory evaluation criterion to characterize the relationship between communication efficiency and downstream trajectory quality
+Rather than formulating VLMem construction as a closed-form optimization problem, this work characterizes the relationship between communication efficiency and downstream trajectory quality by defining the rate--trajectory evaluation criterion as
 \begin{equation}
 \begin{aligned}
 \mathcal{Q}_{\mathrm{RT}}(\mathcal{V})
@@ -254,9 +249,8 @@ Phase correlation is used to generate lightweight Motion Response. Its basic pri
 
 As shown in Fig.~\ref{fig:event_segmentation}, the encoder divides adjacent frames into spatial blocks and computes phase correlation for each block. Let \(I_t^g\) denote the \(g\)-th image block in frame \(t\), and let \(H\) be a local windowing function. The block-wise phase-correlation response is
 \begin{equation}
-\begin{aligned}
-C_{t,g}
-&=
+\begin{gathered}
+C_{t,g}=
 \mathcal{F}^{-1}\!\left(
 \frac{
 \mathcal{F}(H\odot I_t^g)
@@ -268,44 +262,38 @@ C_{t,g}
 \right|+\epsilon
 }
 \right),\\
-(d_{t,g},\rho_{t,g})
-&=\operatorname{Peak}(C_{t,g}).
-\end{aligned}
+(d_{t,g},\rho_{t,g})=\operatorname{Peak}(C_{t,g}).
+\end{gathered}
 \label{eq:block_phase_correlation}
 \end{equation}
-Here, \(\odot\) denotes element-wise multiplication, \(\mathcal{F}\) is the Fourier transform, \((\cdot)^\ast\) denotes complex conjugation, \(d_{t,g}\) is the block-level displacement, and \(\rho_{t,g}\) is the peak confidence. To suppress the influence of weakly textured regions and unstable peaks on global motion judgment, the encoder reliability-weights block responses according to peak confidence, local texture strength, and block location. The block-level displacements are then aggregated into a global displacement trend and radial expansion cue:
+Here, \(\odot\) denotes element-wise multiplication, \(\mathcal{F}\) is the Fourier transform, \((\cdot)^\ast\) denotes complex conjugation, \(d_{t,g}\) is the block-level displacement, and \(\rho_{t,g}\) is the peak confidence. To suppress the influence of weakly textured regions and unstable peaks on global motion judgment, the encoder reliability-weights block responses according to peak confidence, local texture strength, and block location. The block-level displacements are then aggregated, and the global displacement trend and radial expansion cue are computed as
 \begin{equation}
-\begin{aligned}
-\bar{d}_t
-&=
+\begin{gathered}
+\bar{d}_t=
 \frac{\sum_g w_{t,g}d_{t,g}}
 {\sum_g w_{t,g}+\epsilon},\\
-\chi_t
-&=
+\chi_t=
 \frac{
 \sum_g w_{t,g}\left(x'_g d^x_{t,g}+y'_g d^y_{t,g}\right)}
 {\sum_g w_{t,g}\left((x'_g)^2+(y'_g)^2\right)+\epsilon}.
-\end{aligned}
+\end{gathered}
 \label{eq:motion_descriptors}
 \end{equation}
 Here, \(\bar{d}_t\) denotes the reliability-weighted global displacement trend, \(\chi_t\) denotes radial expansion evidence related to forward motion, and \((x'_g,y'_g)\) are normalized block-center coordinates. The encoder then maps these low-dimensional descriptors, together with the frame-level confidence \(\rho_t\), into a coarse motion state such as forward, left-turn, right-turn, or mixed. To avoid over-segmentation caused by single-frame noise, frame-level motion states are stabilized over admissible temporal windows and then aggregated within each event unit to form the unit-level motion cue \(M_i\).
 
 Motion Response mainly reflects viewpoint changes, but it cannot cover all changes in visual content. For example, during long straight motion or slow movement, the overall motion state may remain stable while salient objects appear, disappear, or change semantic context. If event units are constructed only from Motion Response, long stable-motion intervals may become semantically underconstrained. Therefore, the encoder further introduces Semantic Response based on image-embedding changes.
 
-For a candidate admissible position \(p\) and the current semantic context \(c\), the encoder computes normalized visual embeddings and defines Semantic Response by their embedding discrepancy
+For a candidate admissible position \(p\) and the current semantic context \(c\), the encoder computes normalized visual embeddings and defines the Semantic Response as
 \begin{equation}
-\begin{aligned}
-z_p
-&=\frac{f_{\psi}(I_p)}{\|f_{\psi}(I_p)\|_2},
+\begin{gathered}
+z_p=\frac{f_{\psi}(I_p)}{\|f_{\psi}(I_p)\|_2},
 \qquad
-z_c
-=\frac{f_{\psi}(I_c)}{\|f_{\psi}(I_c)\|_2},\\
-r^{\mathrm{S}}_p(c)
-&=1-z_p^{\top}z_c.
-\end{aligned}
+z_c=\frac{f_{\psi}(I_c)}{\|f_{\psi}(I_c)\|_2},\\
+r^{\mathrm{S}}_p(c)=1-z_p^{\top}z_c.
+\end{gathered}
 \label{eq:semantic_response}
 \end{equation}
-Here, \(f_{\psi}\) is the image embedding encoder, \(z_p\) and \(z_c\) are the normalized embeddings of the candidate position and the current semantic context, respectively, and \(r^{\mathrm{S}}_p(c)\) measures the semantic-change strength of the candidate position relative to the current context. The context \(c\) need not be the immediately preceding frame; it is the active scene/content reference used for judging content changes within the current event unit. To avoid false detections caused by single-frame noise, the encoder filters candidate semantic event anchors using persistence and separation constraints
+Here, \(f_{\psi}\) is the image embedding encoder, \(z_p\) and \(z_c\) are the normalized embeddings of the candidate position and the current semantic context, respectively, and \(r^{\mathrm{S}}_p(c)\) measures the semantic-change strength of the candidate position relative to the current context. The context \(c\) need not be the immediately preceding frame; it is the active scene/content reference used for judging content changes within the current event unit. To avoid false detections caused by single-frame noise, the candidate semantic event-anchor set is defined by the following persistence and separation constraints
 \begin{equation}
 \begin{aligned}
 \mathcal{S}_{\mathrm{sem}}
@@ -340,7 +328,7 @@ p-b_k\in\Delta_m,\right.\\
 \end{aligned}
 \label{eq:candidate_boundary_set}
 \end{equation}
-Here, \(\mathcal{N}_k\) contains all feasible next event-boundary positions, and \(\operatorname{Reach}(p,e;\Delta_m)\) ensures that the remaining interval from \(p\) to \(e\) can still be covered by valid spans. Once the candidate set is determined, the encoder selects the earliest feasible semantic event anchor if such an anchor exists; otherwise, it selects the farthest reachable boundary
+Here, \(\mathcal{N}_k\) contains all feasible next event-boundary positions, and \(\operatorname{Reach}(p,e;\Delta_m)\) ensures that the remaining interval from \(p\) to \(e\) can still be covered by valid spans. Once the candidate set is determined, the next boundary \(b_{k+1}\) is selected as
 \begin{equation}
 b_{k+1}
 =
@@ -368,44 +356,38 @@ The cloud-side decoder contains two related branches: an inference branch and an
 
 Fig.~\ref{fig:lora_decoder} illustrates the dual-branch world-model decoding process. For each VLMem unit, visual anchors provide endpoint appearance and geometric constraints that are difficult to express precisely using language alone, while language cues provide compact conditions about motion state, semantic changes, scene context, and reconstruction quality. Given the unit-level motion cue \(M_i\) and semantic event-anchor set \(S_i\) from Sec.~III-B, the language cues for the \(i\)-th unit are constructed as
 \begin{equation}
-\begin{aligned}
-L_i
-&=
-\operatorname{Join}
-\left(
-L_{\mathrm{base}},
-L_{\mathrm{motion}}(M_i),
+\begin{gathered}
+L_i=
+\operatorname{Join}\left(
+L_{\mathrm{base}}, L_{\mathrm{motion}}(M_i),
 L_{\mathrm{semantic}}(S_i)
 \right),\\
-L_i^- &= L_{\mathrm{neg}}.
-\end{aligned}
+L_i^-=L_{\mathrm{neg}}.
+\end{gathered}
 \label{eq:language_memory_construction}
 \end{equation}
 Here, \(L_{\mathrm{base}}\) denotes a shared navigation-view prior that maintains the basic first-person visual style and navigation-scene constraints; \(L_{\mathrm{motion}}(M_i)\) injects motion conditions according to the unit-level motion cue, such as forward motion, turning, or mixed motion; \(L_{\mathrm{semantic}}(S_i)\) denotes semantic constraints derived from the semantic event-anchor set, which indicate scene content, salient objects, or contextual changes; and \(L_{\mathrm{neg}}\) is the negative language cue used to suppress blur, distortion, drift, abrupt viewpoint changes, and hallucinated objects that may affect downstream VSLAM. When no significant semantic event exists within a unit, \(L_{\mathrm{semantic}}(S_i)\) can degenerate to a stable-scene constraint or an empty semantic constraint. In this way, language cues carry not only unit-level motion state but also content changes detected by Semantic Response.
 
 For the \(i\)-th VLMem unit, the visual anchors are \(I_{b_i^-}\) and \(I_{b_i^+}\). To specify the frames to be filled by the cloud-side decoder, we define the omitted intermediate-frame index set as
 \begin{equation}
-\begin{aligned}
-\mathcal{T}_i^{\mathrm{mid}}
-&=
+\begin{gathered}
+\mathcal{T}_i^{\mathrm{mid}}=
 \left\{
 t\mid b_i^-<t<b_i^+
 \right\},\\
-I_i^{\mathrm{mid}}
-&=
+I_i^{\mathrm{mid}}=
 \left\{
 I_t
 \right\}_{t\in\mathcal{T}_i^{\mathrm{mid}}}.
-\end{aligned}
+\end{gathered}
 \label{eq:mid_interval}
 \end{equation}
 Here, \(\mathcal{T}_i^{\mathrm{mid}}\) denotes the time indices between the two visual anchors that are not directly uploaded, and \(I_i^{\mathrm{mid}}\) denotes the corresponding original intermediate frames. This definition provides a unified temporal range for inference-time reconstruction outputs and MGDR supervision targets. In other words, each VLMem unit is decoded by filling the omitted frames inside the unit under known start anchors, end anchors, and language cues.
 
-During inference, the cloud-side decoder first forms the conditioning tuple for the \(i\)-th unit. The tuple includes the two visual anchors, the positive language cue, the negative language cue, and the number of intermediate frames to be filled
+During inference, the cloud-side decoder first forms the conditioning tuple for the \(i\)-th unit. The conditioning tuple and reconstructed intermediate frames are defined as
 \begin{equation}
-\begin{aligned}
-c_i
-&=
+\begin{gathered}
+c_i=
 \left(
 I_{b_i^-},
 I_{b_i^+},
@@ -413,20 +395,18 @@ L_i,
 L_i^-,
 n_i
 \right),\\
-n_i
-&=
+n_i=
 \left|
 \mathcal{T}_i^{\mathrm{mid}}
 \right|,\\
-\hat{I}_i^{\mathrm{mid}}
-&=
+\hat{I}_i^{\mathrm{mid}}=
 \mathcal{D}_{\theta+\Delta\theta}(c_i).
-\end{aligned}
+\end{gathered}
 \label{eq:conditional_reconstruction}
 \end{equation}
 Here, \(c_i\) is the conditioning input of the world-model decoder, \(n_i\) specifies the number of intermediate frames to reconstruct in the unit, and \(\hat{I}_i^{\mathrm{mid}}\) denotes the reconstructed intermediate-frame set output by the decoder. The two visual anchors constrain the start and end views of the unit, the language cues provide motion-state, semantic-change, and reconstruction-quality constraints, and the completion length \(n_i\) aligns the decoder output with the temporal span of the VLMem unit. The reconstructed sequence consumed by cloud-side VSLAM is formed by retaining transmitted visual anchors and inserting the reconstructed intermediate frames of all units. Adjacent units share boundary anchors, i.e., \(b_i^+=b_{i+1}^-\), which provides consistent visual connections at unit boundaries.
 
-Because the objective of a generic world model for video generation is not necessarily aligned with the geometric consistency and trackable structures required by VSLAM, this work introduces MGDR to adapt the cloud-side decoder under VLMem conditions. The MGDR branch converts original training sequences into refinement samples that have the same conditioning format as inference. Each sample consists of a conditioning tuple and its corresponding target intermediate frames
+Because the objective of a generic world model for video generation is not necessarily aligned with the geometric consistency and trackable structures required by VSLAM, this work introduces MGDR to adapt the cloud-side decoder under VLMem conditions. The MGDR branch converts original training sequences into refinement samples that have the same conditioning format as inference. Each sample consists of a conditioning tuple and its corresponding target intermediate frames. Accordingly, the MGDR refinement-sample set is formed as
 \begin{equation}
 \mathcal{P}_{\mathrm{MGDR}}
 =
@@ -439,18 +419,15 @@ Here, \(\mathcal{P}_{\mathrm{MGDR}}\) denotes the MGDR refinement-sample set, \(
 
 MGDR is implemented with LoRA-based low-rank increments while keeping the pretrained world-model parameters frozen. For a selected layer weight \(W_\ell\), the MGDR increment is parameterized as
 \begin{equation}
-\begin{alignedat}{2}
-\Delta W_{\ell}
-&=
+\begin{gathered}
+\Delta W_{\ell}=
 \frac{\alpha_\ell}{r}
 B_\ell A_\ell,\\
-A_\ell
-&\in\mathbb{R}^{r\times d_\ell},
-\qquad&
-B_\ell
-&\in\mathbb{R}^{d'_\ell\times r},\\
-r&\ll \min(d_\ell,d'_\ell).
-\end{alignedat}
+A_\ell\in\mathbb{R}^{r\times d_\ell},
+\qquad
+B_\ell\in\mathbb{R}^{d'_\ell\times r},\\
+r\ll \min(d_\ell,d'_\ell).
+\end{gathered}
 \label{eq:lora_refinement_space}
 \end{equation}
 Here, \(W_\ell\) is a layer weight in the pretrained world model, \(\Delta W_\ell\) is the low-rank MGDR increment applied to that layer, \(r\) is the low-rank dimension, and \(\alpha_\ell\) is the layer scaling factor. Only \(A_\ell\) and \(B_\ell\) are trained during refinement, while the pretrained world-model parameters \(\theta\) remain frozen. The low-rank increments of all selected layers jointly form \(\Delta\theta=\{\Delta W_\ell\}\). This formulation allows MGDR to adapt to VLMem conditions with a small parameter increment without retraining the entire world model.
@@ -494,7 +471,7 @@ The edge platform consists of an AGV equipped with a RealSense D455 camera, an o
 
 All experiments follow a unified end-to-end evaluation pipeline. The preparation stage organizes image sequences and trajectory references; the encoding stage converts dense frames into the transmitted VLMem payload; the decoding stage generates reconstructed sequences from visual anchors and language cues; and the evaluation stage runs the VSLAM estimator on both original and reconstructed sequences. Unless otherwise stated, phase correlation (PC) is used to generate the edge-side Motion Response. The cloud uses a vision--language conditioned world-model decoder. In the decoder ablation, WM denotes the original world-model decoder, and WM+MGDR denotes the same decoder refined through MGDR.
 
-Trajectory quality is measured from the VSLAM estimator output using evo after Sim(3) alignment, and the main task metric is absolute pose error (APE) RMSE. For the end-to-end VLMem evaluation, compression is measured by comparing the original image-sequence size with the transmitted VLMem payload size. For the compression benchmark, payload size, payload reduction, encoder-side construction time, and downstream VSLAM accuracy are reported for Raw, H.265, DCVC-FM, and VLMem representations. LPIPS, SSIM, and FID are used only as auxiliary image-fidelity metrics in the MGDR ablation. They provide complementary diagnostics of reconstructed image appearance, while trajectory quality remains the primary task objective of \VLMemCodec{}.
+Trajectory quality is measured from the VSLAM estimator output using evo after Sim(3) alignment, and the main task metric is absolute pose error (APE) RMSE. For the end-to-end VLMem evaluation, compression is measured by comparing the original image-sequence size with the transmitted VLMem payload size. For the compression benchmark, payload size, payload reduction, and downstream VSLAM accuracy are reported for Raw, H.265, DCVC-FM, and VLMem representations, while encoder-side construction time is reported only for methods requiring encoder-side construction of the transmitted representation. LPIPS, SSIM, and FID are used only as auxiliary image-fidelity metrics in the MGDR ablation. They provide complementary diagnostics of reconstructed image appearance, while trajectory quality remains the primary task objective of \VLMemCodec{}.
 
 \subsection{End-to-End Compression and VSLAM Accuracy}
 \label{subsec:compression_accuracy}
@@ -523,22 +500,22 @@ Fig.~\ref{fig:trajectory_map} complements the quantitative results in Table~\ref
 \subsection{Payload, Runtime, and Downstream Usability}
 \label{subsec:payload_runtime}
 
-To further analyze the communication--trajectory tradeoff, we benchmark the same GDUT sequence using representative 20s, 40s, and 60s clips at 24FPS. The clips contain 481, 961, and 1441 frames and cover 13.59m, 26.67m, and 41.22m GT paths, respectively. Table~\ref{tab:payload_runtime} compares four transmitted representations: Raw, H.265 at 10Mbps, DCVC-FM, and VLMem. Raw denotes ZIP-compressed original-frame transmission, DCVC-FM uses q-index 21, and VLMem is evaluated using REC frames for downstream VSLAM. The benchmark reports payload size, reduction, Enc. Time, downstream APE RMSE, and path-normalized APE. Enc. Time denotes only encoder-side construction of the transmitted representation; decoding, frame generation, batching, and downstream VSLAM evaluation are excluded.
+To further analyze the communication--trajectory tradeoff, we benchmark the same GDUT sequence using representative 20s, 40s, and 60s clips at 24FPS. The clips contain 481, 961, and 1441 frames and cover 13.59m, 26.67m, and 41.22m GT paths, respectively. Table~\ref{tab:payload_runtime} compares four transmitted representations: Raw, H.265 at 10Mbps, DCVC-FM, and VLMem. Raw denotes direct transmission of original frames without encoder-side representation construction, DCVC-FM uses q-index 21, and VLMem is evaluated using REC frames for downstream VSLAM. The benchmark reports payload size, reduction, Enc. Time, downstream APE RMSE, and path-normalized APE. Enc. Time is reported only for methods that construct an encoded/transmitted representation and is not applicable to Raw; decoding, frame generation, batching, and downstream VSLAM evaluation are excluded.
 
 \input{tables/tab_exp4_payload_runtime}
 
 \begin{figure*}[!t]
 \centering
 \includegraphics[width=\textwidth]{figures/fig7.png}
-\caption{Compression benchmark and downstream VSLAM usability on representative GDUT clips. (a) Payload size of the transmitted representation. (b) Encoder-side time for constructing the transmitted representation. (c) Path-normalized APE after downstream VSLAM evaluation.}
+\caption{Compression benchmark and downstream VSLAM usability on representative GDUT clips. (a) Payload size of the transmitted representation. (b) Encoder-side time for constructing the transmitted representation. (c) Path-normalized APE after downstream VSLAM evaluation. Raw denotes direct original-frame transmission and has no encoder-side construction time; it is therefore omitted from panel (b).}
 \label{fig:exp2_payload_runtime}
 \end{figure*}
 
-Table~\ref{tab:payload_runtime} reports the exact benchmark values. Fig.~\ref{fig:exp2_payload_runtime} visualizes the corresponding trends in payload size, encoder-side construction time, and path-normalized downstream VSLAM error. In terms of compression capability and encoder-side cost, DCVC-FM achieves the smallest payload on all three clips, but requires the highest Enc. Time: 82.74s, 161.07s, and 228.56s for 20s, 40s, and 60s, respectively. VLMem keeps a stable high reduction of 97.65\%--98.04\%. Compared with H.265, VLMem uses much smaller payloads: 3.96MiB versus 23.08MiB for 20s, 8.43MiB versus 47.73MiB for 40s, and 10.76MiB versus 71.50MiB for 60s. VLMem also requires lower Enc. Time than H.265 across the three clips.
+Table~\ref{tab:payload_runtime} reports the exact benchmark values. Fig.~\ref{fig:exp2_payload_runtime} visualizes the corresponding trends in payload size, encoder-side construction time, and path-normalized downstream VSLAM error. In terms of compression capability, DCVC-FM achieves the smallest payload on all three clips, but it requires the highest applicable Enc. Time: 82.74s, 161.07s, and 228.56s for 20s, 40s, and 60s, respectively. VLMem keeps a stable high reduction of 97.65\%--98.03\%. Compared with H.265, VLMem uses much smaller payloads: 3.96MiB versus 23.08MiB for 20s, 8.43MiB versus 47.73MiB for 40s, and 10.76MiB versus 71.50MiB for 60s. VLMem also requires lower Enc. Time than H.265 across the three clips.
 
 \FloatBarrier
 
-Payload reduction alone is insufficient for VSLAM-oriented visual transmission, because the transmitted representation must still support downstream pose estimation after reconstruction or decoding. In this benchmark, DCVC-FM achieves the smallest payload, but it does not outperform VLMem in downstream APE across the evaluated clips. VLMem remains close to Raw and H.265 in the 20s and 40s clips, and gives the lowest normalized APE in the 60s clip. These results should be interpreted as a tradeoff: VLMem provides a favorable balance between payload reduction, encoder-side cost, and downstream VSLAM usability, rather than being an absolute winner on every metric. The reported Enc. Time values are not end-to-end runtime; decoding, frame generation, batching, and downstream VSLAM evaluation are excluded from Table II.
+Payload reduction alone is insufficient for VSLAM-oriented visual transmission, because the transmitted representation must still support downstream pose estimation after reconstruction or decoding. In this benchmark, DCVC-FM achieves the smallest payload, but it does not outperform VLMem in downstream APE across the evaluated clips. VLMem remains close to Raw and H.265 in the 20s and 40s clips, and gives the lowest normalized APE in the 60s clip. These results should be interpreted as a tradeoff: VLMem provides a favorable balance between payload reduction, encoder-side cost, and downstream VSLAM usability, rather than being an absolute winner on every metric. The reported Enc. Time values are not end-to-end runtime; they apply only to methods that construct an encoded/transmitted representation, are not applicable to Raw, and exclude decoding, frame generation, batching, and downstream VSLAM evaluation from Table II.
 
 \subsection{Edge-Side Motion Response Benchmark}
 \label{subsec:motion_benchmark}
@@ -607,12 +584,7 @@ The reconstructed frames are also limited by the world model and the quality of 
 
 This paper presented \VLMemCodec{}, a Vision--Language Memory coding framework for efficient visual transmission in edge--cloud VSLAM. The framework converts dense image streams into a compact VLMem payload composed of visual anchors and language cues, and performs task-usable visual reconstruction on the cloud using a vision--language conditioned world-model decoder. Through motion--semantic event segmentation, \VLMemCodec{} selects key visual anchors and constructs Motion Response and Semantic Response cues; through MGDR, the decoder is further adapted under the same VLMem conditions toward the visual continuity, geometric consistency, and trackable structures required by downstream VSLAM.
 
-The experimental results show that the VLMem payload achieves an average 96.8\% transmission reduction while keeping reconstructed-sequence VSLAM trajectory error close to original-sequence results on average. The compression benchmark with Raw, H.265, and DCVC-FM further shows that VLMem offers a favorable balance among payload reduction, encoder-side construction cost, and downstream VSLAM accuracy. Phase correlation provides low-cost edge-side Motion Response generation for event encoding, and MGDR reduces REC APE in the decoder ablation. The results also show that auxiliary image-fidelity metrics are not fully aligned with VSLAM trajectory quality, further indicating that edge--cloud VSLAM visual transmission should be evaluated around downstream task usability. Future work will further improve reconstruction geometric consistency, cloud-side decoding efficiency, and VSLAM-aware reconstruction constraints.
-
-% -------------------- Acknowledgment --------------------
-\section*{Acknowledgment}
-% TODO: Add funding and acknowledgments if needed. Remove this section for anonymous review if required.
-The authors would like to thank XXX.
+The experimental results show that the VLMem payload achieves an average 96.8\% transmission reduction while keeping reconstructed-sequence VSLAM trajectory error close to original-sequence results on average. The compression benchmark against existing methods further shows that VLMem offers a favorable balance among payload reduction, encoder-side construction cost, and downstream VSLAM accuracy. Phase correlation provides low-cost edge-side Motion Response generation for event encoding, and MGDR reduces REC APE in the decoder ablation. The results also show that auxiliary image-fidelity metrics are not fully aligned with VSLAM trajectory quality, further indicating that edge--cloud VSLAM visual transmission should be evaluated around downstream task usability. Future work will further improve reconstruction geometric consistency, cloud-side decoding efficiency, and VSLAM-aware reconstruction constraints.
 
 % -------------------- References --------------------
 \ifCLASSOPTIONcaptionsoff
@@ -625,7 +597,7 @@ The authors would like to thank XXX.
 % -------------------- Biographies --------------------
 % TODO: IEEE biographies are often required in final journal versions, but may be removed during anonymous review.
 \begin{IEEEbiography}[{\includegraphics[width=1in,height=1.25in,clip,keepaspectratio]{\detokenize{figures/authors/Xiang Huo.jpg}}}]{Xiang Huo (Student Member, IEEE)}
-is currently pursuing the master's degree in robotics with the School of Electromechanical Engineering and the Biomimetic and Intelligent Robotics Laboratory (BIRL), Guangdong University of Technology, Guangzhou, China. His research interests include vision-language models, world models, visual simultaneous localization and mapping, and edge--cloud robotic perception. He has authored papers in robotics and intelligent transportation venues, including IEEE/ASME Transactions on Mechatronics, IEEE/RSJ International Conference on Intelligent Robots and Systems, IEEE International Conference on Robotics and Biomimetics, and a paper accepted by the IEEE International Conference on Robotics and Automation.
+is currently pursuing the master's degree in robotics with the School of Electromechanical Engineering and the Biomimetic and Intelligent Robotics Laboratory (BIRL), Guangdong University of Technology, Guangzhou, China. His research interests include vision-language models, world models, VSLAM, and edge--cloud robotic perception. He has authored papers in robotics and intelligent transportation venues, including IEEE/ASME Transactions on Mechatronics, IEEE/RSJ International Conference on Intelligent Robots and Systems, IEEE International Conference on Robotics and Biomimetics, and a paper accepted by the IEEE International Conference on Robotics and Automation.
 \end{IEEEbiography}
 
 \begin{IEEEbiography}[{\includegraphics[width=1in,height=1.25in,clip,keepaspectratio]{\detokenize{figures/authors/Sehua Ji.jpg}}}]{Sehua Ji (Student Member, IEEE)}
@@ -649,7 +621,7 @@ was born in 1959. He is currently a Professor with the Department of Electronic 
 \end{IEEEbiography}
 
 \begin{IEEEbiography}[{\includegraphics[width=1in,height=1.25in,clip,keepaspectratio]{\detokenize{figures/authors/Weinan Chen.jpg}}}]{Weinan Chen (Senior Member, IEEE)}
-received the B.Sc. degree and the Ph.D. degree from Guangdong University of Technology, Guangzhou, China. During his Ph.D. degree, he spent one year at the University of Alberta, Edmonton, Canada, as a Visiting Scholar. After one year of postdoctoral training at The Chinese University of Hong Kong, he joined Southern University of Science and Technology as a Principal Outstanding Postdoctoral Fellow. He is currently an Associate Professor with Guangdong University of Technology. He has published over 60 papers in the area of visual SLAM, collaborative SLAM, and mobile robot navigation, and won over ten best paper awards/finalists. His research interests include SLAM and mobile robots.
+received the B.Sc. degree and the Ph.D. degree from Guangdong University of Technology, Guangzhou, China. During his Ph.D. degree, he spent one year at the University of Alberta, Edmonton, Canada, as a Visiting Scholar. After one year of postdoctoral training at The Chinese University of Hong Kong, he joined Southern University of Science and Technology as a Principal Outstanding Postdoctoral Fellow. He is currently an Associate Professor with Guangdong University of Technology. He has published over 60 papers in the area of VSLAM, collaborative SLAM, and mobile robot navigation, and won over ten best paper awards/finalists. His research interests include SLAM and mobile robots.
 \end{IEEEbiography}
 
 \end{document}
