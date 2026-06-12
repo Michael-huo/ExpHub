@@ -10,25 +10,25 @@
 \toprule
 Clip & Frames & Path (m) & Method & Payload (MiB) & Reduction (\%) & Enc. Time (s) & APE RMSE (m) & Norm. APE (\%) \\
 \midrule
-\multirow{4}{*}{20s} & \multirow{4}{*}{481} & \multirow{4}{*}{13.59} & Raw & 193.60 & 0.00 & 7.09 & 0.157 & 1.15 \\
- & & & H.265 & 23.08 & 88.08 & 24.76 & 0.170 & 1.25 \\
- & & & DCVC-FM & 0.11 & 99.95 & 82.74 & 0.254 & 1.87 \\
- & & & VLMem & 3.96 & 97.95 & 22.59 & 0.190 & 1.39 \\
+\multirow{4}{*}{20s} & \multirow{4}{*}{481} & \multirow{4}{*}{13.59} & Raw & 193.50 & 0.00 & -- & \textbf{0.157} & \textbf{1.15} \\
+ & & & H.265 & 23.08 & 88.07 & \underline{24.76} & \underline{0.170} & \underline{1.25} \\
+ & & & DCVC-FM & \textbf{0.11} & \textbf{99.94} & 82.74 & 0.254 & 1.87 \\
+ & & & VLMem & \underline{3.96} & \underline{97.95} & \textbf{22.59} & 0.190 & 1.39 \\
 \midrule
-\multirow{4}{*}{40s} & \multirow{4}{*}{961} & \multirow{4}{*}{26.67} & Raw & 358.23 & 0.00 & 12.29 & 0.460 & 1.72 \\
- & & & H.265 & 47.73 & 86.68 & 49.46 & 0.467 & 1.75 \\
- & & & DCVC-FM & 0.18 & 99.95 & 161.07 & 0.587 & 2.20 \\
- & & & VLMem & 8.43 & 97.65 & 34.54 & 0.470 & 1.76 \\
+\multirow{4}{*}{40s} & \multirow{4}{*}{961} & \multirow{4}{*}{26.67} & Raw & 358.03 & 0.00 & -- & \textbf{0.460} & \textbf{1.72} \\
+ & & & H.265 & 47.73 & 86.67 & \underline{49.46} & \underline{0.467} & \underline{1.75} \\
+ & & & DCVC-FM & \textbf{0.18} & \textbf{99.95} & 161.07 & 0.587 & 2.20 \\
+ & & & VLMem & \underline{8.43} & \underline{97.65} & \textbf{34.54} & 0.470 & 1.76 \\
 \midrule
-\multirow{4}{*}{60s} & \multirow{4}{*}{1441} & \multirow{4}{*}{41.22} & Raw & 547.85 & 0.00 & 18.58 & 1.995 & 4.84 \\
- & & & H.265 & 71.50 & 86.95 & 73.30 & 1.965 & 4.77 \\
- & & & DCVC-FM & 0.29 & 99.95 & 228.56 & 1.196 & 2.90 \\
- & & & VLMem & 10.76 & 98.04 & 44.77 & 1.159 & 2.81 \\
+\multirow{4}{*}{60s} & \multirow{4}{*}{1441} & \multirow{4}{*}{41.22} & Raw & 547.55 & 0.00 & -- & 1.995 & 4.84 \\
+ & & & H.265 & 71.50 & 86.94 & \underline{73.30} & 1.965 & 4.77 \\
+ & & & DCVC-FM & \textbf{0.29} & \textbf{99.95} & 228.56 & \underline{1.196} & \underline{2.90} \\
+ & & & VLMem & \underline{10.76} & \underline{98.03} & \textbf{44.77} & \textbf{1.159} & \textbf{2.81} \\
 \bottomrule
 \end{tabular*}%
 \vspace{0.2em}
 
 \begin{minipage}{\textwidth}
-\footnotesize \emph{Note:} Raw denotes ZIP-compressed original frames; H.265 uses 10Mbps; DCVC-FM uses q-index 21; and VLMem denotes the proposed payload with REC frames used for downstream VSLAM. Enc. Time measures encoder-side representation construction only, excluding decoding, frame generation, batching, and downstream VSLAM evaluation. Norm. APE is APE RMSE divided by GT path length.
+\footnotesize \emph{Note:} Raw denotes direct transmission of original frames without encoder-side representation construction; H.265 uses 10Mbps; DCVC-FM uses q-index 21; and VLMem denotes the proposed payload with REC frames used for downstream VSLAM. Enc. Time measures encoder-side representation construction only, excluding decoding, frame generation, batching, and downstream VSLAM evaluation; it is not applicable to Raw. Norm. APE is APE RMSE divided by GT path length. Within each clip, bold and underlined values denote the best and second-best results, respectively; lower is better for Payload, Enc. Time, APE RMSE, and Norm. APE, while higher is better for Reduction. Raw is excluded from Enc. Time ranking.
 \end{minipage}
 \end{table*}
