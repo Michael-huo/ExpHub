@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 
 from .cleanup import normalize_keep_level
 from .config import ConfigError, get_platform_config
+from .common.compression_benchmark import benchmark_method_order, method_enc_time_sec, resolve_method_report
 from .common.logging import set_cli_log_level
 from .meta import sanitize_token
 from .runner import build_runtime, run_runtime
@@ -200,29 +201,43 @@ def _fmt_bytes(value: int) -> str:
 def _fmt_plain_seconds(value: object) -> str:
     parsed = _as_float_or_none(value)
     if parsed is None:
-        return "n/a"
+        return "N/A"
     return "{:.2f}".format(float(parsed))
 
 
 def _fmt_plain_metric(value: object, digits: int = 3) -> str:
     parsed = _as_float_or_none(value)
     if parsed is None:
-        return "n/a"
+        return "N/A"
     return "{:.{digits}f}".format(float(parsed), digits=int(digits))
 
 
 def _fmt_plain_ratio(value: object) -> str:
     parsed = _as_float_or_none(value)
     if parsed is None:
-        return "n/a"
+        return "N/A"
     return "{:.4f}".format(float(parsed))
 
 
 def _fmt_plain_int(value: object) -> str:
     parsed = _as_int_or_none(value)
     if parsed is None:
-        return "n/a"
+        return "N/A"
     return str(int(parsed))
+
+
+def _fmt_metric_with_unit(value: object, unit: str, digits: int = 2) -> str:
+    text = _fmt_plain_metric(value, digits=digits)
+    if text == "N/A":
+        return text
+    return "{}{}".format(text, unit)
+
+
+def _fmt_seconds_with_unit(value: object) -> str:
+    text = _fmt_plain_seconds(value)
+    if text == "N/A":
+        return text
+    return "{}s".format(text)
 
 
 def _bytes_to_mib(value: object) -> Optional[float]:
@@ -500,23 +515,27 @@ def _print_experiment_report(exp_dir: Path, step_times: Dict[str, float]) -> Non
     _info("[Compression]")
     _print_rows(compression_rows)
     if compression_benchmark:
-        methods = dict(compression_benchmark.get("methods") or {})
-        order = list(compression_benchmark.get("methods_order") or ["zip", "h265", "dcvc_fm_q21", "vlmem"])
+        order = benchmark_method_order(compression_benchmark)
         _info(div)
         _info("[Compression Benchmark: Table II]")
         for method_key in order:
-            row = dict(methods.get(method_key) or {})
+            row = dict(resolve_method_report(compression_benchmark, method_key) or {})
             if not row:
                 continue
+            reduction = row.get("reduction_pct")
+            if reduction is None:
+                reduction = row.get("reduction_pct_vs_raw_frames")
+            if reduction is None:
+                reduction = row.get("reduction_pct_vs_zip")
             _info(
-                "  - {name}: status={status} payload={payload}MiB reduction={reduction}% enc={enc}s ape={ape} norm={norm}%".format(
+                "  - {name}: status={status} payload={payload} reduction={reduction} enc={enc} ape={ape} norm={norm}".format(
                     name=str(row.get("display_name") or method_key),
                     status=str(row.get("status") or "n/a"),
-                    payload=_fmt_plain_metric(row.get("payload_mib"), digits=2),
-                    reduction=_fmt_plain_metric(row.get("reduction_pct"), digits=2),
-                    enc=_fmt_plain_seconds(row.get("enc_time_sec")),
+                    payload=_fmt_metric_with_unit(row.get("payload_mib"), "MiB", digits=2),
+                    reduction=_fmt_metric_with_unit(reduction, "%", digits=2),
+                    enc=_fmt_seconds_with_unit(method_enc_time_sec(row)),
                     ape=_fmt_plain_metric(row.get("ape_rmse_m"), digits=3),
-                    norm=_fmt_plain_metric(row.get("norm_ape_pct"), digits=2),
+                    norm=_fmt_metric_with_unit(row.get("norm_ape_pct"), "%", digits=2),
                 )
             )
     _info(sep)

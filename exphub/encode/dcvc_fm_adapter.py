@@ -186,6 +186,7 @@ class DcvcFmAdapter:
             "encoded_artifact_dir": _relative_path(self.exp_dir, stream_dir),
             "payload_bytes": None,
             "payload_mib": None,
+            "reduction_pct": None,
             "reduction_pct_vs_zip": None,
             "reduction_pct_vs_raw_frames": None,
             "enc_time_sec": None,
@@ -583,6 +584,7 @@ class DcvcFmAdapter:
             payload_bytes, bitstreams = _sum_files(stream_dir, suffixes=(".bin",))
             if payload_bytes <= 0:
                 raise RuntimeError("DCVC-FM produced no bitstream bytes under {}".format(stream_dir))
+            reduction = _reduction_pct(self.raw_reference_bytes, payload_bytes)
             report.update(
                 {
                     "status": "ok",
@@ -592,8 +594,9 @@ class DcvcFmAdapter:
                     "encoded_artifact_dir": _relative_path(self.exp_dir, stream_dir),
                     "payload_bytes": int(payload_bytes),
                     "payload_mib": _bytes_to_mib(payload_bytes),
-                    "reduction_pct_vs_zip": _reduction_pct(self.zip_reference_bytes, payload_bytes),
-                    "reduction_pct_vs_raw_frames": _reduction_pct(self.raw_reference_bytes, payload_bytes),
+                    "reduction_pct": reduction,
+                    "reduction_pct_vs_zip": reduction,
+                    "reduction_pct_vs_raw_frames": reduction,
                 }
             )
         except Exception as exc:

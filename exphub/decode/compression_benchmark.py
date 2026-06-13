@@ -10,11 +10,14 @@ from pathlib import Path
 from exphub.common.compression_benchmark import (
     METHOD_ORDER,
     as_dict,
+    bytes_to_mib,
     canonical_method_report,
-    file_size,
+    method_enc_time_sec,
     method_summary_lines,
+    raw_payload_bytes_from_report,
     relative_path,
     resolve_path,
+    resolve_method_report,
     safe_float,
 )
 from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic
@@ -148,6 +151,7 @@ class CompressionBenchmarkDecode:
 
     def _failure_report(self, method_key, encode_method, message, status="failed"):
         source_dir = resolve_path(self.exp_dir, encode_method.get("source_frames_dir")) or self.prepare_frames_dir
+        raw_reference_bytes = raw_payload_bytes_from_report(self.encode_report)
         return canonical_method_report(
             exp_dir=self.exp_dir,
             method_key=method_key,
@@ -158,7 +162,9 @@ class CompressionBenchmarkDecode:
             display_name=encode_method.get("display_name"),
             error_message=message,
             payload_bytes=encode_method.get("payload_bytes"),
-            enc_time_sec=encode_method.get("enc_time_sec"),
+            raw_reference_bytes=raw_reference_bytes,
+            zip_reference_bytes=None,
+            enc_time_sec=method_enc_time_sec(encode_method),
             decode_time_sec=None,
             codec_wall_time_sec=encode_method.get("codec_wall_time_sec"),
             time_semantics=str(encode_method.get("time_semantics") or ""),
@@ -176,8 +182,7 @@ class CompressionBenchmarkDecode:
         extra=None,
     ):
         source_dir = resolve_path(self.exp_dir, encode_method.get("source_frames_dir")) or self.prepare_frames_dir
-        raw_reference_bytes = as_dict(self.encode_report).get("raw_frame_bytes")
-        zip_reference_bytes = as_dict(self.encode_report).get("reference_zip_bytes")
+        raw_reference_bytes = raw_payload_bytes_from_report(self.encode_report)
         merged_extra = {
             "decode_strategy": str(decode_strategy),
             "transmitted_frame_count": encode_method.get("transmitted_frame_count"),
@@ -194,8 +199,8 @@ class CompressionBenchmarkDecode:
             display_name=encode_method.get("display_name"),
             payload_bytes=encode_method.get("payload_bytes"),
             raw_reference_bytes=raw_reference_bytes,
-            zip_reference_bytes=zip_reference_bytes,
-            enc_time_sec=encode_method.get("enc_time_sec"),
+            zip_reference_bytes=None,
+            enc_time_sec=method_enc_time_sec(encode_method),
             decode_time_sec=decode_time_sec,
             codec_wall_time_sec=encode_method.get("codec_wall_time_sec"),
             time_semantics=str(encode_method.get("time_semantics") or ""),
@@ -206,15 +211,15 @@ class CompressionBenchmarkDecode:
             extra=merged_extra,
         )
 
-    def _decode_zip(self, encode_method):
-        method_dir = self._method_dir("zip")
+    def _decode_raw(self, encode_method):
+        method_dir = self._method_dir("raw")
         frames_dir = method_dir / "frames"
         started = time.perf_counter()
         strategy = _copy_or_link_frames(self.prepare_frames_dir, frames_dir)
         elapsed = float(time.perf_counter() - started)
-        _validate_decoded_frames(frames_dir, int(encode_method.get("frame_count") or 0), "ZIP/ORI")
+        _validate_decoded_frames(frames_dir, int(encode_method.get("frame_count") or 0), "Raw")
         return self._report_from_decode(
-            "zip",
+            "raw",
             encode_method,
             frames_dir,
             elapsed,
@@ -285,8 +290,8 @@ class CompressionBenchmarkDecode:
             output_dir=work_dir,
             exp_dir=self.exp_dir,
             fps=self.fps,
-            raw_reference_bytes=as_dict(self.encode_report).get("raw_frame_bytes"),
-            zip_reference_bytes=as_dict(self.encode_report).get("reference_zip_bytes"),
+            raw_reference_bytes=raw_payload_bytes_from_report(self.encode_report),
+            zip_reference_bytes=None,
             save_decoded_frame=True,
         ).run()
         elapsed = float(time.perf_counter() - started)
@@ -365,16 +370,16 @@ class CompressionBenchmarkDecode:
         self.encode_report = read_json_dict(self.encode_report_path)
         if not self.encode_report:
             raise RuntimeError("invalid compression benchmark encode report: {}".format(self.encode_report_path))
-        methods = as_dict(self.encode_report.get("methods"))
+        raw_frame_bytes = raw_payload_bytes_from_report(self.encode_report)
 
         rows = []
         for method_key, handler in [
-            ("zip", self._decode_zip),
+            ("raw", self._decode_raw),
             ("h265", self._decode_h265),
             ("dcvc_fm_q21", self._decode_dcvc),
             ("vlmem", self._decode_vlmem),
         ]:
-            encode_method = as_dict(methods.get(method_key))
+            encode_method = resolve_method_report(self.encode_report, method_key)
             if not encode_method:
                 rows.append(self._failure_report(method_key, {}, "encode report missing method {}".format(method_key), status="failed"))
                 continue
@@ -396,6 +401,8 @@ class CompressionBenchmarkDecode:
             "native_decode_frames_dir": relative_path(self.exp_dir, self.native_decode_frames_dir),
             "frame_count": int(self.encode_report.get("frame_count") or 0),
             "fps": int(self.fps),
+            "raw_frame_bytes": int(raw_frame_bytes) if raw_frame_bytes is not None else None,
+            "raw_frame_mib": bytes_to_mib(raw_frame_bytes) if raw_frame_bytes is not None else None,
             "methods_order": list(METHOD_ORDER),
             "methods": {row["method_key"]: dict(row) for row in rows},
             "rows": rows,
