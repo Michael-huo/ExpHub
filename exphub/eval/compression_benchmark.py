@@ -10,8 +10,11 @@ from exphub.common.compression_benchmark import (
     METHOD_ORDER,
     TRAJECTORY_ROLES,
     as_dict,
+    benchmark_method_order,
+    method_enc_time_sec,
     relative_path,
     resolve_path,
+    resolve_method_report,
     safe_float,
 )
 from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic
@@ -109,6 +112,11 @@ def _base_row(method_key, method_report, clip):
     item = as_dict(method_report)
     frames = item.get("frame_count")
     fps = item.get("fps")
+    reduction = item.get("reduction_pct")
+    if reduction is None:
+        reduction = item.get("reduction_pct_vs_raw_frames")
+    if reduction is None:
+        reduction = item.get("reduction_pct_vs_zip")
     return {
         "clip": clip,
         "frames": frames,
@@ -116,15 +124,15 @@ def _base_row(method_key, method_report, clip):
         "path_m": None,
         "method_key": method_key,
         "display_name": str(item.get("display_name") or DISPLAY_NAMES.get(method_key, method_key)),
-        "trajectory_role": TRAJECTORY_ROLES.get(method_key, ""),
+        "trajectory_role": str(item.get("trajectory_role") or TRAJECTORY_ROLES.get(method_key, "")),
         "status": "skipped",
         "error_message": "",
         "payload_mib": item.get("payload_mib"),
         "payload_bytes": item.get("payload_bytes"),
-        "reduction_pct": item.get("reduction_pct_vs_zip"),
+        "reduction_pct": reduction,
         "reduction_pct_vs_zip": item.get("reduction_pct_vs_zip"),
         "reduction_pct_vs_raw_frames": item.get("reduction_pct_vs_raw_frames"),
-        "enc_time_sec": item.get("enc_time_sec"),
+        "enc_time_sec": method_enc_time_sec(item),
         "decode_time_sec": item.get("decode_time_sec"),
         "decoded_frame_generation_sec": item.get("decoded_frame_generation_sec"),
         "codec_wall_time_sec": item.get("codec_wall_time_sec"),
@@ -294,7 +302,7 @@ def _log_summary(summary):
     try:
         methods = as_dict(summary.get("methods"))
         log_info("[Compression Benchmark: eval] Method Summary:")
-        for method_key in METHOD_ORDER:
+        for method_key in benchmark_method_order(summary):
             row = as_dict(methods.get(method_key))
             status = str(row.get("status") or ("missing" if not row else "n/a"))
             log_info(
@@ -304,7 +312,7 @@ def _log_summary(summary):
                     row.get("ape_rmse_m") if row.get("ape_rmse_m") is not None else "n/a",
                     row.get("norm_ape_pct") if row.get("norm_ape_pct") is not None else "n/a",
                     row.get("payload_mib") if row.get("payload_mib") is not None else "n/a",
-                    row.get("enc_time_sec") if row.get("enc_time_sec") is not None else "n/a",
+                    row.get("enc_time_sec") if row.get("enc_time_sec") is not None else "N/A",
                 )
             )
     except Exception as exc:
@@ -321,7 +329,6 @@ def run_compression_benchmark_eval(config):
     decode_report = read_json_dict(decode_report_path)
     if not decode_report:
         raise RuntimeError("invalid compression benchmark decode report: {}".format(decode_report_path))
-    methods = as_dict(decode_report.get("methods"))
     main_evo = read_json_dict(Path(_get_arg(config, "main_evo_summary")).resolve())
     frame_count = decode_report.get("frame_count")
     fps = decode_report.get("fps") or _get_arg(config, "fps")
@@ -330,7 +337,7 @@ def run_compression_benchmark_eval(config):
     rows = []
     manifest_paths = {}
     for method_key in METHOD_ORDER:
-        method_report = as_dict(methods.get(method_key))
+        method_report = resolve_method_report(decode_report, method_key)
         method_dir = out_dir / method_key
         method_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -353,7 +360,7 @@ def run_compression_benchmark_eval(config):
                 manifest_paths[method_key] = _write_method_manifest(exp_dir, method_dir, row, method_report)
                 continue
 
-            if method_key == "zip":
+            if method_key == "raw":
                 traj_path = exp_dir / "eval" / "ori" / "traj_est.tum"
                 if traj_path.is_file() and main_evo:
                     row = _mainline_row(exp_dir, method_key, method_report, "ori", traj_path, main_evo, clip)
@@ -404,7 +411,7 @@ def run_compression_benchmark_eval(config):
         "clip": clip,
         "frame_count": int(frame_count or 0),
         "fps": fps,
-        "reduction_reference": "zip_payload_bytes",
+        "reduction_reference": "raw_payload_bytes",
         "table_time_field": "enc_time_sec",
         "methods_order": list(METHOD_ORDER),
         "method_manifests": dict(manifest_paths),

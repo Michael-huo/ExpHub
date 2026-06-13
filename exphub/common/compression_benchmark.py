@@ -4,14 +4,18 @@ import re
 from pathlib import Path
 
 
-METHOD_ORDER = ("zip", "h265", "dcvc_fm_q21", "vlmem")
+RAW_METHOD_KEY = "raw"
+LEGACY_RAW_METHOD_KEY = "zip"
+METHOD_ORDER = (RAW_METHOD_KEY, "h265", "dcvc_fm_q21", "vlmem")
 DISPLAY_NAMES = {
+    "raw": "Raw",
     "zip": "ZIP/ORI",
     "h265": "H.265",
     "dcvc_fm_q21": "DCVC-FM q21",
     "vlmem": "VLMem/REC",
 }
 TRAJECTORY_ROLES = {
+    "raw": "ORI",
     "zip": "ORI",
     "h265": "codec_decoded",
     "dcvc_fm_q21": "codec_decoded",
@@ -95,10 +99,21 @@ def safe_int(value):
         return None
 
 
+def method_enc_time_sec(item):
+    report = as_dict(item)
+    for key in ["enc_time_sec", "encode_time_sec", "encoding_time_sec"]:
+        if key not in report:
+            continue
+        parsed = safe_float(report.get(key))
+        if parsed is not None:
+            return float(parsed)
+    return None
+
+
 def format_seconds(value):
     parsed = safe_float(value)
     if parsed is None:
-        return "n/a"
+        return "N/A"
     return "{:.2f}s".format(parsed)
 
 
@@ -110,7 +125,7 @@ def format_mib_from_report(item):
         if payload_bytes is not None:
             mib = payload_bytes / (1024.0 * 1024.0)
     if mib is None:
-        return "n/a"
+        return "N/A"
     return "{:.2f}MiB".format(mib)
 
 
@@ -124,6 +139,91 @@ def short_reason(value, max_len=120):
     if len(text) <= int(max_len):
         return text
     return text[: max(0, int(max_len) - 3)].rstrip() + "..."
+
+
+def raw_payload_bytes_from_report(report):
+    payload = as_dict(report)
+    methods = as_dict(payload.get("methods"))
+    raw_method = as_dict(methods.get(RAW_METHOD_KEY))
+    candidates = [
+        raw_method.get("payload_bytes"),
+        payload.get("raw_frame_bytes"),
+        payload.get("raw_payload_bytes"),
+    ]
+    legacy_method = as_dict(methods.get(LEGACY_RAW_METHOD_KEY))
+    for value in candidates:
+        parsed = safe_int(value)
+        if parsed is not None:
+            return int(parsed)
+    legacy_payload = safe_float(legacy_method.get("payload_bytes"))
+    legacy_reduction_vs_raw = safe_float(legacy_method.get("reduction_pct_vs_raw_frames"))
+    if legacy_payload is not None and legacy_reduction_vs_raw is not None:
+        denominator = 1.0 - (float(legacy_reduction_vs_raw) / 100.0)
+        if denominator > 0.0:
+            return int(round(float(legacy_payload) / denominator))
+    legacy_payload_int = safe_int(legacy_method.get("payload_bytes"))
+    if legacy_payload_int is not None:
+        return int(legacy_payload_int)
+    return None
+
+
+def _legacy_zip_method_as_raw(report):
+    payload = as_dict(report)
+    legacy = dict(as_dict(as_dict(payload.get("methods")).get(LEGACY_RAW_METHOD_KEY)))
+    if not legacy:
+        return {}
+    raw_payload_bytes = raw_payload_bytes_from_report(payload)
+    legacy["legacy_method_key"] = LEGACY_RAW_METHOD_KEY
+    legacy["method_key"] = RAW_METHOD_KEY
+    legacy["display_name"] = DISPLAY_NAMES[RAW_METHOD_KEY]
+    legacy["trajectory_role"] = TRAJECTORY_ROLES[RAW_METHOD_KEY]
+    legacy["encoded_artifact_path"] = None
+    legacy["enc_time_sec"] = None
+    legacy["codec_wall_time_sec"] = None
+    legacy["time_semantics"] = "legacy zip method row read as Raw direct baseline; official Raw has no encoder-side construction time"
+    legacy["note"] = "legacy zip row interpreted as Raw for backward compatibility"
+    if raw_payload_bytes is not None:
+        legacy["payload_bytes"] = int(raw_payload_bytes)
+        legacy["payload_mib"] = bytes_to_mib(raw_payload_bytes)
+    legacy["reduction_pct"] = 0.0
+    legacy["reduction_pct_vs_raw_frames"] = 0.0
+    legacy["reduction_pct_vs_zip"] = 0.0
+    return legacy
+
+
+def resolve_method_report(report, method_key):
+    payload = as_dict(report)
+    methods = as_dict(payload.get("methods"))
+    key = str(method_key)
+    if key == RAW_METHOD_KEY:
+        raw_method = as_dict(methods.get(RAW_METHOD_KEY))
+        if raw_method:
+            return raw_method
+        return _legacy_zip_method_as_raw(payload)
+    return as_dict(methods.get(key))
+
+
+def benchmark_method_order(report):
+    payload = as_dict(report)
+    methods = as_dict(payload.get("methods"))
+    raw_available = bool(as_dict(methods.get(RAW_METHOD_KEY)))
+    legacy_raw_available = bool(as_dict(methods.get(LEGACY_RAW_METHOD_KEY)))
+    source_order = list(payload.get("methods_order") or METHOD_ORDER)
+    if not source_order:
+        source_order = list(METHOD_ORDER)
+    result = []
+    for raw_key in source_order:
+        key = str(raw_key)
+        if key == LEGACY_RAW_METHOD_KEY and not raw_available and legacy_raw_available:
+            key = RAW_METHOD_KEY
+        if key == LEGACY_RAW_METHOD_KEY:
+            continue
+        if key not in result:
+            result.append(key)
+    for key in METHOD_ORDER:
+        if key not in result:
+            result.append(key)
+    return result
 
 
 def canonical_method_report(
@@ -149,6 +249,7 @@ def canonical_method_report(
     extra=None,
 ):
     method = str(method_key)
+    reduction = reduction_pct(raw_reference_bytes, payload_bytes)
     report = {
         "method_key": method,
         "display_name": str(display_name or DISPLAY_NAMES.get(method, method)),
@@ -156,8 +257,9 @@ def canonical_method_report(
         "error_message": str(error_message or ""),
         "payload_bytes": int(payload_bytes) if payload_bytes is not None else None,
         "payload_mib": bytes_to_mib(payload_bytes) if payload_bytes is not None else None,
-        "reduction_pct_vs_zip": reduction_pct(zip_reference_bytes, payload_bytes),
-        "reduction_pct_vs_raw_frames": reduction_pct(raw_reference_bytes, payload_bytes),
+        "reduction_pct": reduction,
+        "reduction_pct_vs_raw_frames": reduction,
+        "reduction_pct_vs_zip": reduction,
         "enc_time_sec": float(enc_time_sec) if enc_time_sec is not None else None,
         "decode_time_sec": float(decode_time_sec) if decode_time_sec is not None else None,
         "codec_wall_time_sec": float(codec_wall_time_sec) if codec_wall_time_sec is not None else None,
@@ -177,17 +279,16 @@ def canonical_method_report(
 
 
 def method_summary_lines(report):
-    methods = as_dict(as_dict(report).get("methods"))
     lines = []
-    for method_key in METHOD_ORDER:
-        item = as_dict(methods.get(method_key))
+    for method_key in benchmark_method_order(report):
+        item = resolve_method_report(report, method_key)
         display_name = str(item.get("display_name") or DISPLAY_NAMES.get(method_key, method_key))
         status = str(item.get("status") or ("missing" if not item else "n/a"))
         line = "  - {}: status={} payload={} enc={} dec={}".format(
             display_name,
             status,
             format_mib_from_report(item),
-            format_seconds(item.get("enc_time_sec")),
+            format_seconds(method_enc_time_sec(item)),
             format_seconds(item.get("decode_time_sec")),
         )
         if status in ("missing", "skipped", "failed"):

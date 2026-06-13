@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
 import time
-import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -87,12 +87,12 @@ class CompressionBenchmark:
         return float(parsed)
 
     @property
-    def zip_dir(self):
-        return self.output_dir / "zip"
+    def raw_dir(self):
+        return self.output_dir / "raw"
 
     @property
-    def raw_zip_path(self):
-        return self.zip_dir / "raw_images.zip"
+    def raw_frames_dir(self):
+        return self.raw_dir / "frames"
 
     @property
     def h265_dir(self):
@@ -125,20 +125,82 @@ class CompressionBenchmark:
             raise RuntimeError("compression benchmark requires at least one prepared frame: {}".format(frame_dir))
         return frames
 
-    def _write_raw_zip(self, frames):
-        self.zip_dir.mkdir(parents=True, exist_ok=True)
+    def _remove_output_child_dir(self, name):
+        output_root = self.output_dir.resolve()
+        target = (self.output_dir / str(name)).resolve()
+        if target.parent != output_root or target.name != str(name):
+            log_warn("stale compression benchmark cleanup ignored unsafe path: {}".format(target))
+            return
+        if not target.exists() and not target.is_symlink():
+            return
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(str(target))
+        else:
+            log_warn("stale compression benchmark cleanup ignored non-file directory entry: {}".format(target))
+            return
+        log_info("removed stale compression benchmark artifact: {}".format(relative_path(self.exp_dir, target)))
+
+    def _cleanup_stale_raw_artifacts(self):
+        for name in ["zip", "raw_zip_artifact", "raw"]:
+            self._remove_output_child_dir(name)
+
+    @staticmethod
+    def _ensure_unique_frame_names(frames):
         seen_names = set()
-        tmp_path = self.raw_zip_path.with_name(self.raw_zip_path.name + ".tmp")
-        with zipfile.ZipFile(str(tmp_path), "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for frame in list(frames):
-                path = Path(frame).resolve()
-                name = path.name
-                if name in seen_names:
-                    raise RuntimeError("duplicate frame basename for raw zip: {}".format(name))
-                seen_names.add(name)
-                zf.write(str(path), name)
-        tmp_path.replace(self.raw_zip_path)
-        return self.raw_zip_path
+        for frame in list(frames or []):
+            name = Path(frame).name
+            if name in seen_names:
+                raise RuntimeError("duplicate frame basename for raw frames: {}".format(name))
+            seen_names.add(name)
+
+    def _materialize_raw_frames_with_strategy(self, frames, strategy):
+        self.raw_frames_dir.mkdir(parents=True, exist_ok=True)
+        for frame in list(frames or []):
+            source = Path(frame).resolve()
+            target = self.raw_frames_dir / source.name
+            if strategy == "hardlink":
+                os.link(str(source), str(target))
+            elif strategy == "symlink":
+                link_target = os.path.relpath(str(source), start=str(target.parent.resolve()))
+                os.symlink(link_target, str(target))
+            elif strategy == "copy":
+                shutil.copy2(str(source), str(target), follow_symlinks=True)
+            else:
+                raise RuntimeError("unknown raw frame materialization strategy: {}".format(strategy))
+            if not target.is_file():
+                raise RuntimeError("raw frame materialization did not create a readable file: {}".format(target))
+
+    def _validate_raw_frames_dir(self, frames):
+        for frame in list(frames or []):
+            source = Path(frame).resolve()
+            target = self.raw_frames_dir / source.name
+            if not target.is_file():
+                raise RuntimeError("raw frames artifact missing frame: {}".format(target))
+            if int(target.stat().st_size) != int(source.stat().st_size):
+                raise RuntimeError(
+                    "raw frames artifact size mismatch for {}: materialized={} source={}".format(
+                        target,
+                        int(target.stat().st_size),
+                        int(source.stat().st_size),
+                    )
+                )
+
+    def _materialize_raw_frames(self, frames):
+        ordered_frames = [Path(frame).resolve() for frame in list(frames or [])]
+        self._ensure_unique_frame_names(ordered_frames)
+        last_error = None
+        for strategy in ["hardlink", "symlink", "copy"]:
+            self._remove_output_child_dir("raw")
+            try:
+                self._materialize_raw_frames_with_strategy(ordered_frames, strategy)
+                self._validate_raw_frames_dir(ordered_frames)
+                return self.raw_frames_dir, strategy
+            except Exception as exc:
+                last_error = exc
+                self._remove_output_child_dir("raw")
+        raise RuntimeError("failed to materialize raw frames: {}".format(last_error))
 
     def _write_hvm_payload_zip(self):
         if self.hvm_payload_dir is None:
@@ -231,8 +293,6 @@ class CompressionBenchmark:
             "bitrate": str(self.bitrate),
             "raw_frame_bytes": int(raw_frame_bytes),
             "raw_frame_mib": bytes_to_mib(raw_frame_bytes),
-            "reference_zip_path": relative_path(self.exp_dir, self.raw_zip_path),
-            "reference_zip_bytes": file_size(self.raw_zip_path),
             "methods_order": list(METHOD_ORDER),
             "methods": {str(item.get("method_key")): dict(item) for item in list(method_reports or [])},
         }
@@ -241,13 +301,19 @@ class CompressionBenchmark:
 
     def run(self):
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._cleanup_stale_raw_artifacts()
         frames = self.collect_frames()
         raw_frame_bytes = sum_file_sizes(frames)
+        if raw_frame_bytes <= 0:
+            raise RuntimeError("compression benchmark selected frames have zero total byte size: {}".format(self.frames_dir))
 
-        started = time.perf_counter()
-        self._write_raw_zip(frames)
-        raw_zip_sec = float(time.perf_counter() - started)
-        raw_zip_bytes = file_size(self.raw_zip_path)
+        raw_frames_dir, raw_frame_strategy = self._materialize_raw_frames(frames)
+        log_info(
+            "[Compression Benchmark: encode] Raw direct frames: {} strategy={}".format(
+                relative_path(self.exp_dir, raw_frames_dir),
+                str(raw_frame_strategy),
+            )
+        )
 
         concat_file = None
         try:
@@ -278,23 +344,30 @@ class CompressionBenchmark:
         hvm_payload_bytes = file_size(hvm_payload_zip)
         hvm_payload_frames = list_frames_sorted(self.hvm_payload_dir / "frames") if self.hvm_payload_dir is not None else []
 
-        zip_report = canonical_method_report(
+        raw_report = canonical_method_report(
             exp_dir=self.exp_dir,
-            method_key="zip",
-            display_name="ZIP/ORI",
+            method_key="raw",
+            display_name="Raw",
             status="ok",
             source_frames_dir=self.frames_dir,
-            encoded_artifact_path=self.raw_zip_path,
-            payload_bytes=raw_zip_bytes,
+            encoded_artifact_path=None,
+            encoded_artifact_dir=raw_frames_dir,
+            payload_bytes=raw_frame_bytes,
             raw_reference_bytes=raw_frame_bytes,
-            zip_reference_bytes=raw_zip_bytes,
-            enc_time_sec=raw_zip_sec,
+            zip_reference_bytes=None,
+            enc_time_sec=None,
             decode_time_sec=None,
-            codec_wall_time_sec=raw_zip_sec,
-            time_semantics="zip_archive_wall_time",
+            codec_wall_time_sec=None,
+            time_semantics="direct_original_frame_transmission_no_encoder",
             frame_count=len(frames),
             fps=self.fps,
-            extra={"transmitted_frame_count": int(len(frames))},
+            extra={
+                "transmitted_frame_count": int(len(frames)),
+                "raw_frame_materialize_strategy": str(raw_frame_strategy),
+                "raw_frame_count": int(len(frames)),
+                "raw_frame_payload_bytes": int(raw_frame_bytes),
+                "note": "direct original-frame transmission; no encoder-side construction time",
+            },
         )
         h265_report = canonical_method_report(
             exp_dir=self.exp_dir,
@@ -305,7 +378,7 @@ class CompressionBenchmark:
             encoded_artifact_path=self.h265_path,
             payload_bytes=file_size(self.h265_path),
             raw_reference_bytes=raw_frame_bytes,
-            zip_reference_bytes=raw_zip_bytes,
+            zip_reference_bytes=None,
             enc_time_sec=h265_sec,
             decode_time_sec=None,
             codec_wall_time_sec=h265_sec,
@@ -322,7 +395,7 @@ class CompressionBenchmark:
             exp_dir=self.exp_dir,
             fps=self.fps,
             raw_reference_bytes=raw_frame_bytes,
-            zip_reference_bytes=raw_zip_bytes,
+            zip_reference_bytes=None,
             save_decoded_frame=False,
         ).run()
         vlmem_report = canonical_method_report(
@@ -335,7 +408,7 @@ class CompressionBenchmark:
             encoded_artifact_dir=self.vlmem_dir,
             payload_bytes=hvm_payload_bytes,
             raw_reference_bytes=raw_frame_bytes,
-            zip_reference_bytes=raw_zip_bytes,
+            zip_reference_bytes=None,
             enc_time_sec=self.hvm_algorithmic_time,
             decode_time_sec=None,
             codec_wall_time_sec=hvm_wall_with_archive_sec,
@@ -350,12 +423,11 @@ class CompressionBenchmark:
         report = self._write_report(
             frames=frames,
             raw_frame_bytes=raw_frame_bytes,
-            method_reports=[zip_report, h265_report, dcvc_report, vlmem_report],
+            method_reports=[raw_report, h265_report, dcvc_report, vlmem_report],
         )
 
         log_info(
-            "[Compression Benchmark: encode] Time Stats -> ZIP: {:.2f}s | H.265 encode: {:.2f}s | VLMem payload: {:.2f}s".format(
-                float(raw_zip_sec),
+            "[Compression Benchmark: encode] Time Stats -> Raw: N/A | H.265 encode: {:.2f}s | VLMem payload: {:.2f}s".format(
                 float(h265_sec),
                 float(self.hvm_algorithmic_time),
             )
@@ -370,14 +442,14 @@ class CompressionBenchmark:
             "output_dir": self.output_dir,
             "benchmark_report": self.benchmark_report_path,
             "benchmark": report,
-            "raw_zip": self.raw_zip_path,
+            "raw_frames": raw_frames_dir,
+            "raw_frame_materialize_strategy": str(raw_frame_strategy),
             "h265_video": self.h265_path,
             "hvm_payload_zip": hvm_payload_zip,
             "vlmem_payload_zip": hvm_payload_zip,
             "frame_count": int(len(frames)),
             "fps": int(self.fps),
             "bitrate": str(self.bitrate),
-            "raw_zip_sec": float(raw_zip_sec),
             "h265_sec": float(h265_sec),
             "hvm_algorithmic_sec": float(self.hvm_algorithmic_time),
             "vlmem_algorithmic_sec": float(self.hvm_algorithmic_time),

@@ -193,16 +193,16 @@ def _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_h
         exphub_root=runtime.exphub_root,
         exp_dir=paths.exp_dir,
     ).run()
-    ensure_file(benchmark_report["raw_zip"], "compression benchmark raw zip")
+    ensure_dir(benchmark_report["raw_frames"], "compression benchmark Raw frames")
     ensure_file(benchmark_report["h265_video"], "compression benchmark H.265 video")
     ensure_file(benchmark_report["hvm_payload_zip"], "compression benchmark Ours payload zip")
     ensure_file(benchmark_report["benchmark_report"], "compression benchmark report")
     log_info(
-        "compression benchmark encode stage done: frames={} fps={} bitrate={} zip={} h265={} vlmem={}".format(
+        "compression benchmark encode stage done: frames={} fps={} bitrate={} raw_frames={} h265={} vlmem={}".format(
             int(benchmark_report.get("frame_count", 0) or 0),
             int(benchmark_report.get("fps", 0) or 0),
             str(benchmark_report.get("bitrate", "")),
-            _relative_to_exp(runtime, benchmark_report["raw_zip"]),
+            _relative_to_exp(runtime, benchmark_report["raw_frames"]),
             _relative_to_exp(runtime, benchmark_report["h265_video"]),
             _relative_to_exp(runtime, benchmark_report["hvm_payload_zip"]),
         )
