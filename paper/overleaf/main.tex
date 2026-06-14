@@ -76,7 +76,7 @@ Edge--cloud Visual Simultaneous Localization and Mapping (VSLAM) can exploit clo
 
 % -------------------- Keywords --------------------
 \begin{IEEEkeywords}
-VSLAM, edge--cloud computing, visual transmission, image compression, world models, vision--language models.
+VSLAM, edge--cloud computing, visual transmission, image compression, world models, VLMs.
 \end{IEEEkeywords}
 
 \IEEEpeerreviewmaketitle
@@ -569,11 +569,11 @@ Fig.~\ref{fig:lora_qualitative} provides qualitative evidence for this behavior.
 \footnotesize
 \begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}}lcccc@{}}
 \toprule
-Data & WM Only & MGDR-NCD & MGDR-TUM & MGDR-GDUT \\
+Data & WM Only & MGDR-GDUT & MGDR-NCD & MGDR-TUM \\
 \midrule
-GDUT & 0.183 & 0.195 {\scriptsize(+0.012)} & \textbf{0.077 {\scriptsize(-0.106)}} & \textbf{0.077 {\scriptsize(-0.106)}} \\
-NCD & 0.071 & 0.081 {\scriptsize(+0.010)} & 0.102 {\scriptsize(+0.031)} & \textbf{0.059 {\scriptsize(-0.012)}} \\
-TUM & 0.331 & \textbf{0.246 {\scriptsize(-0.085)}} & \textbf{0.049 {\scriptsize(-0.282)}} & \textbf{0.275 {\scriptsize(-0.056)}} \\
+GDUT & 0.183 & \textbf{0.077 {\scriptsize(-0.106)}} & 0.195 {\scriptsize(+0.012)} & \textbf{0.077 {\scriptsize(-0.106)}} \\
+NCD & 0.071 & \textbf{0.059 {\scriptsize(-0.012)}} & 0.081 {\scriptsize(+0.010)} & 0.102 {\scriptsize(+0.031)} \\
+TUM & 0.331 & \textbf{0.275 {\scriptsize(-0.056)}} & \textbf{0.246 {\scriptsize(-0.085)}} & \textbf{0.049 {\scriptsize(-0.282)}} \\
 \bottomrule
 \end{tabular*}
 \endgroup
@@ -581,11 +581,11 @@ TUM & 0.331 & \textbf{0.246 {\scriptsize(-0.085)}} & \textbf{0.049 {\scriptsize(
 \vspace{1mm}
 \begin{minipage}{\columnwidth}
 \footnotesize
-Values are REC APE RMSE in meters; parentheses show changes relative to WM Only. MGDR-NCD, MGDR-TUM, and MGDR-GDUT denote MGDR variants trained from different source domains. Bold values indicate lower REC APE than the WM-only baseline for the same target domain. This diagnostic analysis uses representative 10-second clips and does not replace the in-domain ablation in Table~\ref{tab:lora_ablation}.
+Values are REC APE RMSE in meters; parentheses show changes relative to WM Only. MGDR-GDUT, MGDR-NCD, and MGDR-TUM denote MGDR variants trained from different source domains. Bold values indicate lower REC APE than the WM-only baseline for the same target domain. This diagnostic analysis uses representative 10-second clips and does not replace the in-domain ablation in Table~\ref{tab:lora_ablation}.
 \end{minipage}
 \end{table}
 
-To further examine the cross-domain behavior of MGDR, we conduct a preliminary transfer analysis on representative 10-second clips from GDUT, NCD, and TUM. For each target domain, the VLMem encoding, visual anchors, language cues, random seed, and decoder settings are kept unchanged, while only the MGDR source domain is switched. Table~\ref{tab:mgdr_cross_domain} reports the resulting REC APE RMSE. The results show that MGDR can provide transferable gains for several source--target pairs. For example, TUM-trained and GDUT-trained MGDR both reduce the GDUT APE from 0.183m to 0.077m, GDUT-trained MGDR reduces the NCD APE from 0.071m to 0.059m, and all three MGDR variants improve the TUM clip over the WM-only baseline. However, the gains are not uniform: NCD-trained MGDR slightly degrades the GDUT result, and NCD- and TUM-trained MGDR degrade the NCD result. These observations suggest that MGDR does not simply learn a universally beneficial refinement prior. Instead, its effect depends on the compatibility between the refinement source domain and the target scene, and negative transfer can occur.
+To further examine the cross-domain behavior of MGDR, we conduct a preliminary transfer analysis on representative 10-second clips from GDUT, NCD, and TUM. For each target domain, the VLMem encoding, visual anchors, language cues, random seed, and decoder settings are kept unchanged, while only the MGDR source domain is switched. Table~\ref{tab:mgdr_cross_domain} reports the resulting REC APE RMSE. The results show that MGDR can provide transferable gains for several source--target pairs. For example, TUM-trained and GDUT-trained MGDR both reduce the GDUT APE from 0.183m to 0.077m, GDUT-trained MGDR reduces the NCD APE from 0.071m to 0.059m, and all three MGDR variants improve the TUM clip over the WM-only baseline. However, the gains are not uniform: NCD-trained MGDR slightly degrades the GDUT result, and NCD- and TUM-trained MGDR degrade the NCD result. This phenomenon may be related to the relatively large domain differences among GDUT, NCD, and TUM, because source-domain MGDR may introduce appearance, motion, or layout biases that affect target-domain visual cues important for VSLAM tracking. These observations suggest that MGDR does not simply learn a universally beneficial refinement prior; its effect depends on source--target compatibility, and negative transfer can occur.
 % !TEX root = ../main.tex
 
 % ==================================================
