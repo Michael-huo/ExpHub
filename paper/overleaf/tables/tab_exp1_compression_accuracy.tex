@@ -8,7 +8,7 @@
 \setlength{\tabcolsep}{2pt}
 \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}cc*{8}{c}@{}}
 \toprule
-\multirow{2}{*}{Dataset} & \multirow{2}{*}{Seq.} & \multirow{2}{*}{$L_{\mathrm{GT}}$ (m)} & \multicolumn{3}{c}{Payload} & \multicolumn{3}{c}{APE RMSE} & \multirow{2}{*}{$|\Delta|/L_{\mathrm{GT}}$ (\%)} \\
+\multirow{2}{*}{Data} & \multirow{2}{*}{Seq.} & \multirow{2}{*}{Path (m)} & \multicolumn{3}{c}{Payload} & \multicolumn{3}{c}{APE RMSE} & \multirow{2}{*}{$|\Delta|/L_{\mathrm{GT}}$ (\%)} \\
 \cmidrule(lr){4-6}\cmidrule(lr){7-9}
  & & & Raw (MiB) & VLMem (MiB) & Red. (\%) & ORI (m) & REC (m) & $\Delta$ (m) & \\
 \midrule
@@ -31,5 +31,5 @@ Overall & Avg. & 32.45 & 403.42 & \textbf{11.06} & \textbf{96.8} & 0.698 & 0.735
 \bottomrule
 \end{tabular*}%
 \par\vspace{2pt}
-\parbox{\textwidth}{\emph{Note:} $L_{\mathrm{GT}}$ is the GT path length. ORI and REC denote VSLAM results from original and reconstructed frames, respectively. $\Delta\mathrm{APE}=\mathrm{APE}_{\mathrm{REC}}-\mathrm{APE}_{\mathrm{ORI}}$ is signed, and $|\Delta|/L_{\mathrm{GT}}$ is a path-normalized deviation. Average rows are arithmetic means over sequence rows; normalized averages are computed from sequence-wise normalized deviations. Bold values in the VLMem and reduction columns highlight the compact transmitted payload and the corresponding transmission reduction. Bold REC APE values indicate cases where the reconstructed sequence obtains lower aligned APE RMSE than the original sequence. Negative $\Delta$APE indicates lower aligned REC APE RMSE, not physically superior reconstructed observations.}
+\parbox{\textwidth}{\emph{Note:} Path denotes the GT path length $L_{\mathrm{GT}}$. ORI and REC denote VSLAM results from original and reconstructed frames, respectively. $\Delta\mathrm{APE}=\mathrm{APE}_{\mathrm{REC}}-\mathrm{APE}_{\mathrm{ORI}}$ is signed, and $|\Delta|/L_{\mathrm{GT}}$ is a path-normalized deviation. Average rows are arithmetic means over sequence rows; normalized averages are computed from sequence-wise normalized deviations. Bold values in the VLMem and reduction columns highlight the compact transmitted payload and the corresponding transmission reduction. Bold REC APE values indicate cases where the reconstructed sequence obtains lower aligned APE RMSE than the original sequence. Negative $\Delta$APE indicates lower aligned REC APE RMSE, not physically superior reconstructed observations.}
 \end{table*}
