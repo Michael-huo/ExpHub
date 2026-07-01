@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from exphub.common.io import remove_path, write_json_atomic, write_text_atomic
-from exphub.common.logging import log_info, log_warn
+from exphub.common.logging import log_info
 from exphub.common.subprocess import RunError, run_cmd
 from exphub.config import ConfigError, get_phase_python_config, get_platform_config
 
@@ -47,10 +47,7 @@ def _lora_profiles_path(runtime) -> Path:
     return runtime.exphub_root / "config" / "lora_profiles.json"
 
 
-def _profile_name(runtime, profiles_cfg: Dict[str, object]) -> str:
-    requested = str(getattr(runtime.args, "lora_profile", "") or "").strip()
-    if requested:
-        return requested
+def _profile_name(profiles_cfg: Dict[str, object]) -> str:
     default_profile = str(profiles_cfg.get("default_profile", "") or "").strip()
     if not default_profile:
         raise ConfigError("config/lora_profiles.json missing default_profile")
@@ -63,20 +60,11 @@ def _load_profile(runtime) -> Tuple[str, Dict[str, object]]:
     profiles = profiles_cfg.get("profiles")
     if not isinstance(profiles, dict):
         raise ConfigError("config/lora_profiles.json missing profiles object")
-    name = _profile_name(runtime, profiles_cfg)
+    name = _profile_name(profiles_cfg)
     raw_profile = profiles.get(name)
     if not isinstance(raw_profile, dict):
         raise ConfigError("LoRA profile not found: {}".format(name))
     profile = dict(raw_profile)
-    gpus = str(getattr(runtime.args, "lora_gpus", "") or "").strip()
-    if gpus:
-        profile["cuda_visible_devices"] = gpus
-    epochs = getattr(runtime.args, "lora_epochs", None)
-    if epochs is not None:
-        profile["num_train_epochs"] = int(epochs)
-    resume = str(getattr(runtime.args, "lora_resume", "none") or "none").strip().lower()
-    if resume != "none":
-        raise RuntimeError("resume={} is not implemented yet".format(resume))
     return name, profile
 
 
@@ -306,27 +294,8 @@ def _write_result(
     return payload
 
 
-def _stop_comfyui_pool(runtime) -> None:
-    script = runtime.exphub_root / "exphub" / "comfyui_pool.sh"
-    if not script.is_file():
-        return
-    try:
-        proc = subprocess.run(
-            ["bash", str(script), "stop"],
-            cwd=str(runtime.exphub_root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=60,
-        )
-        if proc.returncode != 0:
-            log_warn("comfyui pool stop failed rc={}: {}".format(proc.returncode, (proc.stdout or "").strip()))
-    except Exception as exc:
-        log_warn("comfyui pool stop failed: {}".format(exc))
-
-
 def run(runtime):
-    mode = str(runtime.args.mode or "").strip().lower()
+    mode = str(runtime.execution_plan.mode or "").strip().lower()
     if mode != "train":
         raise RuntimeError("lora stage is only supported in train mode")
 
@@ -356,11 +325,6 @@ def run(runtime):
     resolved_config = {
         "profile": profile_name,
         "profile_config": profile,
-        "overrides": {
-            "lora_gpus": str(getattr(runtime.args, "lora_gpus", "") or ""),
-            "lora_epochs": getattr(runtime.args, "lora_epochs", None),
-            "lora_resume": str(getattr(runtime.args, "lora_resume", "none") or "none"),
-        },
         "videox_fun_repo": str(repo),
         "python": str(python_path),
         "launcher": list(launcher),
@@ -372,8 +336,6 @@ def run(runtime):
     write_text_atomic(runtime.paths.lora_command_path, _command_script(argv, repo, env))
     os.chmod(str(runtime.paths.lora_command_path), 0o755)
 
-    runtime.write_meta_snapshot()
-    _stop_comfyui_pool(runtime)
     log_info("lora training start profile={} repo={}".format(profile_name, repo))
 
     started = time.time()
@@ -385,7 +347,7 @@ def run(runtime):
             env=os.environ.copy(),
             check=False,
             log_path=runtime.paths.lora_log_path,
-            log_level=getattr(runtime.args, "log_level", "info"),
+            log_level=runtime.config.log_level,
             fail_tail_lines=30,
             display_phase_name="lora",
             stream_mode="tee",

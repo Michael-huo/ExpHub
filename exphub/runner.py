@@ -1,25 +1,36 @@
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
 
-from exphub.cleanup import apply_keep_level
-from exphub.common.io import read_json_dict, remove_path, write_json_atomic
-from exphub.common.logging import log_info, log_step, log_warn, runtime_info
+from exphub.common.io import remove_path
+from exphub.common.logging import log_step, log_warn, runtime_info
 from exphub.common.paths import ExperimentPaths
-from exphub.common.subprocess import RunError, RunnerConfig, StepRunner, detect_conda_base, resolve_phase_python
-from exphub.config import get_phase_python_config, load_datasets_cfg, resolve_dataset
-from exphub.meta import ExperimentSpec, STAGE_ORDER
+from exphub.common.subprocess import RunError, StepRunner
+from exphub.execution_plan import ExecutionPlan
+from exphub.meta import ExperimentSpec
 
-from .decode.comfyui_client import COMFYUI_BACKEND
 from .decode import decode as decode_pipeline
 from .encode import encode as encode_pipeline
 from .eval import eval as eval_pipeline
 from .lora import lora as lora_pipeline
 from .prepare import prepare as prepare_pipeline
+from .provenance import update_run_status, write_run_start
+
+
+@dataclass(frozen=True)
+class RunConfig:
+    dataset: str
+    sequence: str
+    tag: str
+    fps: int
+    start: str
+    dur: str
+    seed: int
+    decode_profile: str
+    log_level: str
 
 
 @dataclass
@@ -27,79 +38,39 @@ class OrchestrationResult:
     mode: str
     exp_dir: Path
     step_times: Dict[str, float]
+    experiment_times: Dict[str, float]
     result_root: Path
+    main_pipeline_wall_time_s: Optional[float] = None
+    selected_stages_wall_time_s: Optional[float] = None
+    optional_total_time_s: Optional[float] = None
+    full_command_wall_time_s: Optional[float] = None
 
 
 @dataclass
 class PipelineRuntime:
-    args: object
+    config: RunConfig
+    execution_plan: ExecutionPlan
     spec: ExperimentSpec
     paths: ExperimentPaths
     cfg_path: Path
-    runner_cfg: RunnerConfig
     step_runner: StepRunner
-    viz_enable: bool
+    command_argv: tuple[str, ...] = ()
     step_times: Dict[str, float] = field(default_factory=dict)
-    _dataset_resolved: Optional[object] = None
-    _phase_python_cache: Dict[str, str] = field(default_factory=dict)
-    _prepare_result_cache: Optional[Dict[str, object]] = None
 
     @property
     def exphub_root(self) -> Path:
         return self.spec.exphub_root
 
     @property
+    def mode(self) -> str:
+        return self.execution_plan.mode
+
+    @property
     def fps_arg(self) -> str:
         return self.spec.fps_text
 
-    @property
-    def start_arg(self) -> str:
-        return str(self.spec.start)
-
-    def dataset(self):
-        if self._dataset_resolved is None:
-            cfg = load_datasets_cfg(self.cfg_path)
-            self._dataset_resolved = resolve_dataset(
-                cfg,
-                self.exphub_root,
-                self.spec.dataset,
-                self.spec.sequence,
-            )
-            if not self._dataset_resolved.bag.exists():
-                raise RuntimeError("bag not found: {}".format(self._dataset_resolved.bag))
-        return self._dataset_resolved
-
-    def phase_python(self, phase_name: str) -> str:
-        phase_key = str(phase_name)
-        if phase_key not in self._phase_python_cache:
-            self._phase_python_cache[phase_key] = resolve_phase_python(phase_key)
-        return self._phase_python_cache[phase_key]
-
     def ensure_clean_exp_dir(self) -> None:
-        if str(self.args.mode or "").strip().lower() == "train" and self.paths.exp_dir.exists():
-            existing_meta = read_json_dict(self.paths.run_meta_path)
-            existing_scope = str(existing_meta.get("scope", "") or "").strip()
-            if existing_scope and existing_scope != str(self.paths.scope):
-                raise RuntimeError(
-                    "refusing to overwrite train run with mismatched scope: existing={} requested={} dir={}".format(
-                        existing_scope,
-                        self.paths.scope,
-                        self.paths.exp_dir,
-                    )
-                )
-        if self.paths.exp_dir.exists():
-            remove_path(self.paths.exp_dir)
         self.paths.exp_dir.mkdir(parents=True, exist_ok=True)
-
-    def prepare_result(self) -> Dict[str, object]:
-        if self._prepare_result_cache is None:
-            if not self.paths.prepare_result_path.is_file():
-                raise RuntimeError("prepare_result.json not found: {}".format(self.paths.prepare_result_path))
-            payload = read_json_dict(self.paths.prepare_result_path)
-            if not payload:
-                raise RuntimeError("invalid prepare_result.json: {}".format(self.paths.prepare_result_path))
-            self._prepare_result_cache = payload
-        return dict(self._prepare_result_cache)
 
     def assert_under_exp(self, path) -> None:
         base = self.paths.exp_dir.resolve()
@@ -112,114 +83,6 @@ class PipelineRuntime:
     def remove_in_exp(self, path) -> None:
         self.assert_under_exp(path)
         remove_path(path)
-
-    def write_meta_snapshot(self) -> None:
-        mode = str(self.args.mode or "").strip().lower()
-        train_mode = mode == "train"
-        prepare_result_path = self.paths.prepare_result_path
-        prepare_result = read_json_dict(prepare_result_path) if (not train_mode and prepare_result_path.is_file()) else {}
-        prepare_index = read_json_dict(self.paths.prepare_dataset_index_path) if train_mode else {}
-        trainset_stats = read_json_dict(self.paths.trainset_stats_path) if train_mode else {}
-        workflow = "prepare -> encode -> lora" if train_mode else "prepare -> encode -> decode -> eval"
-        sequence_count = None
-        if train_mode:
-            if prepare_index:
-                sequence_count = int(prepare_index.get("sequence_count", 0) or 0)
-            elif trainset_stats:
-                sequence_count = int(trainset_stats.get("sequence_count", 0) or 0)
-            elif str(self.spec.sequence or "").strip():
-                sequence_count = 1
-        prepare_meta = {}
-        if train_mode:
-            prepare_sequences = list(prepare_index.get("sequences") or []) if prepare_index else []
-            resolutions = []
-            for item in prepare_sequences:
-                resolution = item.get("normalized_resolution")
-                if isinstance(resolution, dict) and resolution not in resolutions:
-                    resolutions.append(dict(resolution))
-            prepare_meta = {
-                "sequence_count": sequence_count,
-                "total_frames": prepare_index.get("total_frames") if prepare_index else None,
-                "normalized_resolution": resolutions[0] if len(resolutions) == 1 else None,
-                "normalized_resolutions": resolutions,
-                "dataset_prepare_index": str(self.paths.prepare_dataset_index_path),
-            }
-        else:
-            prepare_meta = {
-                "num_frames": prepare_result.get("num_frames"),
-                "normalized_resolution": prepare_result.get("normalized_resolution"),
-                "normalized_intrinsics": prepare_result.get("normalized_intrinsics"),
-                "legal_grid": prepare_result.get("legal_grid"),
-            }
-        meta = {
-            "mode": str(self.args.mode),
-            "scope": str(self.paths.scope),
-            "step": str(self.args.step),
-            "dataset": self.spec.dataset,
-            "sequence": self.spec.sequence if str(self.spec.sequence or "").strip() else "",
-            "sequence_count": sequence_count,
-            "tag": self.spec.tag,
-            "fps": self.spec.fps,
-            "dur": self.spec.dur,
-            "start": self.spec.start,
-            "run_id": self.spec.exp_name,
-            "artifact_root": str(self.paths.exp_dir),
-            "workflow": workflow,
-            "prepare_result_path": str(prepare_result_path) if not train_mode else "",
-            "params": {
-                "fps": self.spec.fps,
-                "dur": self.spec.dur,
-                "start": self.spec.start,
-                "kf_gap": self.spec.kf_gap,
-                "segment_policy": self.args.segment_policy,
-                "train_clip_num_frames": self.args.train_clip_num_frames,
-                "train_clip_stride": self.args.train_clip_stride,
-                "seed_base": self.args.seed_base,
-                "gpus": self.args.gpus,
-                "planner": "generation_units",
-                "prompt_profile": "base_motion_prompt",
-                "anchor_backend": "image_embedding_visual_anchor",
-                "encode_motion_benchmark": bool(getattr(self.args, "encode_motion_benchmark", False)),
-                "compression_benchmark": bool(getattr(self.args, "compression_benchmark", False)),
-                "video_bitrate": str(getattr(self.args, "video_bitrate", "10M") or "10M"),
-                "decode_image_quality": bool(getattr(self.args, "decode_image_quality", False)),
-                "decode_image_quality_stride": int(getattr(self.args, "decode_image_quality_stride", 1)),
-                "decode_image_quality_max_frames": int(getattr(self.args, "decode_image_quality_max_frames", 0)),
-                "decode_image_quality_device": str(getattr(self.args, "decode_image_quality_device", "auto") or "auto"),
-                "workflow": workflow,
-                "decode_backend": COMFYUI_BACKEND,
-                "droid_seq": self.args.droid_seq,
-                "viz_enable": self.viz_enable,
-                "keep_level": self.args.keep_level,
-            },
-            "paths": {
-                "prepare_dir": str(self.paths.prepare_dir),
-                "prepare_frames_dir": str(self.paths.prepare_frames_dir),
-                "prepare_dataset_index": str(self.paths.prepare_dataset_index_path),
-                "encode_dir": str(self.paths.encode_dir),
-                "encode_dataset_index": str(self.paths.encode_dataset_index_path),
-                "encode_generation_units": str(self.paths.encode_generation_units_path),
-                "encode_prompts": str(self.paths.encode_prompts_path),
-                "encode_result": str(self.paths.encode_result_path),
-                "decode_dir": str(self.paths.decode_dir),
-                "eval_dir": str(self.paths.eval_dir),
-                "trainset_dir": str(self.paths.trainset_dir),
-                "trainset_metadata": str(self.paths.trainset_metadata_path),
-                "trainset_stats": str(self.paths.trainset_stats_path),
-                "lora_dir": str(self.paths.lora_dir),
-                "lora_config": str(self.paths.lora_config_path),
-                "lora_command": str(self.paths.lora_command_path),
-                "lora_log": str(self.paths.lora_log_path),
-                "lora_result": str(self.paths.lora_result_path),
-                "logs_dir": str(self.paths.logs_dir),
-                "semantic_openclip_python": get_phase_python_config("semantic_openclip"),
-                "lora_python": get_phase_python_config("lora"),
-                "droid_repo": self.args.droid_repo,
-            },
-            "prepare": prepare_meta,
-        }
-        write_json_atomic(self.paths.run_meta_path, meta, indent=2)
-
 
 _SERVICE_BY_STAGE = {
     "prepare": prepare_pipeline,
@@ -254,11 +117,14 @@ def _format_out_hint(exp_dir: Path, out_hint) -> str:
     return short_text or "."
 
 
-def _run_step(runtime: PipelineRuntime, step_name: str, service_module):
+def _run_step(runtime: PipelineRuntime, step_name: str, service_module, *, droid_live_viewer: bool = False):
     started = time.time()
-    log_step("{} start mode={} step={}".format(step_name, runtime.args.mode, runtime.args.step))
+    log_step("{} start mode={} step={}".format(step_name, runtime.execution_plan.mode, runtime.execution_plan.resolved_step))
     try:
-        out_hint = service_module.run(runtime)
+        if step_name == "eval":
+            out_hint = service_module.run(runtime, droid_live_viewer=bool(droid_live_viewer))
+        else:
+            out_hint = service_module.run(runtime)
     except RunError as exc:
         elapsed = time.time() - started
         return_code = exc.returncode if exc.returncode is not None else -1
@@ -289,174 +155,136 @@ def _run_step(runtime: PipelineRuntime, step_name: str, service_module):
     return out_hint
 
 
-def _doctor(runtime: PipelineRuntime) -> None:
-    log_info("STEP doctor: begin")
-    has_critical_missing = False
-    phase_names = ["segment", "semantic_openclip", "slam"]
-    for phase_name in phase_names:
-        python_bin = get_phase_python_config(phase_name)
-        exists = False
-        if python_bin:
-            phase_path = Path(str(python_bin)).expanduser()
-            exists = phase_path.is_file() and os.access(str(phase_path), os.X_OK)
-        log_info(
-            "DOCTOR phase={} python={} exists={}".format(
-                phase_name,
-                python_bin or "<missing>",
-                exists,
-            )
-        )
-        if not python_bin or not exists:
-            has_critical_missing = True
-    if has_critical_missing:
-        log_warn("DOCTOR result=FAIL")
-        raise SystemExit(2)
-    log_info("DOCTOR result=PASS")
-    runtime_info("DONE. MODE=doctor")
+def _repo_root_from_package() -> Path:
+    return Path(__file__).resolve().parents[1]
 
 
-def build_runtime(args) -> PipelineRuntime:
-    exphub_root = Path(args.exphub).resolve() if args.exphub else Path.cwd().resolve()
-    if not ((exphub_root / "exphub").exists() and (exphub_root / "config").exists()):
-        current = Path.cwd().resolve()
-        found = None
-        for path in [current] + list(current.parents):
-            if (path / "exphub").exists() and (path / "config").exists():
-                found = path
-                break
-        if found is not None:
-            exphub_root = found
-        else:
-            log_warn("Cannot verify ExpHub root at {}; continuing".format(exphub_root))
-
-    cfg_path = Path(args.datasets_cfg) if args.datasets_cfg else (exphub_root / "config" / "datasets.json")
-    if not cfg_path.is_absolute():
-        cfg_path = (exphub_root / cfg_path).resolve()
+def build_runtime(config: RunConfig, execution_plan: ExecutionPlan, command_argv=()) -> PipelineRuntime:
+    exphub_root = _repo_root_from_package()
+    cfg_path = (exphub_root / "config" / "datasets.json").resolve()
 
     spec = ExperimentSpec(
         exphub_root=exphub_root,
-        mode=args.mode,
-        dataset=args.dataset,
-        sequence=args.sequence,
-        tag=args.tag,
-        start=args.start,
-        dur=args.dur,
-        fps=args.fps,
-        kf_gap_input=args.kf_gap,
-        exp_root_override=Path(args.exp_root).resolve() if args.exp_root else None,
+        mode=execution_plan.mode,
+        dataset=config.dataset,
+        sequence=config.sequence,
+        tag=config.tag,
+        start=config.start,
+        dur=config.dur,
+        fps=config.fps,
     )
     paths = ExperimentPaths.from_spec(spec)
-    runner_cfg = RunnerConfig(
-        auto_conda=bool(args.auto_conda),
-        conda_base=detect_conda_base() if args.auto_conda else None,
-        ros_setup=Path(args.ros_setup) if args.ros_setup else None,
-    )
     step_runner = StepRunner(
         logs_dir=paths.logs_dir,
-        log_level=args.log_level,
-        runner_cfg=runner_cfg,
+        log_level=config.log_level,
         pass_prefixes=("[INFO]", "[WARN]", "[ERR]", "[PROG]", "[STEP]"),
         fail_tail_lines=30,
     )
 
-    if args.viz and args.no_viz:
-        raise RuntimeError("--viz and --no_viz are mutually exclusive")
-    if args.viz:
-        viz_enable = True
-    elif args.no_viz:
-        viz_enable = False
-    else:
-        viz_enable = args.step == "eval"
-
     runtime = PipelineRuntime(
-        args=args,
+        config=config,
+        execution_plan=execution_plan,
         spec=spec,
         paths=paths,
         cfg_path=cfg_path,
-        runner_cfg=runner_cfg,
         step_runner=step_runner,
-        viz_enable=viz_enable,
+        command_argv=tuple(str(item) for item in tuple(command_argv or ())),
     )
     if spec.kf_gap % 4 != 0:
         log_warn("kf_gap={} not divisible by 4 (r=4). model may truncate length.".format(spec.kf_gap))
     return runtime
 
 
-def _validate_scripts(runtime: PipelineRuntime) -> None:
-    mode = str(runtime.args.mode or "").strip().lower()
-    required = [
-        (runtime.exphub_root / "exphub" / "prepare" / "prepare.py").resolve(),
-        (runtime.exphub_root / "exphub" / "encode" / "encode.py").resolve(),
-    ]
-    if mode == "infer":
-        required.extend(
-            [
-                (runtime.exphub_root / "exphub" / "decode" / "decode.py").resolve(),
-                (runtime.exphub_root / "exphub" / "decode" / "comfyui_client.py").resolve(),
-                (runtime.exphub_root / "exphub" / "eval" / "eval.py").resolve(),
-            ]
-        )
-    if mode == "train":
-        required.append((runtime.exphub_root / "exphub" / "lora" / "lora.py").resolve())
+def _validate_scripts_for_stages(runtime: PipelineRuntime, stages) -> None:
+    script_by_stage = {
+        "prepare": [runtime.exphub_root / "exphub" / "prepare" / "prepare.py"],
+        "encode": [runtime.exphub_root / "exphub" / "encode" / "encode.py"],
+        "decode": [
+            runtime.exphub_root / "exphub" / "decode" / "decode.py",
+            runtime.exphub_root / "exphub" / "decode" / "comfyui_client.py",
+        ],
+        "eval": [runtime.exphub_root / "exphub" / "eval" / "eval.py"],
+        "lora": [runtime.exphub_root / "exphub" / "lora" / "lora.py"],
+    }
+    required = []
+    for stage in stages:
+        required.extend(script_by_stage.get(stage, []))
     for path in required:
-        if not path.is_file():
-            raise RuntimeError("file not found: {}".format(path))
+        script_path = Path(path).resolve()
+        if not script_path.is_file():
+            raise RuntimeError("file not found: {}".format(script_path))
 
 
-def run_runtime(runtime: PipelineRuntime) -> OrchestrationResult:
-    mode = str(runtime.args.mode or "").strip().lower()
-    step = str(runtime.args.step or "").strip().lower()
+def run_runtime(runtime: PipelineRuntime, execution_plan: ExecutionPlan) -> OrchestrationResult:
+    command_started = time.perf_counter()
+    mode = str(execution_plan.mode or "").strip().lower()
     if mode not in ("infer", "train"):
         raise RuntimeError("unsupported mode: {}".format(mode))
-    _validate_scripts(runtime)
+    _validate_scripts_for_stages(runtime, execution_plan.stages)
 
-    if mode == "infer":
-        runtime.dataset()
+    stages = list(execution_plan.stages)
+    full_infer_main = mode == "infer" and tuple(stages) == ("prepare", "encode", "decode", "eval")
+    stage_window_started = None
+    stage_window_elapsed = None
+    main_pipeline_wall_time = None
+    experiment_times = {}
+    provenance_start = write_run_start(runtime, runtime.command_argv)
+    try:
+        last_out_hint = runtime.paths.exp_dir
+        stage_window_started = time.perf_counter()
+        for stage_name in stages:
+            service_module = _SERVICE_BY_STAGE.get(stage_name)
+            if service_module is None:
+                raise RuntimeError("unsupported stage mode: {}".format(stage_name))
+            last_out_hint = (
+                _run_step(
+                    runtime,
+                    stage_name,
+                    service_module,
+                    droid_live_viewer=execution_plan.droid_live_viewer,
+                )
+                or last_out_hint
+            )
+        stage_window_elapsed = float(time.perf_counter() - stage_window_started)
+        if full_infer_main:
+            main_pipeline_wall_time = float(stage_window_elapsed)
 
-    if step == "all":
-        stages = list(STAGE_ORDER if mode == "infer" else ("prepare", "encode", "lora"))
-    else:
-        stages = [step]
+        if execution_plan.experiments:
+            from exphub.experiments import run_requested_experiments
 
-    if mode == "train":
-        forbidden = [item for item in stages if item in ("decode", "eval")]
-        if forbidden:
-            raise RuntimeError("train mode does not support stage(s): {}".format(", ".join(forbidden)))
-    if mode == "infer":
-        forbidden = [item for item in stages if item == "lora"]
-        if forbidden:
-            raise RuntimeError("infer mode does not support stage(s): {}".format(", ".join(forbidden)))
+            last_out_hint, experiment_times = run_requested_experiments(runtime, execution_plan) or (last_out_hint, {})
+    except Exception as exc:
+        update_run_status(runtime, status="failed", start_time=provenance_start, error=exc)
+        raise
 
-    last_out_hint = runtime.paths.exp_dir
-    for stage_name in stages:
-        service_module = _SERVICE_BY_STAGE.get(stage_name)
-        if service_module is None:
-            raise RuntimeError("unsupported stage mode: {}".format(stage_name))
-        last_out_hint = _run_step(runtime, stage_name, service_module) or last_out_hint
-
-    apply_keep_level(runtime.paths.exp_dir, runtime.args.keep_level)
+    update_run_status(runtime, status="success", start_time=provenance_start)
+    full_command_wall = float(time.perf_counter() - command_started)
+    optional_total = float(sum(float(value) for value in dict(experiment_times or {}).values())) if experiment_times else None
     runtime_info("DONE.")
     return OrchestrationResult(
         mode=mode,
         exp_dir=runtime.paths.exp_dir,
         step_times=dict(runtime.step_times),
+        experiment_times=dict(experiment_times or {}),
         result_root=Path(last_out_hint).resolve() if last_out_hint else runtime.paths.exp_dir,
+        main_pipeline_wall_time_s=main_pipeline_wall_time,
+        selected_stages_wall_time_s=stage_window_elapsed,
+        optional_total_time_s=optional_total,
+        full_command_wall_time_s=full_command_wall,
     )
 
 
-def run(args) -> OrchestrationResult:
-    return run_runtime(build_runtime(args))
+def run(config: RunConfig, execution_plan: ExecutionPlan) -> OrchestrationResult:
+    return run_runtime(build_runtime(config, execution_plan), execution_plan)
 
 
 __all__ = [
     "OrchestrationResult",
     "PipelineRuntime",
+    "RunConfig",
     "RunError",
-    "RunnerConfig",
     "StepRunner",
     "build_runtime",
-    "detect_conda_base",
-    "resolve_phase_python",
     "run",
     "run_runtime",
 ]

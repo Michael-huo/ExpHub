@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import re
 import sys
 import time
@@ -280,10 +279,14 @@ def _relative_path(base_dir, target_path):
         return str(target)
 
 
+class _TrackConfig:
+    def __init__(self, config):
+        self.__dict__.update(dict(config))
+        self.stereo = False
+
+
 def _track_args(config):
-    args = argparse.Namespace(**dict(config))
-    args.stereo = False
-    return args
+    return _TrackConfig(config)
 
 
 def _as_dict(value):
@@ -470,11 +473,6 @@ def run_slam(config):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     prepare_result_path = ensure_file(args.prepare_result, "prepare result")
-    generation_units_path = ensure_file(args.generation_units, "generation units")
-    encode_result_path = ensure_file(args.encode_result, "encode result")
-    decode_report_path = ensure_file(args.decode_report, "decode report")
-    decode_merge_report_path = ensure_file(args.decode_merge_report, "decode merge report")
-
     seq = str(args.seq or "both").strip().lower()
     if seq == "auto":
         seq = "both"
@@ -506,57 +504,3 @@ def run_single_slam_track(config, track_name, frames_dir):
 
     source_timestamps = _load_prepare_ros_timestamps(prepare_result_path)
     return _run_track(exp_dir, str(track_name), frames_dir, args, source_timestamps)
-
-
-def _build_arg_parser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--run-slam-mainline", action="store_true")
-    parser.add_argument("--exp_dir", required=True)
-    parser.add_argument("--out_dir", required=True)
-    parser.add_argument("--prepare_result", required=True)
-    parser.add_argument("--prepare_frames_dir", required=True)
-    parser.add_argument("--generation_units", required=True)
-    parser.add_argument("--encode_result", required=True)
-    parser.add_argument("--decode_frames_dir", required=True)
-    parser.add_argument("--decode_calib", required=True)
-    parser.add_argument("--decode_timestamps", required=True)
-    parser.add_argument("--decode_report", required=True)
-    parser.add_argument("--decode_merge_report", required=True)
-    parser.add_argument("--seq", default="both", choices=["auto", "ori", "rec", "both"])
-    parser.add_argument("--droid_repo", required=True)
-    parser.add_argument("--weights", required=True)
-    parser.add_argument("--t0", default=0, type=int)
-    parser.add_argument("--stride", default=1, type=int)
-    parser.add_argument("--fps", type=float, default=0.0)
-    parser.add_argument("--undistort_mode", choices=["auto", "on", "off"], default="auto")
-    parser.add_argument("--resize_interp", choices=["linear", "area"], default="linear")
-    parser.add_argument("--intr_scale_mode", choices=["demo", "correct"], default="demo")
-    parser.add_argument("--buffer", type=int, default=512)
-    parser.add_argument("--image_size", default=[240, 320])
-    parser.add_argument("--disable_vis", action="store_true")
-    parser.add_argument("--beta", type=float, default=0.3)
-    parser.add_argument("--filter_thresh", type=float, default=1.5)
-    parser.add_argument("--warmup", type=int, default=12)
-    parser.add_argument("--keyframe_thresh", type=float, default=2.0)
-    parser.add_argument("--frontend_thresh", type=float, default=12.0)
-    parser.add_argument("--frontend_window", type=int, default=25)
-    parser.add_argument("--frontend_radius", type=int, default=2)
-    parser.add_argument("--frontend_nms", type=int, default=1)
-    parser.add_argument("--backend_thresh", type=float, default=20.0)
-    parser.add_argument("--backend_radius", type=int, default=2)
-    parser.add_argument("--backend_nms", type=int, default=3)
-    parser.add_argument("--upsample", action="store_true")
-    parser.add_argument("--max_frames", type=int, default=0)
-    parser.add_argument("--no_tqdm", action="store_true")
-    return parser
-
-
-def main(argv=None):
-    args = _build_arg_parser().parse_args(argv)
-    if not args.run_slam_mainline:
-        raise SystemExit("eval slam helper requires --run-slam-mainline")
-    run_slam(vars(args))
-
-
-if __name__ == "__main__":
-    main()

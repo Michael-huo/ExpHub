@@ -3,6 +3,7 @@ from __future__ import annotations
 """Eval mainline: SLAM -> evo_ape trajectory metrics -> summary artifacts."""
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -11,9 +12,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_dir, ensure_file, read_json_dict, remove_path
-from exphub.common.logging import log_info, log_prog, log_warn
-from exphub.eval.compression_benchmark import run_compression_benchmark_eval
+from exphub.common.io import ensure_dir, ensure_file, remove_path
+from exphub.common.logging import log_info, log_prog
+from exphub.config import get_platform_config
 from exphub.eval.evo_eval import run_evo_eval
 from exphub.eval.slam_run import run_slam
 from exphub.eval.summary_build import build_eval_summary
@@ -22,15 +23,10 @@ from exphub.eval.summary_build import build_eval_summary
 _STALE_EVAL_OUTPUTS = (
     "eval_slam_report.json",
     "internal/eval_slam_report.json",
-    "evo_summary.json",
     "evo_ori_ape.zip",
     "evo_rec_ape.zip",
     "ori/evo_ape.zip",
     "rec/evo_ape.zip",
-    "ori/evo_rpe_trans.zip",
-    "ori/evo_rpe_rot.zip",
-    "rec/evo_rpe_trans.zip",
-    "rec/evo_rpe_rot.zip",
     "ori/traj_est.npz",
     "rec/traj_est.npz",
     "evo_ori_stdout.txt",
@@ -38,19 +34,10 @@ _STALE_EVAL_OUTPUTS = (
     "evo_rec_stdout.txt",
     "evo_rec_stderr.txt",
     "evo_failure.log",
-    "evo_rpe_ori_trans_failure.log",
-    "evo_rpe_ori_rot_failure.log",
-    "evo_rpe_rec_trans_failure.log",
-    "evo_rpe_rec_rot_failure.log",
-    "eval_compression_report.json",
-    "eval_summary.txt",
-    "eval_details.csv",
     "eval_metrics_overview.png",
-    "trajectory_overlay_auto2d.png",
-    "trajectory_overlay_interactive.html",
     "trajectory_plot_data.json",
     "compression_downstream",
-    "eval_compression_benchmark",
+    "compression_benchmark",
     "gen",
 )
 
@@ -68,12 +55,11 @@ def _validate_eval_inputs(args):
         "prepare_frames_dir": ensure_dir(args.prepare_frames_dir, "prepare frames dir"),
         "generation_units": ensure_file(args.generation_units, "generation units"),
         "prompts": ensure_file(args.prompts, "prompts"),
-        "encode_result": ensure_file(args.encode_result, "encode result"),
+        "encode_result": Path(args.encode_result).resolve() if str(args.encode_result or "").strip() else None,
         "decode_frames_dir": ensure_dir(args.decode_frames_dir, "decode frames dir"),
         "decode_calib": ensure_file(args.decode_calib, "decode calib"),
         "decode_timestamps": ensure_file(args.decode_timestamps, "decode timestamps"),
         "decode_report": ensure_file(args.decode_report, "decode report"),
-        "decode_merge_report": ensure_file(args.decode_merge_report, "decode merge report"),
     }
 
 
@@ -84,11 +70,7 @@ def run_eval_mainline(args):
     inputs = _validate_eval_inputs(args)
     gt_traj_path = Path(args.gt_traj).resolve()
     if not gt_traj_path.is_file():
-        raise RuntimeError(
-            "ground truth trajectory not found: {}; expected same directory/name as rosbag with .tum suffix".format(
-                gt_traj_path
-            )
-        )
+        raise RuntimeError("missing prepare/gt_traj.tum; rerun prepare or manually materialize the known GT artifact")
     _clean_eval_outputs(out_dir)
 
     log_prog("eval mainline: slam")
@@ -102,9 +84,8 @@ def run_eval_mainline(args):
             "decode_calib": str(inputs["decode_calib"]),
             "decode_timestamps": str(inputs["decode_timestamps"]),
             "decode_report": str(inputs["decode_report"]),
-            "decode_merge_report": str(inputs["decode_merge_report"]),
             "generation_units": str(inputs["generation_units"]),
-            "encode_result": str(inputs["encode_result"]),
+            "encode_result": str(inputs["encode_result"] or ""),
             "seq": str(args.seq),
             "droid_repo": str(args.droid_repo),
             "weights": str(args.weights),
@@ -160,85 +141,44 @@ def run_eval_mainline(args):
             "prepare_result": str(inputs["prepare_result"]),
             "generation_units": str(inputs["generation_units"]),
             "prompts": str(inputs["prompts"]),
-            "encode_result": str(inputs["encode_result"]),
+            "encode_result": str(inputs["encode_result"] or ""),
             "prepare_frames_dir": str(inputs["prepare_frames_dir"]),
             "decode_report": str(inputs["decode_report"]),
-            "decode_merge_report": str(inputs["decode_merge_report"]),
             "ori_run_meta": str(out_dir / "ori" / "run_meta.json"),
             "rec_run_meta": str(out_dir / "rec" / "run_meta.json"),
-            "evo_summary": str(out_dir / "evo_summary.json"),
+            "evo_result": dict(evo_result.get("summary") or {}),
             "eval_runtime_sec": float(time.time() - eval_started),
+            "stage_times": json.loads(str(args.stage_times_json or "{}")),
+            "complete_main_chain": bool(args.complete_main_chain),
         }
     )
-
-    compression_benchmark_result = None
-    if bool(getattr(args, "compression_benchmark", False)):
-        decode_benchmark_report = ensure_file(
-            getattr(args, "decode_benchmark_report", ""),
-            "compression benchmark decode report",
-        )
-        log_prog("eval mainline: compression benchmark")
-        compression_benchmark_result = run_compression_benchmark_eval(
-            {
-                "exp_dir": str(exp_dir),
-                "out_dir": str(out_dir / "eval_compression_benchmark"),
-                "decode_benchmark_report": str(decode_benchmark_report),
-                "main_evo_summary": str(out_dir / "evo_summary.json"),
-                "prepare_result": str(inputs["prepare_result"]),
-                "prepare_frames_dir": str(inputs["prepare_frames_dir"]),
-                "generation_units": str(inputs["generation_units"]),
-                "encode_result": str(inputs["encode_result"]),
-                "decode_frames_dir": str(inputs["decode_frames_dir"]),
-                "decode_calib": str(inputs["decode_calib"]),
-                "decode_timestamps": str(inputs["decode_timestamps"]),
-                "decode_report": str(inputs["decode_report"]),
-                "decode_merge_report": str(inputs["decode_merge_report"]),
-                "gt_traj": str(gt_traj_path),
-                "droid_repo": str(args.droid_repo),
-                "weights": str(args.weights),
-                "fps": float(args.fps),
-                "clip_duration": str(getattr(args, "clip_duration", "") or ""),
-                "t_max_diff": float(args.t_max_diff),
-                "disable_vis": bool(args.disable_vis),
-            }
-        )
 
     log_info("eval mainline complete: {}".format(out_dir))
     return {
         "slam": slam_result,
         "evo": evo_result,
         "summary": summary_result,
-        "compression_benchmark": compression_benchmark_result,
         "out_dir": out_dir,
     }
 
 
-def run(runtime):
+def run(runtime, *, droid_live_viewer: bool = False):
     ensure_file(runtime.paths.prepare_result_path, "prepare result")
     ensure_dir(runtime.paths.prepare_frames_dir, "prepare frames dir")
     ensure_file(runtime.paths.encode_generation_units_path, "generation units")
     ensure_file(runtime.paths.encode_prompts_path, "prompts")
-    ensure_file(runtime.paths.encode_result_path, "encode result")
     ensure_dir(runtime.paths.decode_frames_dir, "decode frames dir")
     ensure_file(runtime.paths.decode_calib_path, "decode calib")
     ensure_file(runtime.paths.decode_timestamps_path, "decode timestamps")
     ensure_file(runtime.paths.decode_report_path, "decode report")
-    ensure_file(runtime.paths.decode_merge_report_path, "decode merge report")
-    compression_benchmark_enabled = bool(getattr(runtime.args, "compression_benchmark", False))
-    if compression_benchmark_enabled:
-        ensure_file(
-            runtime.paths.decode_compression_benchmark_report_path,
-            "compression benchmark decode report",
-        )
 
-    dataset = runtime.dataset()
-    gt_traj_path = dataset.bag.with_suffix(".tum")
+    gt_traj_path = runtime.paths.prepare_gt_traj_path
     if not gt_traj_path.is_file():
-        raise RuntimeError(
-            "ground truth trajectory not found: {}; expected same directory/name as rosbag with .tum suffix".format(
-                gt_traj_path
-            )
-        )
+        raise RuntimeError("missing prepare/gt_traj.tum; rerun prepare or manually materialize the known GT artifact")
+
+    platform_cfg = get_platform_config(exphub_root=runtime.exphub_root)
+    droid_repo = str(platform_cfg.get("repos", {}).get("droid_slam", "") or "")
+    droid_weights = str(platform_cfg.get("models", {}).get("droid", {}).get("path", "") or "")
 
     runtime.paths.eval_dir.mkdir(parents=True, exist_ok=True)
     for name in _STALE_EVAL_OUTPUTS:
@@ -261,7 +201,7 @@ def run(runtime):
         "--prompts",
         str(runtime.paths.encode_prompts_path),
         "--encode_result",
-        str(runtime.paths.encode_result_path),
+        str(runtime.paths.encode_result_path if runtime.paths.encode_result_path.is_file() else ""),
         "--decode_frames_dir",
         str(runtime.paths.decode_frames_dir),
         "--decode_calib",
@@ -270,33 +210,28 @@ def run(runtime):
         str(runtime.paths.decode_timestamps_path),
         "--decode_report",
         str(runtime.paths.decode_report_path),
-        "--decode_merge_report",
-        str(runtime.paths.decode_merge_report_path),
         "--gt_traj",
         str(gt_traj_path),
         "--seq",
-        str(runtime.args.droid_seq),
+        "both",
         "--droid_repo",
-        str(runtime.args.droid_repo),
+        droid_repo,
         "--weights",
-        str(runtime.args.droid_weights),
+        droid_weights,
         "--fps",
         runtime.fps_arg,
+        "--stage_times_json",
+        json.dumps(dict(runtime.step_times), sort_keys=True),
     ]
-    if compression_benchmark_enabled:
-        cmd.extend(
-            [
-                "--compression_benchmark",
-                "--decode_benchmark_report",
-                str(runtime.paths.decode_compression_benchmark_report_path),
-                "--clip_duration",
-                str(runtime.args.dur or ""),
-            ]
-        )
-    if not runtime.viz_enable:
+    if runtime.execution_plan.mode == "infer" and tuple(runtime.execution_plan.stages) == (
+        "prepare",
+        "encode",
+        "decode",
+        "eval",
+    ):
+        cmd.append("--complete_main_chain")
+    if not bool(droid_live_viewer):
         cmd.append("--disable_vis")
-    if runtime.args.no_viz:
-        cmd.append("--skip_plots")
 
     runtime.step_runner.run_env_python(
         cmd,
@@ -306,10 +241,8 @@ def run(runtime):
     )
 
     required_artifacts = [
-        (runtime.paths.eval_evo_summary_path, "evo summary"),
-        (runtime.paths.eval_compression_report_path, "eval compression report"),
-        (runtime.paths.eval_summary_path, "eval summary"),
-        (runtime.paths.eval_details_path, "eval details"),
+        (runtime.paths.eval_canonical_summary_path, "canonical eval summary"),
+        (runtime.paths.eval_canonical_summary_csv_path, "canonical eval summary csv"),
         (runtime.paths.eval_trajectory_overlay_path, "trajectory overlay"),
         (runtime.paths.eval_trajectory_interactive_path, "interactive trajectory overlay"),
         (runtime.paths.eval_ori_traj_path, "ORI trajectory"),
@@ -319,33 +252,7 @@ def run(runtime):
         (runtime.paths.eval_evo_ori_ape_path, "ORI evo APE result"),
         (runtime.paths.eval_evo_rec_ape_path, "REC evo APE result"),
     ]
-    if compression_benchmark_enabled:
-        required_artifacts.extend(
-            [
-                (runtime.paths.eval_compression_benchmark_summary_path, "compression benchmark summary"),
-                (runtime.paths.eval_compression_benchmark_summary_csv_path, "compression benchmark summary CSV"),
-            ]
-        )
-    evo_summary = read_json_dict(runtime.paths.eval_evo_summary_path)
-    plot_status = str(evo_summary.get("plot_status") or "skipped").strip().lower()
-    interactive_status = str(evo_summary.get("trajectory_interactive_status") or "skipped_error").strip().lower()
     for artifact_path, label in required_artifacts:
-        if label == "trajectory overlay" and runtime.args.no_viz:
-            log_warn("trajectory overlay skipped by --no_viz")
-            continue
-        if label == "interactive trajectory overlay" and runtime.args.no_viz:
-            log_warn("interactive trajectory overlay skipped by --no_viz")
-            continue
-        if label == "trajectory overlay" and plot_status != "success":
-            log_warn("trajectory overlay not required because plot_status={}".format(plot_status or "skipped"))
-            continue
-        if label == "interactive trajectory overlay" and interactive_status not in ("success", "ok_without_markers"):
-            log_warn(
-                "interactive trajectory overlay not required because trajectory_interactive_status={}".format(
-                    interactive_status or "skipped_error"
-                )
-            )
-            continue
         ensure_file(artifact_path, label)
 
     return runtime.paths.eval_dir
@@ -360,23 +267,21 @@ def _build_arg_parser():
     parser.add_argument("--prepare_frames_dir", required=True)
     parser.add_argument("--generation_units", required=True)
     parser.add_argument("--prompts", required=True)
-    parser.add_argument("--encode_result", required=True)
+    parser.add_argument("--encode_result", default="")
     parser.add_argument("--decode_frames_dir", required=True)
     parser.add_argument("--decode_calib", required=True)
     parser.add_argument("--decode_timestamps", required=True)
     parser.add_argument("--decode_report", required=True)
-    parser.add_argument("--decode_merge_report", required=True)
     parser.add_argument("--gt_traj", required=True)
     parser.add_argument("--seq", default="both", choices=["auto", "ori", "rec", "both"])
     parser.add_argument("--droid_repo", required=True)
     parser.add_argument("--weights", required=True)
     parser.add_argument("--fps", type=float, default=0.0)
+    parser.add_argument("--stage_times_json", default="{}")
+    parser.add_argument("--complete_main_chain", action="store_true")
     parser.add_argument("--t_max_diff", type=float, default=0.03)
     parser.add_argument("--disable_vis", action="store_true")
     parser.add_argument("--skip_plots", action="store_true")
-    parser.add_argument("--compression_benchmark", action="store_true")
-    parser.add_argument("--decode_benchmark_report", default="")
-    parser.add_argument("--clip_duration", default="")
     return parser
 
 

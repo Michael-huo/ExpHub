@@ -6,7 +6,6 @@ from exphub.config import get_platform_config
 
 from .compression_benchmark import CompressionBenchmarkDecode
 from .comfyui_client import run_comfyui_decode_tasks
-from .image_quality_subprocess import run_decode_image_quality_subprocess
 from .task_build import build_generation_tasks
 from .unit_merge import merge_units
 
@@ -21,20 +20,25 @@ def _ensure_native_inputs(runtime):
 
 def _remove_decode_outputs(runtime):
     runtime.paths.exp_dir.mkdir(parents=True, exist_ok=True)
-    if runtime.paths.decode_dir.exists():
-        runtime.remove_in_exp(runtime.paths.decode_dir)
     runtime.paths.decode_dir.mkdir(parents=True, exist_ok=True)
+    for child in list(runtime.paths.decode_dir.iterdir()):
+        if child.resolve() == runtime.paths.decode_preview_path.resolve():
+            continue
+        runtime.remove_in_exp(child)
     runtime.paths.decode_runs_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _cleanup_successful_runs_dir(runtime):
+    ensure_file(runtime.paths.decode_report_path, "decode report")
+    ensure_file(runtime.paths.decode_calib_path, "decode calib")
+    ensure_file(runtime.paths.decode_timestamps_path, "decode timestamps")
+    ensure_file(runtime.paths.decode_preview_path, "decode preview")
+    ensure_dir(runtime.paths.decode_frames_dir, "decode frames dir")
+    runtime.remove_in_exp(runtime.paths.decode_runs_dir)
 
 
 def run(runtime):
     _ensure_native_inputs(runtime)
-    compression_benchmark_enabled = bool(getattr(runtime.args, "compression_benchmark", False))
-    if compression_benchmark_enabled:
-        ensure_file(
-            runtime.paths.encode_compression_benchmark_report_path,
-            "compression benchmark encode report",
-        )
     _remove_decode_outputs(runtime)
 
     log_prog("decode native mainline: build generation tasks")
@@ -47,34 +51,44 @@ def run(runtime):
         )
     )
 
-    run_comfyui_decode_tasks(tasks_payload, runtime, get_platform_config(exphub_root=runtime.exphub_root))
+    run_comfyui_decode_tasks(
+        tasks_payload,
+        runtime,
+        get_platform_config(exphub_root=runtime.exphub_root),
+        decode_profile=runtime.config.decode_profile,
+        seed_base=runtime.config.seed,
+    )
 
     decode_report = read_json_dict(runtime.paths.decode_report_path)
     if not decode_report:
         raise RuntimeError("invalid decode report: {}".format(runtime.paths.decode_report_path))
     merge_units(runtime, tasks_payload, decode_report)
-    run_decode_image_quality_subprocess(runtime)
 
-    ensure_file(runtime.paths.decode_report_path, "decode report")
-    ensure_file(runtime.paths.decode_merge_report_path, "decode merge report")
-    ensure_file(runtime.paths.decode_calib_path, "decode calib")
-    ensure_file(runtime.paths.decode_timestamps_path, "decode timestamps")
-    ensure_dir(runtime.paths.decode_frames_dir, "decode frames dir")
+    _cleanup_successful_runs_dir(runtime)
 
-    if compression_benchmark_enabled:
-        log_prog("decode compression benchmark: materialize frame sources")
-        CompressionBenchmarkDecode(
-            exp_dir=runtime.paths.exp_dir,
-            output_dir=runtime.paths.decode_compression_benchmark_dir,
-            encode_report_path=runtime.paths.encode_compression_benchmark_report_path,
-            prepare_frames_dir=runtime.paths.prepare_frames_dir,
-            native_decode_frames_dir=runtime.paths.decode_frames_dir,
-            native_decode_report_path=runtime.paths.decode_report_path,
-            fps=getattr(runtime.args, "fps", runtime.spec.fps),
-            exphub_root=runtime.exphub_root,
-        ).run()
-        ensure_file(
-            runtime.paths.decode_compression_benchmark_report_path,
-            "compression benchmark decode report",
-        )
     return runtime.paths.decode_dir
+
+
+def run_compression_benchmark_decode_extra(runtime):
+    ensure_file(
+        runtime.paths.encode_compression_report_path,
+        "compression benchmark encode report",
+    )
+    ensure_file(runtime.paths.decode_report_path, "decode report")
+    ensure_dir(runtime.paths.decode_frames_dir, "decode frames dir")
+    log_prog("decode compression benchmark: materialize frame sources")
+    report = CompressionBenchmarkDecode(
+        exp_dir=runtime.paths.exp_dir,
+        output_dir=runtime.paths.decode_compression_dir,
+        encode_report_path=runtime.paths.encode_compression_report_path,
+        prepare_frames_dir=runtime.paths.prepare_frames_dir,
+        native_decode_frames_dir=runtime.paths.decode_frames_dir,
+        native_decode_report_path=runtime.paths.decode_report_path,
+        fps=runtime.spec.fps,
+        exphub_root=runtime.exphub_root,
+    ).run()
+    ensure_file(
+        runtime.paths.decode_compression_report_path,
+        "compression benchmark decode report",
+    )
+    return report

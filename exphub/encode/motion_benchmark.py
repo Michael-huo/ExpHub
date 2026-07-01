@@ -7,7 +7,14 @@ from pathlib import Path
 
 import numpy as np
 
-from exphub.common.io import ensure_dir, list_frames_sorted, write_json_atomic
+from exphub.common.io import (
+    ensure_dir,
+    list_frames_sorted,
+    replace_nonempty_file,
+    unique_sibling_temp_path,
+    write_csv_atomic,
+    write_json_atomic,
+)
 from exphub.common.logging import log_info, log_warn
 
 from .motion_segment import (
@@ -367,6 +374,61 @@ def _write_csv(path, pc_rows, orb_rows, of_rows, pair_count):
     tmp_path.replace(path)
 
 
+def _write_summary_files(json_path, csv_path, report, identity=None):
+    identity = dict(identity or {})
+    rows = []
+    for method, payload in dict(report.get("methods") or {}).items():
+        item = dict(payload or {})
+        pair_count = int(report.get("frame_pair_count", 0) or 0)
+        valid_rate = item.get("valid_rate")
+        valid_pair_count = None
+        try:
+            valid_pair_count = int(round(float(valid_rate) * float(pair_count)))
+        except Exception:
+            valid_pair_count = None
+        row = {
+            "method": method,
+            "dataset": identity.get("dataset", ""),
+            "sequence": identity.get("sequence", ""),
+            "tag": identity.get("tag", ""),
+            "frame_count": int(report.get("frame_count", 0) or 0),
+            "pair_count": pair_count,
+            "valid_pair_count": "" if valid_pair_count is None else valid_pair_count,
+            "valid_rate": item.get("valid_rate"),
+            "total_time_s": item.get("runtime_sec"),
+            "avg_time_ms_per_pair": item.get("time_per_pair_ms"),
+            "segment_count": item.get("segment_count"),
+            "labels": "|".join(str(label) for label in list(item.get("labels") or [])),
+        }
+        rows.append(row)
+    summary = {
+        "schema_version": 1,
+        "source": "exphub.encode.motion_benchmark",
+        "identity": identity,
+        "frame_count": int(report.get("frame_count", 0) or 0),
+        "pair_count": int(report.get("frame_pair_count", 0) or 0),
+        "methods": {row["method"]: dict(row) for row in rows},
+        "warnings": list(report.get("warnings") or []),
+    }
+    write_json_atomic(json_path, summary, indent=2)
+    fieldnames = [
+        "method",
+        "dataset",
+        "sequence",
+        "tag",
+        "frame_count",
+        "pair_count",
+        "valid_pair_count",
+        "valid_rate",
+        "total_time_s",
+        "avg_time_ms_per_pair",
+        "segment_count",
+        "labels",
+    ]
+    write_csv_atomic(csv_path, fieldnames, rows)
+    return summary
+
+
 def _text_tile(text, thumb_w, thumb_h, bg=(248, 249, 250)):
     import cv2
 
@@ -682,7 +744,14 @@ def _write_bands_only_overview(path, pc_labels, orb_labels, of_labels, warnings,
     plt.close(fig)
 
 
-def run_motion_benchmark(prepare_result, frames_dir, encode_dir, exp_dir=None, formal_encode_sec_without_benchmark=None):
+def run_motion_benchmark(
+    prepare_result,
+    frames_dir,
+    encode_dir,
+    exp_dir=None,
+    formal_encode_sec_without_benchmark=None,
+    identity=None,
+):
     started = time.perf_counter()
     encode_dir = Path(encode_dir).resolve()
     exp_dir = Path(exp_dir).resolve() if exp_dir is not None else encode_dir.parent
@@ -704,16 +773,20 @@ def run_motion_benchmark(prepare_result, frames_dir, encode_dir, exp_dir=None, f
     orb_rows, orb_labels, orb_runtime, failed_intervals, orb_extra = _orb_method(grays)
     of_rows, of_labels, of_runtime = _of_method(grays)
 
-    csv_path = encode_dir / "motion_benchmark.csv"
-    overview_path = encode_dir / "motion_benchmark_overview.png"
-    report_path = encode_dir / "motion_benchmark_report.json"
+    csv_path = encode_dir / "pairs.csv"
+    overview_path = encode_dir / "overview.png"
+    report_path = encode_dir / "report.json"
+    summary_path = encode_dir / "summary.json"
+    summary_csv_path = encode_dir / "summary.csv"
     _write_csv(csv_path, pc_rows, orb_rows, of_rows, pair_count)
+    overview_temp_path = unique_sibling_temp_path(overview_path)
     try:
-        _write_overview(overview_path, frames, grays, pc_rows, pc_labels, orb_rows, orb_labels, of_rows, of_labels, warnings)
+        _write_overview(overview_temp_path, frames, grays, pc_rows, pc_labels, orb_rows, orb_labels, of_rows, of_labels, warnings)
     except Exception as exc:
         warnings.append("benchmark overview fallback used: {}".format(exc))
         fallback_indices = np.linspace(0, max(0, pair_count - 1), num=min(8, max(1, pair_count)), dtype=int).tolist()
-        _write_bands_only_overview(overview_path, pc_labels, orb_labels, of_labels, warnings, sample_indices=fallback_indices)
+        _write_bands_only_overview(overview_temp_path, pc_labels, orb_labels, of_labels, warnings, sample_indices=fallback_indices)
+    replace_nonempty_file(overview_temp_path, overview_path, "motion benchmark overview")
 
     motion_benchmark_sec = float(time.perf_counter() - started)
     pc_cost = max(float(pc_runtime), PC_EPS)
@@ -744,12 +817,20 @@ def run_motion_benchmark(prepare_result, frames_dir, encode_dir, exp_dir=None, f
         "outputs": {
             "csv": _relative(exp_dir, csv_path),
             "overview": _relative(exp_dir, overview_path),
+            "summary": _relative(exp_dir, summary_path),
+            "summary_csv": _relative(exp_dir, summary_csv_path),
         },
         "warnings": list(dict.fromkeys(warnings)),
         "visualization_warnings": list(dict.fromkeys(warnings)),
         "orb_failed_intervals": failed_intervals,
     }
     write_json_atomic(report_path, report, indent=2)
+    _write_summary_files(
+        summary_path,
+        summary_csv_path,
+        report,
+        identity=identity,
+    )
     log_info(
         "encode motion benchmark done: report={} overview={}".format(
             _relative(exp_dir, report_path),

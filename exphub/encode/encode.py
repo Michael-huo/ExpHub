@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from exphub.common.io import ensure_dir, ensure_file, read_json_dict, write_json_atomic
-from exphub.common.logging import log_info, log_warn
+from exphub.common.logging import log_info
 
 from .compression_benchmark import CompressionBenchmark
 from .generation_unit import build_generation_units
@@ -15,6 +15,10 @@ from .payload_writer import write_hvm_payload
 from .result_writer import write_encode_outputs
 from .synthetic_prompt import build_prompts
 from .train_export import TrainExportSession
+
+
+ENCODE_SEGMENT_POLICY = "encode_mainline"
+COMPRESSION_VIDEO_BITRATE = "10M"
 
 
 @dataclass(frozen=True)
@@ -28,7 +32,7 @@ class _EncodePaths:
     encode_generation_units_path: Path
     encode_prompts_path: Path
     encode_result_path: Path
-    encode_overview_path: Path
+    encode_motion_overview_path: Path
 
 
 def _infer_encode_paths(runtime):
@@ -42,7 +46,7 @@ def _infer_encode_paths(runtime):
         encode_generation_units_path=runtime.paths.encode_generation_units_path,
         encode_prompts_path=runtime.paths.encode_prompts_path,
         encode_result_path=runtime.paths.encode_result_path,
-        encode_overview_path=runtime.paths.encode_overview_path,
+        encode_motion_overview_path=runtime.paths.encode_motion_overview_path,
     )
 
 
@@ -57,7 +61,7 @@ def _train_sequence_encode_paths(runtime, sequence):
         encode_generation_units_path=runtime.paths.encode_sequence_generation_units_path(sequence),
         encode_prompts_path=runtime.paths.encode_sequence_prompts_path(sequence),
         encode_result_path=runtime.paths.encode_sequence_result_path(sequence),
-        encode_overview_path=runtime.paths.encode_sequence_overview_path(sequence),
+        encode_motion_overview_path=runtime.paths.encode_sequence_motion_overview_path(sequence),
     )
 
 
@@ -119,57 +123,50 @@ def _patch_encode_result_profile(result_path, encode_profile):
     write_json_atomic(result_path, payload, indent=2)
 
 
-def _fmt_benchmark_value(value, digits=3):
-    try:
-        if value is None:
-            return "n/a"
-        return "{:.{digits}f}".format(float(value), digits=int(digits))
-    except Exception:
-        return "n/a"
-
-
-def _log_motion_benchmark_report(report):
-    report = dict(report or {})
-    methods = dict(report.get("methods") or {})
-    relative = dict(dict(report.get("relative_cost") or {}).get("pc_as_1x") or {})
-    rows = [
-        ("phase_correlation.runtime_sec", _fmt_benchmark_value(dict(methods.get("phase_correlation") or {}).get("runtime_sec"))),
-        ("phase_correlation.ms_per_pair", _fmt_benchmark_value(dict(methods.get("phase_correlation") or {}).get("time_per_pair_ms"))),
-        ("phase_correlation.valid_rate", _fmt_benchmark_value(dict(methods.get("phase_correlation") or {}).get("valid_rate"))),
-        ("orb.runtime_sec", _fmt_benchmark_value(dict(methods.get("orb") or {}).get("runtime_sec"))),
-        ("orb.ms_per_pair", _fmt_benchmark_value(dict(methods.get("orb") or {}).get("time_per_pair_ms"))),
-        ("orb.valid_rate", _fmt_benchmark_value(dict(methods.get("orb") or {}).get("valid_rate"))),
-        ("optical_flow.runtime_sec", _fmt_benchmark_value(dict(methods.get("optical_flow") or {}).get("runtime_sec"))),
-        ("optical_flow.ms_per_pair", _fmt_benchmark_value(dict(methods.get("optical_flow") or {}).get("time_per_pair_ms"))),
-        ("optical_flow.valid_rate", _fmt_benchmark_value(dict(methods.get("optical_flow") or {}).get("valid_rate"))),
-        ("relative_cost.pc_as_1x.orb", _fmt_benchmark_value(relative.get("orb"))),
-        ("relative_cost.pc_as_1x.of", _fmt_benchmark_value(relative.get("optical_flow"))),
-    ]
-    width = max(len(key) for key, _ in rows)
-    log_info("[Motion Benchmark]")
-    for key, value in rows:
-        log_info("{:<{w}} : {}".format(key, value, w=width))
-
-
 def _is_infer_runtime(runtime):
-    return str(getattr(runtime.args, "mode", "") or "").strip().lower() == "infer"
+    plan = getattr(runtime, "execution_plan", None)
+    mode = getattr(plan, "mode", None)
+    if mode is None:
+        mode = getattr(getattr(runtime, "spec", None), "mode", "")
+    return str(mode or "").strip().lower() == "infer"
 
 
-def _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_hvm_algorithmic_sec):
+def _contains_path(parent, child):
+    try:
+        Path(child).resolve().relative_to(Path(parent).resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _remove_encode_outputs(runtime, paths):
+    paths.encode_dir.mkdir(parents=True, exist_ok=True)
+    preserve = Path(paths.encode_motion_overview_path).resolve()
+    for child in list(paths.encode_dir.iterdir()):
+        if child.resolve() == preserve:
+            continue
+        if child.is_dir() and _contains_path(child, preserve):
+            for nested in list(child.iterdir()):
+                if nested.resolve() == preserve:
+                    continue
+                runtime.remove_in_exp(nested)
+            continue
+        runtime.remove_in_exp(child)
+
+
+def _run_infer_payload_hooks(runtime, paths, generation_units, prompts):
     if not _is_infer_runtime(runtime):
-        return
+        return None
 
     payload_dir = paths.encode_dir / "hvm_payload"
     runtime.remove_in_exp(payload_dir)
     runtime.remove_in_exp(paths.encode_dir / "hvm_payload.zip")
-    payload_started = time.perf_counter()
     payload_report = write_hvm_payload(
         frames_dir=paths.prepare_frames_dir,
         generation_units=generation_units,
         prompts=prompts,
         payload_dir=payload_dir,
     )
-    payload_write_sec = float(time.perf_counter() - payload_started)
     ensure_dir(payload_dir, "Ours payload")
     log_info(
         "Ours payload done: frames={} dir={}".format(
@@ -177,36 +174,84 @@ def _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_h
             _relative_to_exp(runtime, payload_dir),
         )
     )
+    return payload_report
 
-    if not bool(getattr(runtime.args, "compression_benchmark", False)):
-        return
 
-    benchmark_dir = runtime.paths.encode_compression_benchmark_dir
+_REQUIRED_PAYLOAD_FIELDS = (
+    "raw_bytes",
+    "payload_bytes",
+    "reduction_pct",
+    "transmitted_frame_count",
+    "generation_unit_count",
+)
+
+
+def _validate_canonical_payload(result_path):
+    payload = read_json_dict(result_path)
+    missing = [field for field in _REQUIRED_PAYLOAD_FIELDS if field not in payload or payload.get(field) is None]
+    if missing:
+        raise RuntimeError(
+            "encode_result missing canonical payload fields: {} path={}".format(
+                ", ".join(missing),
+                Path(result_path).resolve(),
+            )
+        )
+
+def run_compression_benchmark_encode_extra(runtime, bitrate=COMPRESSION_VIDEO_BITRATE):
+    ensure_file(runtime.paths.encode_result_path, "encode result")
+    ensure_dir(runtime.paths.prepare_frames_dir, "prepare frames dir")
+    encode_result = read_json_dict(runtime.paths.encode_result_path)
+    missing = [field for field in _REQUIRED_PAYLOAD_FIELDS if field not in encode_result or encode_result.get(field) is None]
+    if missing:
+        raise RuntimeError("compression benchmark requires encode_result canonical payload fields: {}".format(", ".join(missing)))
+    profile = dict(encode_result.get("profile") or {})
+    benchmark_dir = runtime.paths.encode_compression_dir
     runtime.remove_in_exp(benchmark_dir)
     benchmark_report = CompressionBenchmark(
-        frames_dir=paths.prepare_frames_dir,
+        frames_dir=runtime.paths.prepare_frames_dir,
         output_dir=benchmark_dir,
-        fps=getattr(runtime.args, "fps", runtime.spec.fps),
-        bitrate=getattr(runtime.args, "video_bitrate", "10M"),
-        hvm_payload_dir=payload_dir,
-        hvm_algorithmic_time=float(formal_hvm_algorithmic_sec) + float(payload_write_sec),
+        fps=runtime.spec.fps,
+        bitrate=str(bitrate or COMPRESSION_VIDEO_BITRATE),
+        encode_result=encode_result,
+        hvm_payload_dir=runtime.paths.encode_dir / "hvm_payload",
+        hvm_algorithmic_time=float(profile.get("total_sec", 0.0) or 0.0),
         exphub_root=runtime.exphub_root,
-        exp_dir=paths.exp_dir,
+        exp_dir=runtime.paths.exp_dir,
     ).run()
     ensure_dir(benchmark_report["raw_frames"], "compression benchmark Raw frames")
     ensure_file(benchmark_report["h265_video"], "compression benchmark H.265 video")
-    ensure_file(benchmark_report["hvm_payload_zip"], "compression benchmark Ours payload zip")
     ensure_file(benchmark_report["benchmark_report"], "compression benchmark report")
-    log_info(
-        "compression benchmark encode stage done: frames={} fps={} bitrate={} raw_frames={} h265={} vlmem={}".format(
-            int(benchmark_report.get("frame_count", 0) or 0),
-            int(benchmark_report.get("fps", 0) or 0),
-            str(benchmark_report.get("bitrate", "")),
-            _relative_to_exp(runtime, benchmark_report["raw_frames"]),
-            _relative_to_exp(runtime, benchmark_report["h265_video"]),
-            _relative_to_exp(runtime, benchmark_report["hvm_payload_zip"]),
-        )
+    return benchmark_report
+
+
+def run_motion_benchmark_extra(runtime):
+    ensure_file(runtime.paths.prepare_result_path, "prepare result")
+    ensure_dir(runtime.paths.prepare_frames_dir, "prepare frames dir")
+    ensure_file(runtime.paths.encode_result_path, "encode result")
+    prepare_result = read_json_dict(runtime.paths.prepare_result_path)
+    if not prepare_result:
+        raise RuntimeError("invalid prepare result: {}".format(runtime.paths.prepare_result_path))
+    benchmark_report = run_motion_benchmark(
+        prepare_result=prepare_result,
+        frames_dir=runtime.paths.prepare_frames_dir,
+        encode_dir=runtime.paths.encode_motion_benchmark_dir,
+        exp_dir=runtime.paths.exp_dir,
+        formal_encode_sec_without_benchmark=None,
+        identity={
+            "dataset": getattr(getattr(runtime, "config", None), "dataset", getattr(getattr(runtime, "spec", None), "dataset", "")),
+            "sequence": getattr(getattr(runtime, "config", None), "sequence", getattr(getattr(runtime, "spec", None), "sequence", "")),
+            "tag": getattr(getattr(runtime, "config", None), "tag", getattr(getattr(runtime, "spec", None), "tag", "")),
+        },
     )
+    for path, label in [
+        (runtime.paths.encode_motion_benchmark_report_path, "motion benchmark report"),
+        (runtime.paths.encode_motion_benchmark_pairs_csv_path, "motion benchmark csv"),
+        (runtime.paths.encode_motion_benchmark_overview_path, "motion benchmark overview"),
+        (runtime.paths.encode_motion_benchmark_canonical_json_path, "motion benchmark summary"),
+        (runtime.paths.encode_motion_benchmark_canonical_csv_path, "motion benchmark summary csv"),
+    ]:
+        ensure_file(path, label)
+    return benchmark_report
 
 
 def _run_single_encode(runtime, paths, log_name="encode.log"):
@@ -214,10 +259,7 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
     total_started_perf = time.perf_counter()
     ensure_file(paths.prepare_result_path, "prepare result")
     ensure_dir(paths.prepare_frames_dir, "prepare frames dir")
-    runtime.write_meta_snapshot()
-
-    runtime.remove_in_exp(paths.encode_dir)
-    paths.encode_dir.mkdir(parents=True, exist_ok=True)
+    _remove_encode_outputs(runtime, paths)
 
     prepare_result = read_json_dict(paths.prepare_result_path)
     if not prepare_result:
@@ -286,6 +328,8 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         prompt_manifest_path=runtime.exphub_root / "config" / "prompt_manifest.json",
     )
 
+    payload_report = _run_infer_payload_hooks(runtime, paths, generation_units, prompts)
+
     log_info("encode result writer start")
     encode_profile = {
         "version": 1,
@@ -305,51 +349,25 @@ def _run_single_encode(runtime, paths, log_name="encode.log"):
         elapsed_sec=float(time.time() - total_started_wall),
         paths=paths,
         encode_profile=encode_profile,
+        payload_report=payload_report,
     )
     result_writer_sec = float(time.perf_counter() - phase_started)
     total_sec = float(time.perf_counter() - total_started_perf)
     encode_profile["result_writer_sec"] = float(result_writer_sec)
     encode_profile["total_sec"] = float(total_sec)
     _patch_encode_result_profile(result_path, encode_profile)
-    formal_hvm_algorithmic_sec = float(total_sec)
     for path, label in [
         (paths.encode_motion_segments_path, "motion segments"),
         (paths.encode_semantic_anchors_path, "semantic anchors"),
         (paths.encode_generation_units_path, "generation units"),
         (paths.encode_prompts_path, "prompts"),
         (paths.encode_result_path, "encode result"),
-        (paths.encode_overview_path, "encode overview"),
+        (paths.encode_motion_overview_path, "motion overview"),
     ]:
         ensure_file(path, label)
 
-    benchmark_enabled = bool(getattr(runtime.args, "encode_motion_benchmark", False))
-    if benchmark_enabled:
-        formal_encode_sec = float(total_sec)
-        benchmark_report = run_motion_benchmark(
-            prepare_result=prepare_result,
-            frames_dir=paths.prepare_frames_dir,
-            encode_dir=paths.encode_dir,
-            exp_dir=paths.exp_dir,
-            formal_encode_sec_without_benchmark=formal_encode_sec,
-        )
-        _log_motion_benchmark_report(benchmark_report)
-        motion_benchmark_sec = float(dict(benchmark_report).get("motion_benchmark_sec", 0.0) or 0.0)
-        total_sec = float(time.perf_counter() - total_started_perf)
-        encode_profile["benchmark_enabled"] = True
-        encode_profile["motion_benchmark_sec"] = float(motion_benchmark_sec)
-        encode_profile["formal_encode_sec_without_benchmark"] = float(formal_encode_sec)
-        encode_profile["benchmark_overhead_note"] = "motion_benchmark_sec is opt-in experimental overhead, not default PC-only inference cost"
-        encode_profile["motion_benchmark_report"] = "encode/motion_benchmark_report.json"
-        encode_profile["total_sec"] = float(total_sec)
-        _patch_encode_result_profile(result_path, encode_profile)
-        for path, label in [
-            (paths.encode_dir / "motion_benchmark_report.json", "motion benchmark report"),
-            (paths.encode_dir / "motion_benchmark.csv", "motion benchmark csv"),
-            (paths.encode_dir / "motion_benchmark_overview.png", "motion benchmark overview"),
-        ]:
-            ensure_file(path, label)
-
-    _run_infer_payload_hooks(runtime, paths, generation_units, prompts, formal_hvm_algorithmic_sec)
+    if _is_infer_runtime(runtime):
+        _validate_canonical_payload(result_path)
 
     log_info(
         "encode profile: motion={:.2f}s semantic={:.2f}s writer={:.2f}s total={:.2f}s".format(
@@ -464,9 +482,9 @@ def _run_train_encode(runtime):
             )
         )
 
-    runtime.write_meta_snapshot()
-    runtime.remove_in_exp(runtime.paths.encode_dir)
     runtime.paths.encode_dir.mkdir(parents=True, exist_ok=True)
+    for child in list(runtime.paths.encode_dir.iterdir()):
+        runtime.remove_in_exp(child)
     runtime.paths.encode_sequences_dir.mkdir(parents=True, exist_ok=True)
     train_export = TrainExportSession(runtime)
     train_export.prepare_output_dirs()
@@ -485,7 +503,6 @@ def _run_train_encode(runtime):
             if first_error is None:
                 first_error = RuntimeError(reason)
             _write_train_encode_index(runtime, entries)
-            runtime.write_meta_snapshot()
             raise first_error
 
         paths = _train_sequence_encode_paths(runtime, sequence)
@@ -508,14 +525,12 @@ def _run_train_encode(runtime):
             if first_error is None:
                 first_error = exc
             _write_train_encode_index(runtime, entries)
-            runtime.write_meta_snapshot()
             raise
 
     index_payload = _write_train_encode_index(runtime, entries)
     if successful_sequences <= 0:
         raise RuntimeError("train encode produced no successful sequences")
     train_export.write_indexes(sequence_count=successful_sequences)
-    runtime.write_meta_snapshot()
     failed_or_skipped = int(index_payload.get("failed_count", 0) or 0) + int(index_payload.get("skipped_count", 0) or 0)
     if failed_or_skipped > 0:
         raise RuntimeError(
@@ -528,11 +543,9 @@ def _run_train_encode(runtime):
 
 
 def run(runtime):
-    mode = str(runtime.args.mode).strip().lower()
+    mode = str(runtime.execution_plan.mode).strip().lower()
     if mode == "infer":
         return _run_single_encode(runtime, _infer_encode_paths(runtime))["result_path"]
     if mode == "train":
-        if bool(getattr(runtime.args, "compression_benchmark", False)):
-            log_warn("compression benchmark is infer-only; skipping for train mode")
         return _run_train_encode(runtime)
     raise RuntimeError("unsupported encode mode: {}".format(mode))

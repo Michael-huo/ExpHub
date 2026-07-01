@@ -13,7 +13,6 @@ from exphub.common.compression_benchmark import (
     bytes_to_mib,
     canonical_method_report,
     method_enc_time_sec,
-    method_summary_lines,
     raw_payload_bytes_from_report,
     relative_path,
     resolve_path,
@@ -21,7 +20,7 @@ from exphub.common.compression_benchmark import (
     safe_float,
 )
 from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic
-from exphub.common.logging import log_info, log_warn
+from exphub.common.logging import log_warn
 from exphub.encode.dcvc_fm_adapter import DcvcFmAdapter
 
 
@@ -83,15 +82,6 @@ def _validate_decoded_frames(decoded_dir, expected_count, label):
     return frames
 
 
-def _format_summary(report):
-    try:
-        log_info("[Compression Benchmark: decode] Method Summary:")
-        for line in method_summary_lines(report):
-            log_info(line)
-    except Exception as exc:
-        log_warn("compression benchmark decode summary logging skipped: {}".format(exc))
-
-
 class CompressionBenchmarkDecode:
     def __init__(
         self,
@@ -117,7 +107,7 @@ class CompressionBenchmarkDecode:
 
     @property
     def report_path(self):
-        return self.output_dir / "compression_benchmark_decode_report.json"
+        return self.output_dir / "report.json"
 
     def _method_dir(self, method_key):
         return self.output_dir / str(method_key)
@@ -408,8 +398,6 @@ class CompressionBenchmarkDecode:
             "rows": rows,
         }
         write_json_atomic(self.report_path, report, indent=2)
-        log_info("compression benchmark decode stage report: {}".format(relative_path(self.exp_dir, self.report_path)))
-        _format_summary(report)
         return {
             "report_path": self.report_path,
             "summary": report,

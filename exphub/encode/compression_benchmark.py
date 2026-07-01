@@ -12,25 +12,23 @@ from exphub.common.compression_benchmark import (
     METHOD_ORDER,
     canonical_method_report,
     file_size,
-    method_summary_lines,
     relative_path,
     safe_token,
     sum_file_sizes,
     bytes_to_mib,
 )
 from exphub.common.io import ensure_dir, frame_sort_key, list_frames_sorted, write_json_atomic
-from exphub.common.logging import log_info, log_warn
+from exphub.common.logging import log_warn
 from exphub.encode.dcvc_fm_adapter import DcvcFmAdapter
-from exphub.encode.payload_writer import write_hvm_payload_zip
 
 
-def _log_encode_summary(report):
-    try:
-        log_info("[Compression Benchmark: encode] Method Summary:")
-        for line in method_summary_lines(report):
-            log_info(line)
-    except Exception as exc:
-        log_warn("compression benchmark encode summary logging skipped: {}".format(exc))
+_REQUIRED_ENCODE_PAYLOAD_FIELDS = (
+    "raw_bytes",
+    "payload_bytes",
+    "reduction_pct",
+    "transmitted_frame_count",
+    "generation_unit_count",
+)
 
 
 class CompressionBenchmark:
@@ -40,6 +38,7 @@ class CompressionBenchmark:
         output_dir,
         fps,
         bitrate="10M",
+        encode_result=None,
         hvm_payload_dir=None,
         hvm_algorithmic_time=0.0,
         ffmpeg_bin=None,
@@ -52,6 +51,7 @@ class CompressionBenchmark:
         self.exphub_root = Path(exphub_root).resolve() if exphub_root is not None else Path.cwd().resolve()
         self.fps = self._validate_fps(fps)
         self.bitrate = self._validate_bitrate(bitrate)
+        self.encode_result = dict(encode_result or {})
         self.hvm_payload_dir = Path(hvm_payload_dir).resolve() if hvm_payload_dir is not None else None
         self.hvm_algorithmic_time = self._validate_nonnegative_float(
             hvm_algorithmic_time,
@@ -111,12 +111,29 @@ class CompressionBenchmark:
         return self.output_dir / "vlmem"
 
     @property
-    def hvm_payload_zip_path(self):
-        return self.vlmem_dir / "hvm_payload.zip"
-
-    @property
     def benchmark_report_path(self):
-        return self.output_dir / "compression_benchmark_encode_report.json"
+        return self.output_dir / "report.json"
+
+    def _canonical_payload(self):
+        missing = [
+            field
+            for field in _REQUIRED_ENCODE_PAYLOAD_FIELDS
+            if field not in self.encode_result or self.encode_result.get(field) is None
+        ]
+        if missing:
+            raise RuntimeError("compression benchmark requires encode_result canonical payload fields: {}".format(", ".join(missing)))
+        raw_bytes = int(self.encode_result["raw_bytes"])
+        payload_bytes = int(self.encode_result["payload_bytes"])
+        transmitted = int(self.encode_result["transmitted_frame_count"])
+        if raw_bytes <= 0 or payload_bytes < 0 or transmitted <= 0:
+            raise RuntimeError("invalid encode_result canonical payload values for compression benchmark")
+        return {
+            "raw_bytes": raw_bytes,
+            "payload_bytes": payload_bytes,
+            "reduction_pct": float(self.encode_result["reduction_pct"]),
+            "transmitted_frame_count": transmitted,
+            "generation_unit_count": int(self.encode_result["generation_unit_count"]),
+        }
 
     def collect_frames(self):
         frame_dir = ensure_dir(self.frames_dir, "prepare frames dir")
@@ -140,7 +157,6 @@ class CompressionBenchmark:
         else:
             log_warn("stale compression benchmark cleanup ignored non-file directory entry: {}".format(target))
             return
-        log_info("removed stale compression benchmark artifact: {}".format(relative_path(self.exp_dir, target)))
 
     def _cleanup_stale_raw_artifacts(self):
         for name in ["zip", "raw_zip_artifact", "raw"]:
@@ -201,12 +217,6 @@ class CompressionBenchmark:
                 last_error = exc
                 self._remove_output_child_dir("raw")
         raise RuntimeError("failed to materialize raw frames: {}".format(last_error))
-
-    def _write_hvm_payload_zip(self):
-        if self.hvm_payload_dir is None:
-            raise RuntimeError("compression benchmark requires VLMem payload dir")
-        self.vlmem_dir.mkdir(parents=True, exist_ok=True)
-        return write_hvm_payload_zip(self.hvm_payload_dir, self.hvm_payload_zip_path)
 
     @staticmethod
     def _concat_line(path):
@@ -303,18 +313,13 @@ class CompressionBenchmark:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._cleanup_stale_raw_artifacts()
         frames = self.collect_frames()
-        raw_frame_bytes = sum_file_sizes(frames)
-        if raw_frame_bytes <= 0:
+        measured_raw_frame_bytes = sum_file_sizes(frames)
+        if measured_raw_frame_bytes <= 0:
             raise RuntimeError("compression benchmark selected frames have zero total byte size: {}".format(self.frames_dir))
+        canonical_payload = self._canonical_payload()
+        raw_frame_bytes = int(canonical_payload["raw_bytes"])
 
         raw_frames_dir, raw_frame_strategy = self._materialize_raw_frames(frames)
-        log_info(
-            "[Compression Benchmark: encode] Raw direct frames: {} strategy={}".format(
-                relative_path(self.exp_dir, raw_frames_dir),
-                str(raw_frame_strategy),
-            )
-        )
-
         concat_file = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -337,12 +342,8 @@ class CompressionBenchmark:
                 except FileNotFoundError:
                     pass
 
-        started = time.perf_counter()
-        hvm_payload_zip = self._write_hvm_payload_zip()
-        hvm_zip_sec = float(time.perf_counter() - started)
-        hvm_wall_with_archive_sec = float(self.hvm_algorithmic_time) + float(hvm_zip_sec)
-        hvm_payload_bytes = file_size(hvm_payload_zip)
-        hvm_payload_frames = list_frames_sorted(self.hvm_payload_dir / "frames") if self.hvm_payload_dir is not None else []
+        self.vlmem_dir.mkdir(parents=True, exist_ok=True)
+        hvm_payload_bytes = int(canonical_payload["payload_bytes"])
 
         raw_report = canonical_method_report(
             exp_dir=self.exp_dir,
@@ -366,6 +367,7 @@ class CompressionBenchmark:
                 "raw_frame_materialize_strategy": str(raw_frame_strategy),
                 "raw_frame_count": int(len(frames)),
                 "raw_frame_payload_bytes": int(raw_frame_bytes),
+                "measured_raw_frame_bytes": int(measured_raw_frame_bytes),
                 "note": "direct original-frame transmission; no encoder-side construction time",
             },
         )
@@ -404,20 +406,20 @@ class CompressionBenchmark:
             display_name="VLMem/REC",
             status="ok",
             source_frames_dir=self.frames_dir,
-            encoded_artifact_path=hvm_payload_zip,
+            encoded_artifact_path=None,
             encoded_artifact_dir=self.vlmem_dir,
             payload_bytes=hvm_payload_bytes,
             raw_reference_bytes=raw_frame_bytes,
             zip_reference_bytes=None,
             enc_time_sec=self.hvm_algorithmic_time,
             decode_time_sec=None,
-            codec_wall_time_sec=hvm_wall_with_archive_sec,
-            time_semantics="vlmem_payload_construction_wall_time; payload archive time excluded from Table-II enc_time_sec",
+            codec_wall_time_sec=self.hvm_algorithmic_time,
+            time_semantics="vlmem_payload_from_main_encode_result_no_rescan",
             frame_count=len(frames),
             fps=self.fps,
             extra={
-                "transmitted_frame_count": int(len(hvm_payload_frames)),
-                "payload_archive_sec": float(hvm_zip_sec),
+                "transmitted_frame_count": int(canonical_payload["transmitted_frame_count"]),
+                "generation_unit_count": int(canonical_payload["generation_unit_count"]),
             },
         )
         report = self._write_report(
@@ -425,14 +427,6 @@ class CompressionBenchmark:
             raw_frame_bytes=raw_frame_bytes,
             method_reports=[raw_report, h265_report, dcvc_report, vlmem_report],
         )
-
-        log_info(
-            "[Compression Benchmark: encode] Time Stats -> Raw: N/A | H.265 encode: {:.2f}s | VLMem payload: {:.2f}s".format(
-                float(h265_sec),
-                float(self.hvm_algorithmic_time),
-            )
-        )
-        _log_encode_summary(report)
 
         dcvc_required = bool(dict(dcvc_report.get("config") or {}).get("required", False))
         if dcvc_required and str(dcvc_report.get("status") or "") != "ok":
@@ -445,16 +439,12 @@ class CompressionBenchmark:
             "raw_frames": raw_frames_dir,
             "raw_frame_materialize_strategy": str(raw_frame_strategy),
             "h265_video": self.h265_path,
-            "hvm_payload_zip": hvm_payload_zip,
-            "vlmem_payload_zip": hvm_payload_zip,
             "frame_count": int(len(frames)),
             "fps": int(self.fps),
             "bitrate": str(self.bitrate),
             "h265_sec": float(h265_sec),
             "hvm_algorithmic_sec": float(self.hvm_algorithmic_time),
             "vlmem_algorithmic_sec": float(self.hvm_algorithmic_time),
-            "hvm_zip_sec": float(hvm_zip_sec),
-            "vlmem_zip_sec": float(hvm_zip_sec),
-            "hvm_total_sec": float(hvm_wall_with_archive_sec),
-            "vlmem_total_sec": float(hvm_wall_with_archive_sec),
+            "hvm_total_sec": float(self.hvm_algorithmic_time),
+            "vlmem_total_sec": float(self.hvm_algorithmic_time),
         }

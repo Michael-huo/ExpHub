@@ -12,26 +12,6 @@ from exphub.common.logging import log_warn
 from exphub.config import get_phase_python_config
 
 
-def _as_dict(value):
-    return value if isinstance(value, dict) else {}
-
-
-def _relative_path(base_dir, target_path):
-    base = Path(base_dir).resolve()
-    target = Path(target_path).resolve()
-    try:
-        return str(target.relative_to(base))
-    except Exception:
-        return str(target)
-
-
-def _format_metric(value):
-    try:
-        return "{:.6f}".format(float(value))
-    except Exception:
-        return "nan"
-
-
 def _python_exists(cmd):
     text = str(cmd or "").strip()
     if not text:
@@ -66,19 +46,6 @@ def _resolve_decode_python(runtime):
     return sys.executable
 
 
-def _print_terminal_summary(report, python_bin, exp_dir):
-    outputs = _as_dict(report.get("outputs"))
-    report_path = outputs.get("report") or "decode/image_quality_report.json"
-    print("[Image Quality]")
-    print("python            : {}".format(str(python_bin)))
-    print("matched_frames    : {}".format(int(report.get("frame_count_matched", 0) or 0)))
-    print("evaluated_frames  : {}".format(int(report.get("frame_count_evaluated", 0) or 0)))
-    print("lpips_mean        : {}".format(_format_metric(_as_dict(report.get("lpips")).get("mean"))))
-    print("ssim_mean         : {}".format(_format_metric(_as_dict(report.get("ssim")).get("mean"))))
-    print("fid               : {}".format(_format_metric(report.get("fid"))))
-    print("report            : {}".format(str(report_path)))
-
-
 def _subprocess_env(exphub_root):
     env = dict(os.environ)
     root = str(Path(exphub_root).resolve())
@@ -87,10 +54,7 @@ def _subprocess_env(exphub_root):
     return env
 
 
-def run_decode_image_quality_subprocess(runtime):
-    if not bool(getattr(runtime.args, "decode_image_quality", False)):
-        return None
-
+def run_decode_image_quality_subprocess(runtime, *, stride: int = 1, max_frames: int = 0, device: str = "auto"):
     python_bin = _resolve_decode_python(runtime)
     cmd = [
         python_bin,
@@ -100,20 +64,30 @@ def run_decode_image_quality_subprocess(runtime):
         str(runtime.paths.exp_dir),
         "--prepare-result",
         str(runtime.paths.prepare_result_path),
-        "--decode-merge-report",
-        str(runtime.paths.decode_merge_report_path),
+        "--decode-report",
+        str(runtime.paths.decode_report_path),
         "--output-report",
         str(runtime.paths.decode_image_quality_report_path),
-        "--output-summary",
-        str(runtime.paths.decode_image_quality_summary_path),
         "--output-details-csv",
         str(runtime.paths.decode_image_quality_details_path),
+        "--output-summary-json",
+        str(runtime.paths.decode_image_quality_canonical_json_path),
+        "--output-summary-csv",
+        str(runtime.paths.decode_image_quality_canonical_csv_path),
+        "--dataset",
+        str(runtime.config.dataset),
+        "--sequence",
+        str(runtime.config.sequence),
+        "--tag",
+        str(runtime.config.tag),
+        "--decode-profile",
+        str(runtime.config.decode_profile),
         "--stride",
-        str(int(getattr(runtime.args, "decode_image_quality_stride", 1))),
+        str(int(stride)),
         "--max-frames",
-        str(int(getattr(runtime.args, "decode_image_quality_max_frames", 0))),
+        str(int(max_frames)),
         "--device",
-        str(getattr(runtime.args, "decode_image_quality_device", "auto") or "auto"),
+        str(device or "auto"),
     ]
 
     proc = subprocess.run(
@@ -145,14 +119,16 @@ def run_decode_image_quality_subprocess(runtime):
                 "",
                 "Install missing optional packages in the decode Python environment, or configure "
                 "environments.phases.decode.python correctly. This optional evaluation is only required "
-                "when --decode_image_quality is enabled.",
+                "when --experiments image-quality is requested.",
             ]
         )
         raise RuntimeError("\n".join(message))
 
     report_path = ensure_file(runtime.paths.decode_image_quality_report_path, "decode image quality report")
+    ensure_file(runtime.paths.decode_image_quality_details_path, "decode image quality details")
+    ensure_file(runtime.paths.decode_image_quality_canonical_json_path, "decode image quality canonical summary")
+    ensure_file(runtime.paths.decode_image_quality_canonical_csv_path, "decode image quality canonical summary csv")
     report = read_json_dict(report_path)
     if not report:
         raise RuntimeError("invalid decode image quality report: {}".format(report_path))
-    _print_terminal_summary(report, python_bin, runtime.paths.exp_dir)
     return report

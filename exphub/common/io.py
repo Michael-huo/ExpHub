@@ -4,6 +4,8 @@ import json
 import os
 import re
 import shutil
+import uuid
+import csv
 from pathlib import Path
 
 _FRAME_RE = re.compile(r"(?:^|_)(\d+)$")
@@ -37,6 +39,56 @@ def write_json_atomic(path, obj, indent=2):
     os.replace(str(tmp_path), str(resolved))
 
 
+def unique_sibling_temp_path(path):
+    resolved = Path(path).resolve()
+    suffix = resolved.suffix
+    stem = resolved.name[: -len(suffix)] if suffix else resolved.name
+    return resolved.with_name("{}.{:s}{}".format(stem, uuid.uuid4().hex, suffix))
+
+
+def replace_nonempty_file(temp_path, final_path, name="artifact"):
+    temp = Path(temp_path).resolve()
+    final = Path(final_path).resolve()
+    if not temp.is_file():
+        raise RuntimeError("failed to create required {}: {}".format(name, temp))
+    try:
+        size = int(temp.stat().st_size)
+    except Exception:
+        size = 0
+    if size <= 0:
+        try:
+            temp.unlink()
+        except Exception:
+            pass
+        raise RuntimeError("required {} is empty: {}".format(name, temp))
+    final.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(str(temp), str(final))
+    return final
+
+
+def write_csv_atomic(path, fieldnames, rows):
+    resolved = Path(path).resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = resolved.with_name(resolved.name + ".tmp")
+    with tmp_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(fieldnames))
+        writer.writeheader()
+        for row in list(rows or []):
+            writer.writerow(dict(row))
+    os.replace(str(tmp_path), str(resolved))
+
+
+def write_yaml_atomic(path, obj):
+    import yaml
+
+    resolved = Path(path).resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = resolved.with_name(resolved.name + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(obj, handle, sort_keys=True, allow_unicode=False)
+    os.replace(str(tmp_path), str(resolved))
+
+
 def read_json_dict(path):
     resolved = Path(path).resolve()
     if not resolved.is_file():
@@ -48,10 +100,6 @@ def read_json_dict(path):
     if isinstance(data, dict):
         return data
     return {}
-
-
-def read_step_meta(path):
-    return read_json_dict(path)
 
 
 def remove_path(path):

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import sys
-
 
 _ANSI_RESET = "\033[0m"
 _ANSI_BOLD = "\033[1m"
@@ -18,10 +16,6 @@ def set_cli_log_level(level):
     _CLI_LOG_LEVEL = value
 
 
-def get_cli_log_level():
-    return _CLI_LOG_LEVEL
-
-
 def log_info(msg):
     print("[INFO] {}".format(msg))
 
@@ -31,24 +25,12 @@ def runtime_info(msg):
         log_info(msg)
 
 
-def log_run(msg):
-    print("[RUN] {}".format(msg))
-
-
 def log_prog(msg):
     print("[PROG] {}".format(msg))
 
 
-def log_prompt(msg):
-    print("[PROMPT] {}".format(msg))
-
-
 def log_warn(msg):
     print("[WARN] {}".format(msg))
-
-
-def log_err(msg):
-    print("[ERR] {}".format(msg), file=sys.stderr)
 
 
 def log_step(msg):
@@ -68,7 +50,3 @@ def log_step(msg):
     print(line)
     if is_done or is_fail:
         print(sep)
-
-
-def die(msg):
-    raise SystemExit("[ERR] {}".format(msg))

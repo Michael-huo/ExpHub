@@ -10,7 +10,14 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from urllib.parse import urlparse
 
-from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic, write_text_atomic
+from exphub.common.io import (
+    ensure_dir,
+    ensure_file,
+    list_frames_sorted,
+    read_json_dict,
+    write_csv_atomic,
+    write_json_atomic,
+)
 
 
 BATCH_SIZE = 16
@@ -116,7 +123,7 @@ def _import_optional_dependencies(python_executable=None):
             "Missing optional packages:\n{}\n\n"
             "Install them in the decode Python environment, or configure "
             "environments.phases.decode.python correctly. This optional evaluation "
-            "is only required when --decode_image_quality is enabled.".format(python_text, missing_text)
+            "is only required when --experiments image-quality is requested.".format(python_text, missing_text)
         )
 
     return modules
@@ -129,7 +136,7 @@ def _resolve_device(torch, requested):
     if value == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("decode image quality requested cuda, but torch.cuda.is_available() is false")
     if value not in ("cuda", "cpu"):
-        raise RuntimeError("--decode_image_quality_device must be one of auto, cuda, cpu")
+        raise RuntimeError("image-quality device must be one of auto, cuda, cpu")
     return value
 
 
@@ -190,7 +197,7 @@ def _explicit_index_map(merge_report):
     return {}
 
 
-def _collect_generated_frames(merge_report, decode_frames_dir):
+def _collect_generated_frames(decode_report, decode_frames_dir):
     frame_dir = ensure_dir(decode_frames_dir, "decode frames dir")
     generated_by_output = {}
     for path in list_frames_sorted(frame_dir):
@@ -200,13 +207,14 @@ def _collect_generated_frames(merge_report, decode_frames_dir):
     if not generated_by_output:
         return {}, "continuous_from_zero", 0
 
-    explicit = _explicit_index_map(_as_dict(merge_report))
+    merge_report = _as_dict(_as_dict(decode_report).get("merge"))
+    explicit = _explicit_index_map(merge_report)
     if explicit:
         frames = {}
         for output_idx, path in generated_by_output.items():
             if int(output_idx) in explicit:
                 frames[int(explicit[int(output_idx)])] = path
-        return frames, "decode_merge_report_explicit_index_map", len(generated_by_output)
+        return frames, "decode_report_explicit_index_map", len(generated_by_output)
 
     summary = _as_dict(_as_dict(merge_report).get("summary"))
     if summary.get("merged_start_idx") is not None:
@@ -309,7 +317,7 @@ def _block_downloads(torch):
     def blocked_download(*args, **kwargs):
         raise RuntimeError(
             "FID/LPIPS weight asset is not available in the local cache and network downloads are disabled. "
-            "Image quality evaluation is optional and only required when --decode_image_quality is enabled."
+            "Image quality evaluation is optional and only required when --experiments image-quality is requested."
         )
 
     def cached_only_load_state_dict_from_url(url, model_dir=None, *args, **kwargs):
@@ -319,7 +327,7 @@ def _block_downloads(torch):
         if not cached_path.is_file():
             raise RuntimeError(
                 "FID/LPIPS weight asset is not available in the local cache and network downloads are disabled: "
-                "{}. Image quality evaluation is optional and only required when --decode_image_quality is enabled.".format(
+                "{}. Image quality evaluation is optional and only required when --experiments image-quality is requested.".format(
                     cached_path
                 )
             )
@@ -379,7 +387,7 @@ def _compute_metrics(pairs, deps, device):
         raise RuntimeError(
             "failed to initialize decode image quality metrics. Optional packages/assets are required: {}. "
             "Network downloads are disabled; install/cache LPIPS and FID assets before enabling "
-            "--decode_image_quality. Original error: {}".format(OPTIONAL_PACKAGE_HINT, exc)
+            "--experiments image-quality. Original error: {}".format(OPTIONAL_PACKAGE_HINT, exc)
         ) from exc
 
     for start in range(0, len(pairs), BATCH_SIZE):
@@ -430,7 +438,7 @@ def _compute_metrics(pairs, deps, device):
     except Exception as exc:
         raise RuntimeError(
             "failed to compute FID. torchmetrics/torch-fidelity assets must be installed and cached locally; "
-            "image quality evaluation is optional and only required when --decode_image_quality is enabled. "
+            "image quality evaluation is optional and only required when --experiments image-quality is requested. "
             "Original error: {}".format(exc)
         ) from exc
 
@@ -463,38 +471,46 @@ def _write_details_csv(path, rows, exp_dir):
     tmp_path.replace(resolved)
 
 
-def _format_metric(value):
-    try:
-        return "{:.6f}".format(float(value))
-    except Exception:
-        return "nan"
+def _write_canonical_summary(json_path, csv_path, report, identity=None):
+    identity = dict(identity or {})
+    lpips = _as_dict(report.get("lpips"))
+    ssim = _as_dict(report.get("ssim"))
+    row = {
+        "dataset": identity.get("dataset", ""),
+        "sequence": identity.get("sequence", ""),
+        "tag": identity.get("tag", ""),
+        "decode_profile": identity.get("decode_profile", ""),
+        "matched_frame_count": int(report.get("frame_count_matched", 0) or 0),
+        "evaluated_frame_count": int(report.get("frame_count_evaluated", 0) or 0),
+        "lpips": lpips.get("mean"),
+        "ssim": ssim.get("mean"),
+        "fid": report.get("fid"),
+        "stride": int(report.get("stride", 1) or 1),
+        "max_frames": int(report.get("max_frames", 0) or 0),
+        "device": str(report.get("device", "") or ""),
+    }
+    summary = {
+        "schema_version": 1,
+        "source": "exphub.decode.image_quality",
+        "identity": identity,
+        "metrics": {
+            "lpips": lpips,
+            "ssim": ssim,
+            "fid": report.get("fid"),
+        },
+        "row": row,
+        "warnings": list(report.get("warnings") or []),
+    }
+    write_json_atomic(json_path, summary, indent=2)
+    write_csv_atomic(csv_path, list(row.keys()), [row])
+    return summary
 
 
-def _write_summary(path, report):
-    warnings = list(report.get("warnings") or [])
-    text = "\n".join(
-        [
-            "[Image Quality]",
-            "matched_frames: {}".format(int(report.get("frame_count_matched", 0) or 0)),
-            "evaluated_frames: {}".format(int(report.get("frame_count_evaluated", 0) or 0)),
-            "device: {}".format(str(report.get("device", ""))),
-            "stride: {}".format(int(report.get("stride", 1) or 1)),
-            "max_frames: {}".format(int(report.get("max_frames", 0) or 0)),
-            "LPIPS mean: {}".format(_format_metric(_as_dict(report.get("lpips")).get("mean"))),
-            "SSIM mean: {}".format(_format_metric(_as_dict(report.get("ssim")).get("mean"))),
-            "FID: {}".format(_format_metric(report.get("fid"))),
-            "warnings: {}".format("; ".join(str(item) for item in warnings) if warnings else ""),
-            "",
-        ]
-    )
-    write_text_atomic(path, text)
-
-
-def _resolve_decode_frames_dir(run_root, decode_merge_report_path, merge_report):
+def _resolve_decode_frames_dir(run_root, decode_report_path, decode_report):
     base = Path(run_root).resolve()
-    report_dir = Path(decode_merge_report_path).resolve().parent
+    report_dir = Path(decode_report_path).resolve().parent
     for parent_key in ("outputs", "artifacts"):
-        raw = str(_as_dict(merge_report.get(parent_key)).get("frames_dir", "") or "").strip()
+        raw = str(_as_dict(decode_report.get(parent_key)).get("frames_dir", "") or "").strip()
         if not raw:
             continue
         candidate = Path(raw)
@@ -508,10 +524,12 @@ def _resolve_decode_frames_dir(run_root, decode_merge_report_path, merge_report)
 def run_image_quality_evaluation(
     run_root,
     prepare_result_path,
-    decode_merge_report_path,
+    decode_report_path,
     output_report_path,
-    output_summary_path,
     output_details_csv_path,
+    output_summary_json_path=None,
+    output_summary_csv_path=None,
+    identity=None,
     stride=1,
     max_frames=0,
     device="auto",
@@ -520,21 +538,22 @@ def run_image_quality_evaluation(
 ):
     run_root_path = Path(run_root).resolve()
     prepare_result_path = Path(prepare_result_path).resolve()
-    decode_merge_report_path = Path(decode_merge_report_path).resolve()
+    decode_report_path = Path(decode_report_path).resolve()
     output_report_path = Path(output_report_path).resolve()
-    output_summary_path = Path(output_summary_path).resolve()
     output_details_csv_path = Path(output_details_csv_path).resolve()
+    output_summary_json_path = Path(output_summary_json_path).resolve() if output_summary_json_path else None
+    output_summary_csv_path = Path(output_summary_csv_path).resolve() if output_summary_csv_path else None
 
     for path, label in (
         (prepare_result_path, "prepare result"),
-        (decode_merge_report_path, "decode merge report"),
+        (decode_report_path, "decode report"),
     ):
         try:
             ensure_file(path, label)
         except RuntimeError as exc:
             raise RuntimeError("{} Missing {}: {}".format(MISSING_INPUT_HINT, label, path)) from exc
 
-    prepare_frames_dir = (prepare_result_path.parent / "frames").resolve()
+    prepare_frames_dir = (prepare_result_path.parent / "raw_frames").resolve()
     try:
         ensure_dir(prepare_frames_dir, "prepare frames dir")
     except RuntimeError as exc:
@@ -546,18 +565,18 @@ def run_image_quality_evaluation(
     max_frames = int(max_frames)
 
     prepare_result = read_json_dict(prepare_result_path)
-    merge_report = read_json_dict(decode_merge_report_path)
-    if not prepare_result or not merge_report:
-        raise RuntimeError("{} Invalid prepare or decode merge report.".format(MISSING_INPUT_HINT))
+    decode_report = read_json_dict(decode_report_path)
+    if not prepare_result or not decode_report:
+        raise RuntimeError("{} Invalid prepare or decode report.".format(MISSING_INPUT_HINT))
 
-    decode_frames_dir = _resolve_decode_frames_dir(run_root_path, decode_merge_report_path, merge_report)
+    decode_frames_dir = _resolve_decode_frames_dir(run_root_path, decode_report_path, decode_report)
     try:
         ensure_dir(decode_frames_dir, "decode frames dir")
     except RuntimeError as exc:
         raise RuntimeError("{} {}".format(MISSING_INPUT_HINT, exc)) from exc
 
     original_frames = _collect_original_frames(prepare_result, prepare_frames_dir)
-    generated_frames, frame_index_mode, generated_file_count = _collect_generated_frames(merge_report, decode_frames_dir)
+    generated_frames, frame_index_mode, generated_file_count = _collect_generated_frames(decode_report, decode_frames_dir)
     common_indices, pairs = _sample_pairs(original_frames, generated_frames, stride, max_frames)
 
     if not common_indices:
@@ -594,10 +613,12 @@ def run_image_quality_evaluation(
         "warnings": warnings,
         "outputs": {
             "report": _relative_path(run_root_path, output_report_path),
-            "summary": _relative_path(run_root_path, output_summary_path),
             "details_csv": _relative_path(run_root_path, output_details_csv_path),
         },
     }
-    _write_summary(output_summary_path, report)
+    if output_summary_json_path is not None and output_summary_csv_path is not None:
+        _write_canonical_summary(output_summary_json_path, output_summary_csv_path, report, identity=identity)
+        report["outputs"]["summary_json"] = _relative_path(run_root_path, output_summary_json_path)
+        report["outputs"]["summary_csv"] = _relative_path(run_root_path, output_summary_csv_path)
     write_json_atomic(output_report_path, report, indent=2)
     return report
