@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from datetime import datetime
 from pathlib import Path
 
-from exphub.common.io import ensure_dir, list_frames_sorted, read_json_dict, remove_path, write_json_atomic, write_text_atomic
-from exphub.common.logging import log_info, log_prog, log_warn
+from exphub.common.io import (
+    ensure_dir,
+    list_frames_sorted,
+    read_json_dict,
+    remove_path,
+    replace_nonempty_file,
+    unique_sibling_temp_path,
+    write_json_atomic,
+    write_text_atomic,
+)
+from exphub.common.logging import log_prog, log_warn
 
 
 def _as_dict(value):
@@ -59,6 +67,8 @@ def _timestamp_values(prepare_result):
 
 
 def _write_preview(frames_dir, fps, out_mp4):
+    final_path = Path(out_mp4).resolve()
+    temp_path = unique_sibling_temp_path(final_path)
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg:
         cmd = [
@@ -73,11 +83,12 @@ def _write_preview(frames_dir, fps, out_mp4):
             str(Path(frames_dir).resolve() / "%06d.png"),
             "-pix_fmt",
             "yuv420p",
-            str(Path(out_mp4).resolve()),
+            str(temp_path),
         ]
         try:
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, universal_newlines=True)
-            if proc.returncode == 0 and Path(out_mp4).is_file():
+            if proc.returncode == 0 and temp_path.is_file():
+                replace_nonempty_file(temp_path, final_path, "decode preview")
                 return True
             if proc.stdout:
                 log_warn("unit merge preview ffmpeg failed: {}".format(" | ".join(proc.stdout.splitlines()[-3:])))
@@ -92,15 +103,20 @@ def _write_preview(frames_dir, fps, out_mp4):
     if not frames:
         return False
     try:
-        writer = imageio.get_writer(str(out_mp4), fps=int(fps))
+        writer = imageio.get_writer(str(temp_path), fps=int(fps))
         try:
             for frame_path in frames:
                 writer.append_data(imageio.imread(str(frame_path)))
         finally:
             writer.close()
     except Exception:
+        try:
+            temp_path.unlink()
+        except Exception:
+            pass
         return False
-    return Path(out_mp4).is_file()
+    replace_nonempty_file(temp_path, final_path, "decode preview")
+    return final_path.is_file()
 
 
 def _report_unit_map(decode_report):
@@ -124,10 +140,8 @@ def merge_units(runtime, tasks_payload, decode_report):
 
     for stale_path in (
         runtime.paths.decode_frames_dir,
-        runtime.paths.decode_merge_report_path,
         runtime.paths.decode_calib_path,
         runtime.paths.decode_timestamps_path,
-        runtime.paths.decode_preview_path,
     ):
         remove_path(stale_path)
 
@@ -199,8 +213,6 @@ def merge_units(runtime, tasks_payload, decode_report):
                 "merge_drop_leading_frames": int(drop_leading),
                 "output_start_frame": int(out_start),
                 "output_end_frame": int(out_end),
-                "frames_dir": str(unit_report.get("frames_dir", "") or ""),
-                "output_dir": str(unit_report.get("output_dir", "") or ""),
             }
         )
         prev_end = end_idx
@@ -222,29 +234,13 @@ def merge_units(runtime, tasks_payload, decode_report):
         "\n".join("{:.9f}".format(float(item) - t0) for item in merged_timestamp_values) + "\n",
     )
     preview_ok = _write_preview(runtime.paths.decode_frames_dir, int(float(runtime.fps_arg)), runtime.paths.decode_preview_path)
+    if not preview_ok:
+        raise RuntimeError("failed to produce required decode preview: {}".format(runtime.paths.decode_preview_path))
 
     source_inputs = dict(tasks_payload.get("source_inputs") or {})
-    report = {
-        "schema": "decode_merge_report",
-        "stage": "decode",
-        "substage": "unit_merge",
+    merge_payload = {
         "contract": "decode_unit_merge_native",
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "inputs": {
-            "planner": "generation_units",
-            "prompt_profile": "base_motion_prompt",
-            "anchor_backend": "image_embedding_visual_anchor",
-            "source_inputs": source_inputs,
-            "decode_report": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_report_path),
-            "generation_tasks": "in_memory",
-        },
-        "artifacts": {
-            "frames_dir": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_frames_dir),
-            "timestamps": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_timestamps_path),
-            "calib": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_calib_path),
-            "report": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_merge_report_path),
-            "preview": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_preview_path) if preview_ok else "",
-        },
+        "source_inputs": source_inputs,
         "summary": {
             "unit_count": int(len(tasks)),
             "merged_frame_count": int(merged_count),
@@ -260,17 +256,31 @@ def merge_units(runtime, tasks_payload, decode_report):
             "fps": int(float(runtime.fps_arg)),
         },
         "segments": merged_segments,
-        "merge_status": "success",
-        "outputs": {
-            "frames_dir": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_frames_dir),
-            "frame_count": int(merged_count),
-            "timestamps_path": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_timestamps_path),
-            "calib_path": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_calib_path),
-            "preview_path": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_preview_path) if preview_ok else "",
-        },
+        "status": "success",
         "warnings": [],
     }
-    write_json_atomic(runtime.paths.decode_merge_report_path, report, indent=2)
+    report = dict(decode_report or {})
+    cleaned_units = []
+    for raw_unit in list(report.get("units") or []):
+        unit = dict(raw_unit or {})
+        for key in ("frames_dir", "output_dir", "params_path", "decode_meta_path"):
+            unit.pop(key, None)
+        cleaned_units.append(unit)
+    if cleaned_units:
+        report["units"] = cleaned_units
+    report["merge"] = merge_payload
+    outputs = _as_dict(report.get("outputs"))
+    outputs.pop("runs_dir", None)
+    report["outputs"] = {
+        **outputs,
+        "frames_dir": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_frames_dir),
+        "frame_count": int(merged_count),
+        "timestamps_path": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_timestamps_path),
+        "calib_path": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_calib_path),
+        "preview_path": _relative_path(runtime.paths.exp_dir, runtime.paths.decode_preview_path) if preview_ok else "",
+    }
+    report["warnings"] = list(_as_dict(report).get("warnings") or [])
+    report["schema_version"] = int(report.get("schema_version", 1) or 1)
+    write_json_atomic(runtime.paths.decode_report_path, report, indent=2)
     log_prog("unit merge summary: merged_frames={} units={}".format(merged_count, len(tasks)))
-    log_info("unit merge report: {}".format(runtime.paths.decode_merge_report_path))
     return report

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+from exphub.common.io import replace_nonempty_file, unique_sibling_temp_path
+
 
 def _setup_matplotlib():
     if not os.environ.get("MPLBACKEND"):
@@ -311,9 +313,9 @@ def generate_trajectory_overlay(
     out_dir = Path(out_dir).resolve()
     exp_dir = Path(exp_dir).resolve()
     plot_path = out_dir / "trajectory_overlay_auto2d.png"
-    paper_path = out_dir / "trajectory_overlay_paper.png"
-    paper_pdf_path = out_dir / "trajectory_overlay_paper.pdf"
     interactive_path = out_dir / "trajectory_overlay_interactive.html"
+    plot_temp_path = unique_sibling_temp_path(plot_path)
+    interactive_temp_path = unique_sibling_temp_path(interactive_path)
     warnings = []
 
     try:
@@ -376,23 +378,23 @@ def generate_trajectory_overlay(
         )
         xlim, ylim = _fixed_equal_limits((gt_xy, ori_xy, rec_xy), axes_aspect=axes_aspect, padding_ratio=0.05)
         plt = _setup_matplotlib()
-        for path, show_legend in ((plot_path, True), (paper_path, False), (paper_pdf_path, False)):
-            _save_trajectory_overlay(
-                plt=plt,
-                output_path=path,
-                gt_xy=gt_xy,
-                ori_xy=ori_xy,
-                rec_xy=rec_xy,
-                xlabel=xlabel,
-                ylabel=ylabel,
-                xlim=xlim,
-                ylim=ylim,
-                show_legend=show_legend,
-                fig_size=fig_size,
-                fig_dpi=fig_dpi,
-                save_dpi=save_dpi,
-                margins=margins,
-            )
+        _save_trajectory_overlay(
+            plt=plt,
+            output_path=plot_temp_path,
+            gt_xy=gt_xy,
+            ori_xy=ori_xy,
+            rec_xy=rec_xy,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            xlim=xlim,
+            ylim=ylim,
+            show_legend=True,
+            fig_size=fig_size,
+            fig_dpi=fig_dpi,
+            save_dpi=save_dpi,
+            margins=margins,
+        )
+        replace_nonempty_file(plot_temp_path, plot_path, "trajectory overlay")
 
         interactive_result = {
             "trajectory_interactive_status": "skipped_error",
@@ -407,7 +409,7 @@ def generate_trajectory_overlay(
             from exphub.eval.trajectory_interactive import write_interactive_trajectory_html
 
             interactive_result = write_interactive_trajectory_html(
-                output_path=interactive_path,
+                output_path=interactive_temp_path,
                 exp_dir=exp_dir,
                 gt_xy=gt_xy,
                 ori_xy=ori_xy,
@@ -422,6 +424,9 @@ def generate_trajectory_overlay(
                 generation_units_path=generation_units_path,
                 nearest_time_tolerance=float(t_max_diff),
             )
+            if interactive_result.get("trajectory_interactive_path"):
+                replace_nonempty_file(interactive_temp_path, interactive_path, "interactive trajectory overlay")
+                interactive_result["trajectory_interactive_path"] = _relative_path(exp_dir, interactive_path)
             status = str(interactive_result.get("trajectory_interactive_status") or "skipped_error")
             saved_path = interactive_result.get("trajectory_interactive_path")
             marker_count = int(interactive_result.get("trajectory_interactive_marker_count", 0) or 0)
@@ -453,8 +458,6 @@ def generate_trajectory_overlay(
         return {
             "plot_status": "success",
             "trajectory_overlay_path": _relative_path(exp_dir, plot_path),
-            "trajectory_overlay_paper_path": _relative_path(exp_dir, paper_path),
-            "trajectory_overlay_paper_pdf_path": _relative_path(exp_dir, paper_pdf_path),
             "trajectory_interactive_path": interactive_result.get("trajectory_interactive_path"),
             "trajectory_interactive_status": interactive_result.get("trajectory_interactive_status"),
             "trajectory_interactive_marker_count": interactive_result.get("trajectory_interactive_marker_count"),
@@ -473,8 +476,6 @@ def generate_trajectory_overlay(
         return {
             "plot_status": "skipped",
             "trajectory_overlay_path": None,
-            "trajectory_overlay_paper_path": None,
-            "trajectory_overlay_paper_pdf_path": None,
             "trajectory_interactive_path": None,
             "trajectory_interactive_status": "skipped_error",
             "trajectory_interactive_marker_count": 0,

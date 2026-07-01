@@ -5,18 +5,15 @@ from pathlib import Path
 
 
 RAW_METHOD_KEY = "raw"
-LEGACY_RAW_METHOD_KEY = "zip"
 METHOD_ORDER = (RAW_METHOD_KEY, "h265", "dcvc_fm_q21", "vlmem")
 DISPLAY_NAMES = {
     "raw": "Raw",
-    "zip": "ZIP/ORI",
     "h265": "H.265",
     "dcvc_fm_q21": "DCVC-FM q21",
     "vlmem": "VLMem/REC",
 }
 TRAJECTORY_ROLES = {
     "raw": "ORI",
-    "zip": "ORI",
     "h265": "codec_decoded",
     "dcvc_fm_q21": "codec_decoded",
     "vlmem": "REC",
@@ -150,45 +147,11 @@ def raw_payload_bytes_from_report(report):
         payload.get("raw_frame_bytes"),
         payload.get("raw_payload_bytes"),
     ]
-    legacy_method = as_dict(methods.get(LEGACY_RAW_METHOD_KEY))
     for value in candidates:
         parsed = safe_int(value)
         if parsed is not None:
             return int(parsed)
-    legacy_payload = safe_float(legacy_method.get("payload_bytes"))
-    legacy_reduction_vs_raw = safe_float(legacy_method.get("reduction_pct_vs_raw_frames"))
-    if legacy_payload is not None and legacy_reduction_vs_raw is not None:
-        denominator = 1.0 - (float(legacy_reduction_vs_raw) / 100.0)
-        if denominator > 0.0:
-            return int(round(float(legacy_payload) / denominator))
-    legacy_payload_int = safe_int(legacy_method.get("payload_bytes"))
-    if legacy_payload_int is not None:
-        return int(legacy_payload_int)
-    return None
-
-
-def _legacy_zip_method_as_raw(report):
-    payload = as_dict(report)
-    legacy = dict(as_dict(as_dict(payload.get("methods")).get(LEGACY_RAW_METHOD_KEY)))
-    if not legacy:
-        return {}
-    raw_payload_bytes = raw_payload_bytes_from_report(payload)
-    legacy["legacy_method_key"] = LEGACY_RAW_METHOD_KEY
-    legacy["method_key"] = RAW_METHOD_KEY
-    legacy["display_name"] = DISPLAY_NAMES[RAW_METHOD_KEY]
-    legacy["trajectory_role"] = TRAJECTORY_ROLES[RAW_METHOD_KEY]
-    legacy["encoded_artifact_path"] = None
-    legacy["enc_time_sec"] = None
-    legacy["codec_wall_time_sec"] = None
-    legacy["time_semantics"] = "legacy zip method row read as Raw direct baseline; official Raw has no encoder-side construction time"
-    legacy["note"] = "legacy zip row interpreted as Raw for backward compatibility"
-    if raw_payload_bytes is not None:
-        legacy["payload_bytes"] = int(raw_payload_bytes)
-        legacy["payload_mib"] = bytes_to_mib(raw_payload_bytes)
-    legacy["reduction_pct"] = 0.0
-    legacy["reduction_pct_vs_raw_frames"] = 0.0
-    legacy["reduction_pct_vs_zip"] = 0.0
-    return legacy
+    raise RuntimeError("compression benchmark report missing canonical raw payload bytes")
 
 
 def resolve_method_report(report, method_key):
@@ -199,25 +162,19 @@ def resolve_method_report(report, method_key):
         raw_method = as_dict(methods.get(RAW_METHOD_KEY))
         if raw_method:
             return raw_method
-        return _legacy_zip_method_as_raw(payload)
+        raise RuntimeError("compression benchmark report missing canonical raw method")
     return as_dict(methods.get(key))
 
 
 def benchmark_method_order(report):
     payload = as_dict(report)
     methods = as_dict(payload.get("methods"))
-    raw_available = bool(as_dict(methods.get(RAW_METHOD_KEY)))
-    legacy_raw_available = bool(as_dict(methods.get(LEGACY_RAW_METHOD_KEY)))
     source_order = list(payload.get("methods_order") or METHOD_ORDER)
     if not source_order:
         source_order = list(METHOD_ORDER)
     result = []
     for raw_key in source_order:
         key = str(raw_key)
-        if key == LEGACY_RAW_METHOD_KEY and not raw_available and legacy_raw_available:
-            key = RAW_METHOD_KEY
-        if key == LEGACY_RAW_METHOD_KEY:
-            continue
         if key not in result:
             result.append(key)
     for key in METHOD_ORDER:

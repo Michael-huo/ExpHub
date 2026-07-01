@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import os
 from datetime import datetime
@@ -18,7 +19,7 @@ from exphub.common.compression_benchmark import (
     safe_float,
 )
 from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic
-from exphub.common.logging import log_info, log_prog, log_warn
+from exphub.common.logging import log_prog, log_warn
 from exphub.eval.evo_eval import run_evo_eval_single_track
 from exphub.eval.slam_run import run_single_slam_track
 
@@ -140,11 +141,9 @@ def _base_row(method_key, method_report, clip):
         "decoded_frames_dir": item.get("decoded_frames_dir"),
         "frame_source": "",
         "trajectory_path": "",
-        "evo_summary_path": "",
+        "ape_summary_path": "",
         "ape_rmse_m": None,
         "norm_ape_pct": None,
-        "rpe_trans_rmse_m": None,
-        "rpe_rot_rmse_deg": None,
     }
 
 
@@ -155,28 +154,26 @@ def _finalize_quality(row, ape_rmse_m, path_m):
     return row
 
 
-def _mainline_row(exp_dir, method_key, method_report, track_key, trajectory_path, main_evo, clip):
+def _mainline_row(exp_dir, method_key, method_report, track_key, trajectory_path, main_eval_summary, clip):
     row = _base_row(method_key, method_report, clip)
     track = str(track_key)
+    vslam = as_dict(as_dict(main_eval_summary).get("vslam"))
+    ape_key = "ori_ape_rmse_m" if track == "ori" else "rec_ape_rmse_m"
     row["status"] = "ok"
     row["frame_source"] = "existing_eval_{}".format(track)
     row["trajectory_path"] = relative_path(exp_dir, trajectory_path)
-    row["evo_summary_path"] = relative_path(exp_dir, Path(exp_dir).resolve() / "eval" / "evo_summary.json")
-    row["rpe_trans_rmse_m"] = main_evo.get("{}_rpe_trans_rmse".format(track))
-    row["rpe_rot_rmse_deg"] = main_evo.get("{}_rpe_rot_rmse_deg".format(track))
-    return _finalize_quality(row, main_evo.get("{}_ape_rmse".format(track)), main_evo.get("gt_path_length_m"))
+    row["ape_summary_path"] = relative_path(exp_dir, Path(exp_dir).resolve() / "eval" / "summary.json")
+    return _finalize_quality(row, vslam.get(ape_key), vslam.get("gt_path_length_m"))
 
 
 def _single_track_row(exp_dir, method_key, method_report, frames_dir, traj_result, evo_result, clip):
     row = _base_row(method_key, method_report, clip)
-    evo_summary = as_dict(as_dict(evo_result).get("summary"))
+    ape_summary = as_dict(as_dict(evo_result).get("summary"))
     row["status"] = "ok"
     row["frame_source"] = relative_path(exp_dir, frames_dir)
     row["trajectory_path"] = as_dict(traj_result).get("trajectory_path") or ""
-    row["evo_summary_path"] = relative_path(exp_dir, as_dict(evo_result).get("summary_path"))
-    row["rpe_trans_rmse_m"] = evo_summary.get("rpe_trans_rmse")
-    row["rpe_rot_rmse_deg"] = evo_summary.get("rpe_rot_rmse_deg")
-    return _finalize_quality(row, evo_summary.get("ape_rmse"), evo_summary.get("gt_path_length_m"))
+    row["ape_summary_path"] = relative_path(exp_dir, as_dict(evo_result).get("summary_path"))
+    return _finalize_quality(row, ape_summary.get("ape_rmse"), ape_summary.get("gt_path_length_m"))
 
 
 def _failure_row(method_key, method_report, message, clip, status="failed"):
@@ -196,7 +193,6 @@ def _slam_config(config, out_dir):
         "decode_calib": str(_get_arg(config, "decode_calib")),
         "decode_timestamps": str(_get_arg(config, "decode_timestamps")),
         "decode_report": str(_get_arg(config, "decode_report")),
-        "decode_merge_report": str(_get_arg(config, "decode_merge_report")),
         "generation_units": str(_get_arg(config, "generation_units")),
         "encode_result": str(_get_arg(config, "encode_result")),
         "seq": "both",
@@ -298,27 +294,6 @@ def _write_method_manifest(exp_dir, method_dir, row, method_report, reused_mainl
     return relative_path(exp_dir, path)
 
 
-def _log_summary(summary):
-    try:
-        methods = as_dict(summary.get("methods"))
-        log_info("[Compression Benchmark: eval] Method Summary:")
-        for method_key in benchmark_method_order(summary):
-            row = as_dict(methods.get(method_key))
-            status = str(row.get("status") or ("missing" if not row else "n/a"))
-            log_info(
-                "  - {}: status={} APE={} norm={} payload={} enc={}".format(
-                    str(row.get("display_name") or DISPLAY_NAMES.get(method_key, method_key)),
-                    status,
-                    row.get("ape_rmse_m") if row.get("ape_rmse_m") is not None else "n/a",
-                    row.get("norm_ape_pct") if row.get("norm_ape_pct") is not None else "n/a",
-                    row.get("payload_mib") if row.get("payload_mib") is not None else "n/a",
-                    row.get("enc_time_sec") if row.get("enc_time_sec") is not None else "N/A",
-                )
-            )
-    except Exception as exc:
-        log_warn("compression benchmark eval summary logging skipped: {}".format(exc))
-
-
 def run_compression_benchmark_eval(config):
     exp_dir = Path(_get_arg(config, "exp_dir")).resolve()
     out_dir = Path(_get_arg(config, "out_dir")).resolve()
@@ -329,7 +304,7 @@ def run_compression_benchmark_eval(config):
     decode_report = read_json_dict(decode_report_path)
     if not decode_report:
         raise RuntimeError("invalid compression benchmark decode report: {}".format(decode_report_path))
-    main_evo = read_json_dict(Path(_get_arg(config, "main_evo_summary")).resolve())
+    main_eval_summary = read_json_dict(Path(_get_arg(config, "main_eval_summary")).resolve())
     frame_count = decode_report.get("frame_count")
     fps = decode_report.get("fps") or _get_arg(config, "fps")
     clip = _format_clip(_get_arg(config, "clip_duration"), frame_count, fps)
@@ -362,8 +337,8 @@ def run_compression_benchmark_eval(config):
 
             if method_key == "raw":
                 traj_path = exp_dir / "eval" / "ori" / "traj_est.tum"
-                if traj_path.is_file() and main_evo:
-                    row = _mainline_row(exp_dir, method_key, method_report, "ori", traj_path, main_evo, clip)
+                if traj_path.is_file() and main_eval_summary:
+                    row = _mainline_row(exp_dir, method_key, method_report, "ori", traj_path, main_eval_summary, clip)
                     rows.append(row)
                     manifest_paths[method_key] = _write_method_manifest(exp_dir, method_dir, row, method_report, reused_mainline=True)
                 else:
@@ -376,8 +351,8 @@ def run_compression_benchmark_eval(config):
 
             if method_key == "vlmem":
                 traj_path = exp_dir / "eval" / "rec" / "traj_est.tum"
-                if traj_path.is_file() and main_evo:
-                    row = _mainline_row(exp_dir, method_key, method_report, "rec", traj_path, main_evo, clip)
+                if traj_path.is_file() and main_eval_summary:
+                    row = _mainline_row(exp_dir, method_key, method_report, "rec", traj_path, main_eval_summary, clip)
                     rows.append(row)
                     manifest_paths[method_key] = _write_method_manifest(exp_dir, method_dir, row, method_report, reused_mainline=True)
                 else:
@@ -418,16 +393,51 @@ def run_compression_benchmark_eval(config):
         "methods": {row["method_key"]: dict(row) for row in rows},
         "rows": rows,
     }
-    summary_path = out_dir / "compression_benchmark_summary.json"
-    csv_path = out_dir / "compression_benchmark_summary.csv"
+    summary_path = out_dir / "summary.json"
+    csv_path = out_dir / "summary.csv"
     write_json_atomic(summary_path, summary, indent=2)
     _write_csv(csv_path, rows)
     log_prog("compression benchmark eval summary generated")
-    log_info("compression benchmark summary: {}".format(relative_path(exp_dir, summary_path)))
-    _log_summary(summary)
     return {
         "summary_path": summary_path,
         "csv_path": csv_path,
         "summary": summary,
         "out_dir": out_dir,
     }
+
+
+def _build_arg_parser():
+    parser = argparse.ArgumentParser(description="ExpHub internal compression benchmark eval helper")
+    parser.add_argument("--run-compression-benchmark-eval", action="store_true")
+    parser.add_argument("--exp_dir", required=True)
+    parser.add_argument("--out_dir", required=True)
+    parser.add_argument("--decode_benchmark_report", required=True)
+    parser.add_argument("--main_eval_summary", required=True)
+    parser.add_argument("--prepare_result", required=True)
+    parser.add_argument("--prepare_frames_dir", required=True)
+    parser.add_argument("--generation_units", required=True)
+    parser.add_argument("--encode_result", required=True)
+    parser.add_argument("--decode_frames_dir", required=True)
+    parser.add_argument("--decode_calib", required=True)
+    parser.add_argument("--decode_timestamps", required=True)
+    parser.add_argument("--decode_report", required=True)
+    parser.add_argument("--gt_traj", required=True)
+    parser.add_argument("--droid_repo", required=True)
+    parser.add_argument("--weights", required=True)
+    parser.add_argument("--fps", type=float, required=True)
+    parser.add_argument("--clip_duration", default="")
+    parser.add_argument("--t_max_diff", type=float, default=0.03)
+    parser.add_argument("--disable_vis", action="store_true")
+    return parser
+
+
+def main(argv=None):
+    parser = _build_arg_parser()
+    args = parser.parse_args(argv)
+    if not args.run_compression_benchmark_eval:
+        raise SystemExit("compression benchmark helper requires --run-compression-benchmark-eval")
+    return run_compression_benchmark_eval(vars(args))
+
+
+if __name__ == "__main__":
+    main()

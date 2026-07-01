@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from exphub.meta import ExperimentSpec
 
@@ -15,7 +14,6 @@ class ExperimentPaths:
     sequence: str
     exp_name: str
     scope: str
-    exp_root_override: Optional[Path] = None
 
     @classmethod
     def from_spec(cls, spec: ExperimentSpec):
@@ -26,13 +24,10 @@ class ExperimentPaths:
             sequence=str(spec.sequence),
             exp_name=str(spec.exp_name),
             scope=str(spec.scope),
-            exp_root_override=Path(spec.exp_root_override).resolve() if spec.exp_root_override is not None else None,
         )
 
     @property
     def exp_root(self) -> Path:
-        if self.exp_root_override is not None:
-            return self.exp_root_override
         if str(self.mode or "").strip().lower() == "train":
             return self.exphub_root / "artifacts" / "train" / self.dataset
         return self.exphub_root / "artifacts" / "infer" / self.dataset / self.sequence
@@ -47,11 +42,15 @@ class ExperimentPaths:
 
     @property
     def prepare_frames_dir(self) -> Path:
-        return self.prepare_dir / "frames"
+        return self.prepare_dir / "raw_frames"
 
     @property
     def prepare_result_path(self) -> Path:
         return self.prepare_dir / "prepare_result.json"
+
+    @property
+    def prepare_gt_traj_path(self) -> Path:
+        return self.prepare_dir / "gt_traj.tum"
 
     @property
     def prepare_sequences_dir(self) -> Path:
@@ -95,10 +94,6 @@ class ExperimentPaths:
         return self.encode_dir / "encode_result.json"
 
     @property
-    def encode_overview_path(self) -> Path:
-        return self.encode_dir / "encode_overview.png"
-
-    @property
     def encode_sequences_dir(self) -> Path:
         return self.encode_dir / "sequences"
 
@@ -107,12 +102,12 @@ class ExperimentPaths:
         return self.encode_dir / "dataset_encode_index.json"
 
     @property
-    def encode_compression_benchmark_dir(self) -> Path:
-        return self.encode_dir / "encode_compression_benchmark"
+    def encode_compression_dir(self) -> Path:
+        return self.encode_dir / "compression_benchmark"
 
     @property
-    def encode_compression_benchmark_report_path(self) -> Path:
-        return self.encode_compression_benchmark_dir / "compression_benchmark_encode_report.json"
+    def encode_compression_report_path(self) -> Path:
+        return self.encode_compression_dir / "report.json"
 
     def encode_sequence_dir(self, sequence: str) -> Path:
         return self.encode_sequences_dir / str(sequence)
@@ -132,8 +127,8 @@ class ExperimentPaths:
     def encode_sequence_result_path(self, sequence: str) -> Path:
         return self.encode_sequence_dir(sequence) / "encode_result.json"
 
-    def encode_sequence_overview_path(self, sequence: str) -> Path:
-        return self.encode_sequence_dir(sequence) / "encode_overview.png"
+    def encode_sequence_motion_overview_path(self, sequence: str) -> Path:
+        return self.encode_sequence_dir(sequence) / "motion_overview.png"
 
     @property
     def trainset_dir(self) -> Path:
@@ -188,8 +183,20 @@ class ExperimentPaths:
         return self.exp_dir / "run_meta.json"
 
     @property
+    def effective_config_path(self) -> Path:
+        return self.exp_dir / "effective_config.yaml"
+
+    @property
+    def command_path(self) -> Path:
+        return self.exp_dir / "command.txt"
+
+    @property
+    def git_state_path(self) -> Path:
+        return self.exp_dir / "git_state.json"
+
+    @property
     def decode_runs_dir(self) -> Path:
-        return self.decode_dir / "runs"
+        return self.decode_dir / ".comfyui_tmp"
 
     @property
     def decode_report_path(self) -> Path:
@@ -197,11 +204,7 @@ class ExperimentPaths:
 
     @property
     def decode_frames_dir(self) -> Path:
-        return self.decode_dir / "frames"
-
-    @property
-    def decode_merge_report_path(self) -> Path:
-        return self.decode_dir / "decode_merge_report.json"
+        return self.decode_dir / "reconstructed_frames"
 
     @property
     def decode_calib_path(self) -> Path:
@@ -216,28 +219,32 @@ class ExperimentPaths:
         return self.decode_dir / "preview.mp4"
 
     @property
-    def decode_image_quality_report_path(self) -> Path:
-        return self.decode_dir / "image_quality_report.json"
+    def decode_image_quality_dir(self) -> Path:
+        return self.decode_dir / "image_quality"
 
     @property
-    def decode_image_quality_summary_path(self) -> Path:
-        return self.decode_dir / "image_quality_summary.txt"
+    def decode_image_quality_report_path(self) -> Path:
+        return self.decode_image_quality_dir / "report.json"
 
     @property
     def decode_image_quality_details_path(self) -> Path:
-        return self.decode_dir / "image_quality_details.csv"
+        return self.decode_image_quality_dir / "details.csv"
 
     @property
-    def decode_compression_benchmark_dir(self) -> Path:
-        return self.decode_dir / "decode_compression_benchmark"
+    def decode_image_quality_canonical_json_path(self) -> Path:
+        return self.decode_image_quality_dir / "summary.json"
 
     @property
-    def decode_compression_benchmark_report_path(self) -> Path:
-        return self.decode_compression_benchmark_dir / "compression_benchmark_decode_report.json"
+    def decode_image_quality_canonical_csv_path(self) -> Path:
+        return self.decode_image_quality_dir / "summary.csv"
 
     @property
-    def eval_evo_summary_path(self) -> Path:
-        return self.eval_dir / "evo_summary.json"
+    def decode_compression_dir(self) -> Path:
+        return self.decode_dir / "compression_benchmark"
+
+    @property
+    def decode_compression_report_path(self) -> Path:
+        return self.decode_compression_dir / "report.json"
 
     @property
     def eval_evo_ori_ape_path(self) -> Path:
@@ -248,16 +255,12 @@ class ExperimentPaths:
         return self.eval_dir / "rec" / "evo_ape.zip"
 
     @property
-    def eval_compression_report_path(self) -> Path:
-        return self.eval_dir / "eval_compression_report.json"
+    def eval_canonical_summary_path(self) -> Path:
+        return self.eval_dir / "summary.json"
 
     @property
-    def eval_summary_path(self) -> Path:
-        return self.eval_dir / "eval_summary.txt"
-
-    @property
-    def eval_details_path(self) -> Path:
-        return self.eval_dir / "eval_details.csv"
+    def eval_canonical_summary_csv_path(self) -> Path:
+        return self.eval_dir / "summary.csv"
 
     @property
     def eval_trajectory_overlay_path(self) -> Path:
@@ -284,13 +287,41 @@ class ExperimentPaths:
         return self.eval_dir / "rec" / "run_meta.json"
 
     @property
-    def eval_compression_benchmark_dir(self) -> Path:
-        return self.eval_dir / "eval_compression_benchmark"
+    def eval_compression_dir(self) -> Path:
+        return self.eval_dir / "compression_benchmark"
 
     @property
-    def eval_compression_benchmark_summary_path(self) -> Path:
-        return self.eval_compression_benchmark_dir / "compression_benchmark_summary.json"
+    def eval_compression_summary_path(self) -> Path:
+        return self.eval_compression_dir / "summary.json"
 
     @property
-    def eval_compression_benchmark_summary_csv_path(self) -> Path:
-        return self.eval_compression_benchmark_dir / "compression_benchmark_summary.csv"
+    def eval_compression_summary_csv_path(self) -> Path:
+        return self.eval_compression_dir / "summary.csv"
+
+    @property
+    def encode_motion_overview_path(self) -> Path:
+        return self.encode_dir / "motion_overview.png"
+
+    @property
+    def encode_motion_benchmark_dir(self) -> Path:
+        return self.encode_dir / "motion_benchmark"
+
+    @property
+    def encode_motion_benchmark_report_path(self) -> Path:
+        return self.encode_motion_benchmark_dir / "report.json"
+
+    @property
+    def encode_motion_benchmark_pairs_csv_path(self) -> Path:
+        return self.encode_motion_benchmark_dir / "pairs.csv"
+
+    @property
+    def encode_motion_benchmark_overview_path(self) -> Path:
+        return self.encode_motion_benchmark_dir / "overview.png"
+
+    @property
+    def encode_motion_benchmark_canonical_json_path(self) -> Path:
+        return self.encode_motion_benchmark_dir / "summary.json"
+
+    @property
+    def encode_motion_benchmark_canonical_csv_path(self) -> Path:
+        return self.encode_motion_benchmark_dir / "summary.csv"

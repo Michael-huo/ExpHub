@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-import argparse
 import math
 import time
 from pathlib import Path
 
 import numpy as np
 
-from exphub.common.io import ensure_dir, ensure_file, list_frames_sorted, read_json_dict, write_json_atomic
+from exphub.common.io import (
+    ensure_dir,
+    list_frames_sorted,
+    replace_nonempty_file,
+    unique_sibling_temp_path,
+    write_json_atomic,
+)
 from exphub.common.logging import log_info
 
 
@@ -1354,8 +1359,15 @@ def _write_motion_overview(out_path, frames, grays, pair_states, motion_states, 
     if out_path is None:
         return ""
     fig_path = Path(out_path).resolve().parent / "motion_overview.png"
-    if _plot_motion_overview(fig_path, frames, grays, pair_states, motion_states, num_frames):
+    fig_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = unique_sibling_temp_path(fig_path)
+    if _plot_motion_overview(temp_path, frames, grays, pair_states, motion_states, num_frames):
+        replace_nonempty_file(temp_path, fig_path, "motion overview")
         return fig_path.name
+    try:
+        temp_path.unlink()
+    except Exception:
+        pass
     return ""
 
 
@@ -1555,24 +1567,3 @@ def build_motion_segments(prepare_result, frames_dir, out_path=None):
         if motion_overview_figure:
             log_info("motion overview figure: {}".format(str(Path(out_path).resolve().parent / motion_overview_figure)))
     return payload
-
-
-def _build_arg_parser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--run-mainline", action="store_true")
-    parser.add_argument("--prepare_result", required=True)
-    parser.add_argument("--frames_dir", required=True)
-    parser.add_argument("--out_path", required=True)
-    return parser
-
-
-def main(argv=None):
-    args = _build_arg_parser().parse_args(argv)
-    if not args.run_mainline:
-        raise SystemExit("--run-mainline is required")
-    prepare_result = read_json_dict(ensure_file(args.prepare_result, "prepare result"))
-    build_motion_segments(prepare_result, args.frames_dir, args.out_path)
-
-
-if __name__ == "__main__":
-    main()

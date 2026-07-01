@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import shutil
@@ -15,14 +14,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from exphub.common.io import ensure_file, read_json_dict, write_json_atomic
-from exphub.common.logging import log_info, log_prog, log_warn
+from exphub.common.io import ensure_file, write_json_atomic
+from exphub.common.logging import log_prog, log_warn
 
 
 T_MAX_DIFF = 0.03
 STAT_KEYS = ("rmse", "mean", "median", "std", "min", "max", "sse")
-RPE_DELTA_SECONDS = 1.0
-RPE_DELTA_UNIT = "f"
 
 
 def _get_arg(config, name, default=None):
@@ -83,96 +80,6 @@ def _as_float(value):
         return float(value)
     except Exception:
         return None
-
-
-def _nested(obj, path):
-    cur = obj
-    for key in list(path or []):
-        if not isinstance(cur, dict):
-            return None
-        cur = cur.get(key)
-    return cur
-
-
-def _first_float(obj, paths):
-    for path in list(paths or []):
-        value = _nested(obj, path)
-        parsed = _as_float(value)
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _resolve_rpe_delta(config, exp_dir, warnings):
-    fps_candidates = []
-    config_fps = _as_float(_get_arg(config, "fps"))
-    if config_fps is not None:
-        fps_candidates.append((config_fps, "config.fps"))
-
-    prepare_path = _get_arg(config, "prepare_result")
-    if prepare_path:
-        prepare = read_json_dict(prepare_path)
-        prepare_fps = _first_float(
-            prepare,
-            [
-                ["target_fps"],
-                ["fps"],
-                ["legal_grid", "fps"],
-                ["prepare", "legal_grid", "fps"],
-            ],
-        )
-        if prepare_fps is not None:
-            fps_candidates.append((prepare_fps, "prepare_result"))
-
-    decode_path = _get_arg(config, "decode_report")
-    if decode_path:
-        decode = read_json_dict(decode_path)
-        decode_fps = _first_float(
-            decode,
-            [
-                ["fps"],
-                ["target_fps"],
-                ["decode_fps"],
-                ["backend_result", "fps"],
-                ["backend_result", "target_fps"],
-            ],
-        )
-        if decode_fps is not None:
-            fps_candidates.append((decode_fps, "decode_report"))
-
-    run_meta = read_json_dict(Path(exp_dir).resolve() / "run_meta.json")
-    run_meta_fps = _first_float(
-        run_meta,
-        [
-            ["fps"],
-            ["params", "fps"],
-            ["prepare", "legal_grid", "fps"],
-        ],
-    )
-    if run_meta_fps is not None:
-        fps_candidates.append((run_meta_fps, "run_meta"))
-
-    fps = None
-    source = None
-    for candidate, candidate_source in fps_candidates:
-        if candidate is not None and float(candidate) > 0:
-            fps = float(candidate)
-            source = candidate_source
-            break
-
-    if fps is None:
-        fps = 24.0
-        source = "fallback_24"
-        warnings.append("RPE fps unavailable; using fallback fps=24 for frame-unit delta")
-
-    delta_frames = max(1, int(round(float(fps) * RPE_DELTA_SECONDS)))
-    return {
-        "fps": float(fps),
-        "source": source,
-        "frames": int(delta_frames),
-        "unit": RPE_DELTA_UNIT,
-        "seconds_approx": float(delta_frames) / float(fps),
-    }
 
 
 def _extract_stats(zip_path, comparison, warnings):
@@ -311,10 +218,6 @@ def _resolve_evo_ape():
     return _resolve_evo_tool("evo_ape", "EXPHUB_EVO_APE", "evo.main_ape")
 
 
-def _resolve_evo_rpe():
-    return _resolve_evo_tool("evo_rpe", "EXPHUB_EVO_RPE", "evo.main_rpe")
-
-
 def _evo_executable(evo_cmd):
     if not evo_cmd:
         return None
@@ -345,56 +248,6 @@ def _run_evo_ape(evo_cmd, name, gt_traj, est_traj, result_zip, out_dir, t_max_di
                 code=completed.returncode,
                 stderr=_stderr_summary(completed.stderr),
                 out_dir=Path(out_dir).resolve(),
-            )
-        )
-    return cmd
-
-
-def _run_evo_rpe(
-    evo_cmd,
-    name,
-    relation_label,
-    pose_relation,
-    gt_traj,
-    est_traj,
-    result_zip,
-    out_dir,
-    t_max_diff,
-    rpe_delta_frames,
-):
-    cmd = list(evo_cmd) + [
-        "tum",
-        str(gt_traj),
-        str(est_traj),
-        "-a",
-        "-s",
-        "--t_max_diff",
-        str(t_max_diff),
-        "--delta",
-        str(int(rpe_delta_frames)),
-        "--delta_unit",
-        RPE_DELTA_UNIT,
-        "-r",
-        str(pose_relation),
-        "--save_results",
-        str(result_zip),
-    ]
-    log_prog("evo_rpe {} {} vs GT".format(_display_track_label(name), str(relation_label)))
-    completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
-    if completed.returncode != 0:
-        _write_failure_log(
-            out_dir,
-            "{}_rpe_{}".format(name, relation_label),
-            cmd,
-            completed,
-            filename="evo_rpe_{}_{}_failure.log".format(name, relation_label),
-        )
-        raise RuntimeError(
-            "evo_rpe failed for {name} {relation}: return code {code}; stderr: {stderr}".format(
-                name=_display_comparison_name(name),
-                relation=relation_label,
-                code=completed.returncode,
-                stderr=_stderr_summary(completed.stderr),
             )
         )
     return cmd
@@ -494,77 +347,6 @@ def _compute_gt_path_length(gt_path, ori_path, rec_path, t_max_diff, warnings):
         return None
 
 
-def _rpe_eval(evo_cmd, name, gt_traj, est_traj, out_dir, exp_dir, t_max_diff, rpe_delta, warnings):
-    results = {}
-    for relation_label, pose_relation in [("trans", "trans_part"), ("rot", "angle_deg")]:
-        result_zip = Path(out_dir).resolve() / str(name) / "evo_rpe_{}.zip".format(relation_label)
-        try:
-            cmd = _run_evo_rpe(
-                evo_cmd,
-                name,
-                relation_label,
-                pose_relation,
-                gt_traj,
-                est_traj,
-                result_zip,
-                out_dir,
-                t_max_diff,
-                int(rpe_delta["frames"]),
-            )
-            stats, pose_pairs = _extract_stats(
-                result_zip,
-                "{} rpe {}".format(_display_comparison_name(name), relation_label),
-                warnings,
-            )
-            results[relation_label] = {
-                "status": "success",
-                "command": cmd,
-                "parameters": {
-                    "format": "tum",
-                    "align": True,
-                    "correct_scale": True,
-                    "t_max_diff": float(t_max_diff),
-                    "delta": int(rpe_delta["frames"]),
-                    "delta_unit": str(rpe_delta["unit"]),
-                    "delta_seconds_approx": float(rpe_delta["seconds_approx"]),
-                    "delta_fps_source": str(rpe_delta["source"]),
-                    "pose_relation": pose_relation,
-                },
-                "stats": stats,
-                "pose_pairs": pose_pairs,
-                "result_zip": _relative_path(exp_dir, result_zip),
-                "error": None,
-            }
-        except Exception as exc:
-            message = "evo_rpe {} {} failed; RPE {} metrics unavailable".format(
-                _display_track_label(name),
-                relation_label,
-                relation_label,
-            )
-            warnings.append(message)
-            log_warn(message)
-            results[relation_label] = {
-                "status": "failed",
-                "command": None,
-                "parameters": {
-                    "format": "tum",
-                    "align": True,
-                    "correct_scale": True,
-                    "t_max_diff": float(t_max_diff),
-                    "delta": int(rpe_delta["frames"]),
-                    "delta_unit": str(rpe_delta["unit"]),
-                    "delta_seconds_approx": float(rpe_delta["seconds_approx"]),
-                    "delta_fps_source": str(rpe_delta["source"]),
-                    "pose_relation": pose_relation,
-                },
-                "stats": {},
-                "pose_pairs": None,
-                "result_zip": _relative_path(exp_dir, result_zip),
-                "error": str(exc),
-            }
-    return results
-
-
 def _reliability(summary):
     ape_ok = summary.get("ori_ape_rmse") is not None and summary.get("rec_ape_rmse") is not None
     if not ape_ok:
@@ -573,16 +355,6 @@ def _reliability(summary):
         value = summary.get(key)
         if value is None or int(value) < 2:
             return "WARN"
-    rpe = summary.get("rpe") if isinstance(summary.get("rpe"), dict) else {}
-    for name in ("ori", "rec"):
-        item = rpe.get(name) if isinstance(rpe.get(name), dict) else {}
-        for relation_label in ("trans", "rot"):
-            relation = item.get(relation_label) if isinstance(item.get(relation_label), dict) else {}
-            if relation.get("status") != "success":
-                return "WARN"
-            pairs = relation.get("pose_pairs")
-            if pairs is None or int(pairs) < 1:
-                return "WARN"
     if str(summary.get("plot_status") or "skipped").lower() != "success":
         return "WARN"
     if list(summary.get("warnings") or []):
@@ -623,14 +395,6 @@ def run_evo_eval(config):
 
     ape_cmd = _resolve_evo_ape()
     warnings = []
-    rpe_delta = _resolve_rpe_delta(config, exp_dir, warnings)
-    try:
-        rpe_cmd = _resolve_evo_rpe()
-    except Exception as exc:
-        rpe_cmd = None
-        message = "evo_rpe unavailable: {}".format(exc)
-        warnings.append(message)
-        log_warn(message)
 
     ori_zip = out_dir / "ori" / "evo_ape.zip"
     rec_zip = out_dir / "rec" / "evo_ape.zip"
@@ -645,12 +409,6 @@ def run_evo_eval(config):
     rec_rmse = rec_stats.get("rmse")
     delta = _safe_delta(ori_rmse, rec_rmse)
 
-    rpe_ori = _rpe_eval(rpe_cmd, "ori", gt_traj, ori_traj, out_dir, exp_dir, t_max_diff, rpe_delta, warnings)
-    rpe_rec = _rpe_eval(rpe_cmd, "rec", gt_traj, rec_traj, out_dir, exp_dir, t_max_diff, rpe_delta, warnings)
-    ori_rpe_trans_rmse = _as_float(rpe_ori.get("trans", {}).get("stats", {}).get("rmse"))
-    rec_rpe_trans_rmse = _as_float(rpe_rec.get("trans", {}).get("stats", {}).get("rmse"))
-    ori_rpe_rot_rmse = _as_float(rpe_ori.get("rot", {}).get("stats", {}).get("rmse"))
-    rec_rpe_rot_rmse = _as_float(rpe_rec.get("rot", {}).get("stats", {}).get("rmse"))
     gt_path_length_m = _compute_gt_path_length(gt_traj, ori_traj, rec_traj, t_max_diff, warnings)
 
     summary = {
@@ -669,27 +427,9 @@ def run_evo_eval(config):
             "t_max_diff": t_max_diff,
             "pose_relation": "trans_part",
         },
-        "rpe_parameters": {
-            "format": "tum",
-            "align": True,
-            "correct_scale": True,
-            "t_max_diff": t_max_diff,
-            "delta": int(rpe_delta["frames"]),
-            "delta_unit": str(rpe_delta["unit"]),
-            "delta_seconds_approx": float(rpe_delta["seconds_approx"]),
-            "delta_fps": float(rpe_delta["fps"]),
-            "delta_fps_source": str(rpe_delta["source"]),
-            "translation_pose_relation": "trans_part",
-            "rotation_pose_relation": "angle_deg",
-        },
-        "rpe_delta_frames": int(rpe_delta["frames"]),
-        "rpe_delta_unit": str(rpe_delta["unit"]),
-        "rpe_delta_seconds_approx": float(rpe_delta["seconds_approx"]),
-        "rpe_delta_fps_source": str(rpe_delta["source"]),
         "evo_command": list(ape_cmd),
         "evo_executable": _evo_executable(ape_cmd),
         "evo_ape_executable": _evo_executable(ape_cmd),
-        "evo_rpe_executable": _evo_executable(rpe_cmd),
         "eval_python_executable": sys.executable,
         "eval_python_prefix": sys.prefix,
         "alignment": "sim3",
@@ -726,22 +466,6 @@ def run_evo_eval(config):
             },
             "delta_rec_minus_ori": delta,
         },
-        "rpe": {
-            "ori": rpe_ori,
-            "rec": rpe_rec,
-            "delta_trans": _safe_delta(ori_rpe_trans_rmse, rec_rpe_trans_rmse),
-            "delta_rot_deg": _safe_delta(ori_rpe_rot_rmse, rec_rpe_rot_rmse),
-        },
-        "ori_rpe_trans_rmse": ori_rpe_trans_rmse,
-        "rec_rpe_trans_rmse": rec_rpe_trans_rmse,
-        "rpe_delta_trans": _safe_delta(ori_rpe_trans_rmse, rec_rpe_trans_rmse),
-        "ori_rpe_rot_rmse_deg": ori_rpe_rot_rmse,
-        "rec_rpe_rot_rmse_deg": rec_rpe_rot_rmse,
-        "rpe_delta_rot_deg": _safe_delta(ori_rpe_rot_rmse, rec_rpe_rot_rmse),
-        "ori_rpe_trans_pose_pairs": rpe_ori.get("trans", {}).get("pose_pairs"),
-        "rec_rpe_trans_pose_pairs": rpe_rec.get("trans", {}).get("pose_pairs"),
-        "ori_rpe_rot_pose_pairs": rpe_ori.get("rot", {}).get("pose_pairs"),
-        "rec_rpe_rot_pose_pairs": rpe_rec.get("rot", {}).get("pose_pairs"),
         "gt_path_length_m": gt_path_length_m,
         "plot_status": "skipped",
         "trajectory_overlay_path": None,
@@ -757,7 +481,7 @@ def run_evo_eval(config):
         "warnings": warnings,
     }
     if skip_plots:
-        summary["warnings"].append("trajectory overlay skipped by --skip_plots/--no_viz")
+        summary["warnings"].append("trajectory overlay skipped by skip_plots")
     else:
         try:
             from exphub.eval.trajectory_plot import generate_trajectory_overlay
@@ -783,11 +507,7 @@ def run_evo_eval(config):
             log_warn(message)
 
     summary["eval_reliability"] = _reliability(summary)
-    summary_path = out_dir / "evo_summary.json"
-    write_json_atomic(summary_path, summary, indent=2)
-    log_info("evo summary: {}".format(summary_path))
-    return {"summary_path": summary_path, "summary": summary, "out_dir": out_dir}
-
+    return {"summary": summary, "out_dir": out_dir}
 
 def run_evo_eval_single_track(config):
     out_dir = Path(_get_arg(config, "out_dir")).resolve()
@@ -801,84 +521,11 @@ def run_evo_eval_single_track(config):
 
     warnings = []
     ape_cmd = _resolve_evo_ape()
-    rpe_delta = _resolve_rpe_delta(config, exp_dir, warnings)
-    try:
-        rpe_cmd = _resolve_evo_rpe()
-    except Exception as exc:
-        rpe_cmd = None
-        message = "evo_rpe unavailable: {}".format(exc)
-        warnings.append(message)
-        log_warn(message)
 
     ape_zip = out_dir / "evo_ape.zip"
     ape_command = _run_evo_ape(ape_cmd, method_key, gt_traj, est_traj, ape_zip, out_dir, t_max_diff)
     ape_stats, ape_pose_pairs = _extract_stats(ape_zip, method_key, warnings)
 
-    rpe_results = {}
-    for relation_label, pose_relation in [("trans", "trans_part"), ("rot", "angle_deg")]:
-        result_zip = out_dir / "evo_rpe_{}.zip".format(relation_label)
-        if rpe_cmd is None:
-            rpe_results[relation_label] = {
-                "status": "skipped",
-                "command": None,
-                "stats": {},
-                "pose_pairs": None,
-                "result_zip": _relative_path(exp_dir, result_zip),
-                "error": "evo_rpe unavailable",
-            }
-            continue
-        try:
-            rpe_command = _run_evo_rpe(
-                rpe_cmd,
-                method_key,
-                relation_label,
-                pose_relation,
-                gt_traj,
-                est_traj,
-                result_zip,
-                out_dir,
-                t_max_diff,
-                int(rpe_delta["frames"]),
-            )
-            rpe_stats, rpe_pose_pairs = _extract_stats(
-                result_zip,
-                "{} rpe {}".format(method_key, relation_label),
-                warnings,
-            )
-            rpe_results[relation_label] = {
-                "status": "success",
-                "command": list(rpe_command),
-                "parameters": {
-                    "format": "tum",
-                    "align": True,
-                    "correct_scale": True,
-                    "t_max_diff": float(t_max_diff),
-                    "delta": int(rpe_delta["frames"]),
-                    "delta_unit": str(rpe_delta["unit"]),
-                    "delta_seconds_approx": float(rpe_delta["seconds_approx"]),
-                    "delta_fps_source": str(rpe_delta["source"]),
-                    "pose_relation": pose_relation,
-                },
-                "stats": rpe_stats,
-                "pose_pairs": rpe_pose_pairs,
-                "result_zip": _relative_path(exp_dir, result_zip),
-                "error": None,
-            }
-        except Exception as exc:
-            message = "evo_rpe {} {} failed; metric unavailable".format(method_key, relation_label)
-            warnings.append(message)
-            log_warn(message)
-            rpe_results[relation_label] = {
-                "status": "failed",
-                "command": None,
-                "stats": {},
-                "pose_pairs": None,
-                "result_zip": _relative_path(exp_dir, result_zip),
-                "error": str(exc),
-            }
-
-    trans_rmse = _as_float(rpe_results.get("trans", {}).get("stats", {}).get("rmse"))
-    rot_rmse = _as_float(rpe_results.get("rot", {}).get("stats", {}).get("rmse"))
     gt_path_length_m = _compute_gt_path_length(gt_traj, est_traj, est_traj, t_max_diff, warnings)
     summary = {
         "version": 1,
@@ -899,43 +546,10 @@ def run_evo_eval_single_track(config):
         "ape_pose_pairs": ape_pose_pairs,
         "ape_result_zip": _relative_path(exp_dir, ape_zip),
         "ape_command": list(ape_command),
-        "rpe": rpe_results,
-        "rpe_trans_rmse": trans_rmse,
-        "rpe_rot_rmse_deg": rot_rmse,
-        "rpe_trans_pose_pairs": rpe_results.get("trans", {}).get("pose_pairs"),
-        "rpe_rot_pose_pairs": rpe_results.get("rot", {}).get("pose_pairs"),
-        "rpe_delta_frames": int(rpe_delta["frames"]),
-        "rpe_delta_unit": str(rpe_delta["unit"]),
-        "rpe_delta_seconds_approx": float(rpe_delta["seconds_approx"]),
         "gt_path_length_m": gt_path_length_m,
         "status": "success",
         "warnings": warnings,
     }
-    summary_path = out_dir / "evo_summary.json"
+    summary_path = out_dir / "ape_summary.json"
     write_json_atomic(summary_path, summary, indent=2)
     return {"summary_path": summary_path, "summary": summary, "out_dir": out_dir}
-
-
-def _build_arg_parser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", required=True)
-    parser.add_argument("--exp_dir", required=False)
-    parser.add_argument("--gt_traj", required=True)
-    parser.add_argument("--ori_traj", required=True)
-    parser.add_argument("--rec_traj", required=True)
-    parser.add_argument("--t_max_diff", type=float, default=T_MAX_DIFF)
-    parser.add_argument("--fps", type=float, default=None)
-    parser.add_argument("--prepare_result", default="")
-    parser.add_argument("--generation_units", default="")
-    parser.add_argument("--decode_report", default="")
-    parser.add_argument("--skip_plots", action="store_true")
-    return parser
-
-
-def main(argv=None):
-    args = _build_arg_parser().parse_args(argv)
-    run_evo_eval(vars(args))
-
-
-if __name__ == "__main__":
-    main()

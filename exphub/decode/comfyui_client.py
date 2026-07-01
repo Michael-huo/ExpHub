@@ -38,7 +38,6 @@ python comfyui_client.py \
 
 from __future__ import annotations
 
-import argparse
 import copy
 import json
 import mimetypes
@@ -292,20 +291,8 @@ def _resolve_workflow_profile(comfyui: dict[str, Any], decode_profile: str | Non
     profiles = comfyui.get("profiles")
     profile_override = str(decode_profile or "").strip()
 
-    if profiles is None:
-        workflow_value = comfyui.get("workflow_json")
-        if workflow_value is None or str(workflow_value).strip() == "":
-            raise RuntimeError("Missing services.comfyui.workflow_json in config/platform.yaml")
-        workflow_json = Path(str(workflow_value)).expanduser().resolve()
-        return WorkflowProfile(
-            name=profile_override or "legacy",
-            workflow_json=workflow_json,
-            nodes=DEFAULT_WORKFLOW_NODES,
-            lora_enabled=False,
-        )
-
     if not isinstance(profiles, dict) or not profiles:
-        raise RuntimeError("services.comfyui.profiles must be a non-empty mapping when configured")
+        raise RuntimeError("services.comfyui.profiles must be a non-empty mapping")
 
     active_profile = profile_override or str(comfyui.get("active_profile") or "base").strip() or "base"
     if active_profile not in profiles:
@@ -586,14 +573,7 @@ class ComfyUIWanInpClient:
     ) -> None:
         self.comfy_url = comfy_url.rstrip("/")
         if workflow_profile is None:
-            if workflow_json is None:
-                raise ValueError("ComfyUIWanInpClient requires workflow_json or workflow_profile")
-            workflow_profile = WorkflowProfile(
-                name="legacy",
-                workflow_json=Path(workflow_json).expanduser().resolve(),
-                nodes=workflow_nodes or DEFAULT_WORKFLOW_NODES,
-                lora_enabled=False,
-            )
+            raise ValueError("ComfyUIWanInpClient requires workflow_profile")
         self.workflow_profile = workflow_profile
         self.nodes = workflow_profile.nodes
         self.workflow_json = workflow_profile.workflow_json
@@ -1023,108 +1003,6 @@ class ComfyUIWanInpClient:
             )
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Run Wan2.2 5B InP ComfyUI workflow for one ExpHub segment.")
-
-    p.add_argument("--platform-config", default=None, help="Path to ExpHub platform.yaml with services.comfyui config.")
-    p.add_argument("--workflow-json", default=None, help="Path to exported ComfyUI API-format workflow JSON.")
-    p.add_argument("--decode-profile", default="", help="ComfyUI workflow profile override.")
-    p.add_argument("--start-frame", required=True, help="Path to start frame image.")
-    p.add_argument("--end-frame", required=True, help="Path to end frame image.")
-    p.add_argument("--positive-prompt", required=True, help="Positive prompt.")
-    p.add_argument("--negative-prompt", default="", help="Negative prompt.")
-    p.add_argument("--segment-id", required=True, help="Unique segment id, e.g. seg_0001.")
-
-    p.add_argument("--width", type=int, required=True)
-    p.add_argument("--height", type=int, required=True)
-    p.add_argument("--length", type=int, required=True)
-    p.add_argument("--fps", type=int, default=24)
-    p.add_argument("--seed", type=int, default=-1)
-    p.add_argument("--steps", type=int, default=20)
-    p.add_argument("--cfg", type=float, default=6.0)
-    p.add_argument("--sampler-name", default="uni_pc")
-    p.add_argument("--scheduler", default="simple")
-    p.add_argument("--denoise", type=float, default=1.0)
-
-    p.add_argument("--comfy-url", default=None)
-    p.add_argument("--comfy-output-root", default=None, help="ComfyUI output directory, e.g. /home/hx/ComfyUI/output.")
-    p.add_argument("--exp-output-dir", required=True, help="Where standardized decode outputs will be copied.")
-    p.add_argument("--timeout-sec", type=int, default=None)
-    p.add_argument("--poll-interval-sec", type=float, default=None)
-
-    return p.parse_args()
-
-
-def _load_comfyui_platform_config(platform_config: str | Path | None) -> tuple[dict[str, Any], Path | None]:
-    if not platform_config:
-        return {}, None
-    path = Path(platform_config).expanduser().resolve()
-    if not path.is_file():
-        raise FileNotFoundError(f"platform config not found: {path}")
-    with path.open("r", encoding="utf-8") as handle:
-        loaded = yaml.safe_load(handle)
-    if not isinstance(loaded, dict):
-        raise ValueError(f"platform config must be a YAML object: {path}")
-    services = loaded.get("services") or {}
-    if not isinstance(services, dict):
-        raise ValueError(f"platform config services must be a YAML object: {path}")
-    comfyui = services.get("comfyui") or {}
-    if not isinstance(comfyui, dict):
-        raise ValueError(f"platform config services.comfyui must be a YAML object: {path}")
-    return comfyui, path
-
-
-def _first_config_value(cli_value: Any, cfg: dict[str, Any], key: str, label: str, default: Any = None) -> Any:
-    value = cli_value
-    if value is None:
-        value = cfg.get(key)
-    if value is None:
-        value = default
-    if value is None or str(value).strip() == "":
-        raise ValueError(f"missing {label}; pass CLI argument or set services.comfyui.{key} in platform.yaml")
-    return value
-
-
-def resolve_runtime_config(args: argparse.Namespace) -> dict[str, Any]:
-    comfyui_cfg, platform_path = _load_comfyui_platform_config(args.platform_config)
-    resolved_cfg = {}
-    default_instance = None
-    if comfyui_cfg:
-        resolved_cfg = resolve_comfyui_platform_config(
-            {"services": {"comfyui": comfyui_cfg}},
-            decode_profile=args.decode_profile,
-        )
-        instances = list(resolved_cfg.get("instances") or [])
-        default_instance = instances[0] if instances else None
-    return {
-        "workflow_json": Path(
-            args.workflow_json
-            or resolved_cfg.get("workflow_json")
-            or _first_config_value(None, comfyui_cfg, "workflow_json", "--workflow-json")
-        ).expanduser().resolve(),
-        "workflow_profile": resolved_cfg.get("workflow_profile"),
-        "workflow_nodes": resolved_cfg.get("workflow_nodes"),
-        "comfy_url": str(
-            args.comfy_url
-            or comfyui_cfg.get("base_url")
-            or (default_instance.base_url if default_instance else None)
-            or _first_config_value(None, comfyui_cfg, "base_url", "--comfy-url")
-        ).strip(),
-        "comfy_output_root": Path(
-            args.comfy_output_root
-            or comfyui_cfg.get("output_root")
-            or (default_instance.output_root if default_instance else None)
-            or _first_config_value(None, comfyui_cfg, "output_root", "--comfy-output-root")
-        ).expanduser().resolve(),
-        "timeout_sec": int(_first_config_value(args.timeout_sec, comfyui_cfg, "timeout_sec", "--timeout-sec", 1800)),
-        "poll_interval_sec": float(
-            _first_config_value(args.poll_interval_sec, comfyui_cfg, "poll_interval_sec", "--poll-interval-sec", 2.0)
-        ),
-        "platform_config": platform_path,
-        "instance_name": default_instance.name if default_instance else "single",
-    }
-
-
 def run_comfyui_decode(
     req: DecodeRequest,
     platform_cfg: dict[str, Any] | None = None,
@@ -1153,7 +1031,7 @@ def run_comfyui_decode(
             poll_interval_sec if poll_interval_sec is not None else resolved["poll_interval_sec"]
         )
         platform_config = platform_config or resolved["platform_config"]
-    if comfy_url is None or workflow_json is None or comfy_output_root is None:
+    if comfy_url is None or workflow_profile is None or comfy_output_root is None:
         raise ValueError("run_comfyui_decode requires platform_cfg or explicit ComfyUI runtime config")
     client = ComfyUIWanInpClient(
         comfy_url=comfy_url,
@@ -1334,11 +1212,14 @@ def run_comfyui_decode_tasks(
     tasks_payload: dict[str, Any],
     runtime: Any,
     platform_cfg: dict[str, Any] | None = None,
+    *,
+    decode_profile: str = "",
+    seed_base: int = 12345,
 ) -> dict[str, Any]:
     cfg = resolve_comfyui_platform_config(
         platform_cfg,
         exphub_root=runtime.exphub_root,
-        decode_profile=getattr(runtime.args, "decode_profile", ""),
+        decode_profile=decode_profile,
     )
     tasks = list(tasks_payload.get("tasks") or [])
     execution_segments = _execution_segments(tasks_payload, COMFYUI_BACKEND)
@@ -1356,7 +1237,7 @@ def run_comfyui_decode_tasks(
             "unsupported services.comfyui.schedule for parallel decode: {}".format(cfg.get("schedule"))
         )
 
-    seed_base = int(getattr(runtime.args, "seed_base", -1))
+    seed_base = int(seed_base)
     resolved_decode_seed = _resolve_shared_decode_seed(seed_base)
     seed_policy = SHARED_DECODE_SEED_POLICY
 
@@ -1528,58 +1409,3 @@ def run_comfyui_decode_tasks(
     write_json_atomic(runtime.paths.decode_report_path, report, indent=2)
     log_info("decode generate report: {}".format(runtime.paths.decode_report_path))
     return report
-
-
-def main() -> int:
-    args = parse_args()
-    runtime_cfg = resolve_runtime_config(args)
-    resolved_seed = _resolve_shared_decode_seed(int(args.seed))
-    log_info(
-        "decode seed policy: seed_base={} resolved_seed={} unit_policy=shared".format(
-            int(args.seed),
-            int(resolved_seed),
-        )
-    )
-
-    req = DecodeRequest(
-        segment_id=args.segment_id,
-        start_frame=args.start_frame,
-        end_frame=args.end_frame,
-        positive_prompt=args.positive_prompt,
-        negative_prompt=args.negative_prompt,
-        width=args.width,
-        height=args.height,
-        length=args.length,
-        fps=args.fps,
-        seed=resolved_seed,
-        steps=args.steps,
-        cfg=args.cfg,
-        sampler_name=args.sampler_name,
-        scheduler=args.scheduler,
-        denoise=args.denoise,
-    )
-
-    client = ComfyUIWanInpClient(
-        comfy_url=runtime_cfg["comfy_url"],
-        workflow_json=runtime_cfg["workflow_json"],
-        comfy_output_root=runtime_cfg["comfy_output_root"],
-        exp_output_dir=Path(args.exp_output_dir),
-        timeout_sec=runtime_cfg["timeout_sec"],
-        poll_interval_sec=runtime_cfg["poll_interval_sec"],
-        platform_config=runtime_cfg["platform_config"],
-        instance_name=runtime_cfg["instance_name"],
-        workflow_profile=runtime_cfg.get("workflow_profile"),
-        workflow_nodes=runtime_cfg.get("workflow_nodes"),
-    )
-
-    result = client.run(req)
-    print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
-    return 0
-
-
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as exc:
-        print(f"[ERROR] {exc}", file=sys.stderr)
-        raise SystemExit(1)

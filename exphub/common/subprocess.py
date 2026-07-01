@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 import sys
 from collections import deque
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 from exphub.config import get_phase_python_config
 
@@ -54,18 +52,10 @@ class RunError(RuntimeError):
         self.tail_lines = list(tail_lines) if tail_lines else []
 
 
-@dataclass
-class RunnerConfig:
-    auto_conda: bool
-    conda_base: Optional[Path]
-    ros_setup: Optional[Path]
-
-
 class StepRunner:
-    def __init__(self, logs_dir, log_level, runner_cfg, pass_prefixes=("[INFO]", "[WARN]", "[ERR]", "[PROG]", "[STEP]"), fail_tail_lines=30):
+    def __init__(self, logs_dir, log_level, pass_prefixes=("[INFO]", "[WARN]", "[ERR]", "[PROG]", "[STEP]"), fail_tail_lines=30):
         self.logs_dir = logs_dir
         self.log_level = log_level
-        self.runner_cfg = runner_cfg
         self.pass_prefixes = tuple(pass_prefixes)
         self.fail_tail_lines = int(fail_tail_lines) if int(fail_tail_lines) > 0 else 30
         self._log_opened: Dict[str, bool] = {}
@@ -95,9 +85,6 @@ class StepRunner:
             stream_mode=stream_mode,
             **self._cmd_log_kwargs(log_name)
         )
-
-    def run_ros(self, cmd, log_name, cwd, check=True):
-        return ros_exec(cmd, cfg=self.runner_cfg, cwd=cwd, check=check, **self._cmd_log_kwargs(log_name))
 
 
 def _looks_like_python_cmd(cmd) -> bool:
@@ -133,18 +120,6 @@ def build_env_python_cmd(cmd, phase_name):
     else:
         new_cmd.insert(0, python_bin)
     return new_cmd
-
-
-def detect_conda_base():
-    if not _which("conda"):
-        return None
-    try:
-        output = subprocess.check_output(["conda", "info", "--base"], text=True).strip()
-        if output:
-            return Path(output).resolve()
-    except Exception:
-        return None
-    return None
 
 
 def _phase_name_from_log_path(log_path) -> str:
@@ -370,41 +345,10 @@ def run_cmd(
     return return_code
 
 
-def run_in_bash_login(cmd_text, cwd=None, env=None, check=True, **kwargs):
-    argv = ["bash", "-lc", str(cmd_text)]
-    return run_cmd(argv, cwd=cwd, env=env, check=check, **kwargs)
-
-
-def conda_exec(cmd, env_name, cfg, cwd=None, check=True, **kwargs):
-    conda_base = cfg.conda_base if cfg is not None else None
-    if not conda_base:
-        raise RuntimeError("conda base not available")
-    conda_hook = Path(conda_base).resolve() / "etc" / "profile.d" / "conda.sh"
-    cmd_text = "source {} && conda activate {} && {}".format(
-        shlex.quote(str(conda_hook)),
-        shlex.quote(str(env_name)),
-        " ".join(shlex.quote(str(item)) for item in cmd),
-    )
-    return run_in_bash_login(cmd_text, cwd=cwd, check=check, **kwargs)
-
-
-def ros_exec(cmd, cfg, cwd=None, check=True, **kwargs):
-    ros_setup = cfg.ros_setup if cfg is not None else None
-    command_text = " ".join(shlex.quote(str(item)) for item in cmd)
-    if ros_setup:
-        command_text = "source {} && {}".format(shlex.quote(str(ros_setup)), command_text)
-    return run_in_bash_login(command_text, cwd=cwd, check=check, **kwargs)
-
-
 __all__ = [
     "RunError",
-    "RunnerConfig",
     "StepRunner",
     "build_env_python_cmd",
-    "conda_exec",
-    "detect_conda_base",
     "resolve_phase_python",
-    "ros_exec",
     "run_cmd",
-    "run_in_bash_login",
 ]

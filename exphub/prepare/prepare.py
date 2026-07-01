@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -37,6 +36,7 @@ class PrepareResult:
     transform_meta: Dict[str, object]
     legal_grid: Dict[str, object]
     frame_index_map: Dict[str, List[Union[int, float]]]
+    ground_truth_trajectory: str
 
     def to_dict(self):
         return asdict(self)
@@ -83,6 +83,37 @@ def _reset_frame_dir(frame_dir):
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _remove_stale_infer_frames_alias(run_dir, frame_dir):
+    run_root = Path(run_dir).resolve()
+    target = Path(frame_dir).resolve()
+    expected = (run_root / "raw_frames").resolve()
+    if target != expected:
+        return
+    stale = (run_root / "frames").resolve()
+    if stale == target or stale.parent != run_root or stale.name != "frames":
+        return
+    if stale.is_symlink() or stale.is_file():
+        stale.unlink()
+    elif stale.is_dir():
+        shutil.rmtree(str(stale), ignore_errors=True)
+
+
+def _copy_ground_truth_trajectory(cfg, run_dir: Path) -> Path:
+    source_gt = Path(cfg.bag_path).with_suffix(".tum").resolve()
+    if not source_gt.is_file():
+        raise RuntimeError(
+            "ground truth trajectory not found for prepare: dataset={} sequence={} path={}".format(
+                cfg.dataset,
+                cfg.sequence,
+                source_gt,
+            )
+        )
+    prepared_gt = (Path(run_dir).resolve() / "gt_traj.tum").resolve()
+    prepared_gt.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(source_gt), str(prepared_gt))
+    return prepared_gt
+
+
 def save_prepare_result(result, output_path=None):
     payload = result.to_dict() if hasattr(result, "to_dict") else dict(result)
     path = Path(output_path) if output_path is not None else Path(payload["frame_dir"]).resolve().parent / "prepare_result.json"
@@ -101,6 +132,7 @@ def _run_single_prepare(
     run_id=None,
     output_root=None,
     output_dir=None,
+    frame_dir=None,
 ):
     cfg = load_dataset_config(config_path, dataset_name, sequence_name)
     fps = int(target_fps)
@@ -112,7 +144,12 @@ def _run_single_prepare(
     else:
         output_root_path = Path(output_root).resolve() if output_root else _default_output_root(config_path)
         run_dir = _prepare_run_dir(output_root_path, cfg.dataset, cfg.sequence, _make_run_id(mode, run_id))
-    frame_dir = (run_dir / "frames").resolve()
+    if frame_dir is not None:
+        frame_dir = Path(frame_dir).resolve()
+    elif str(mode).strip().lower() == "infer":
+        frame_dir = (run_dir / "raw_frames").resolve()
+    else:
+        frame_dir = (run_dir / "frames").resolve()
     result_path = (run_dir / "prepare_result.json").resolve()
 
     print(
@@ -133,8 +170,13 @@ def _run_single_prepare(
         multiple=32,
     )
 
+    if str(mode).strip().lower() == "infer":
+        _remove_stale_infer_frames_alias(run_dir, frame_dir)
     _reset_frame_dir(frame_dir)
     maybe_write_frames(geometry.frames, frame_dir)
+    prepared_gt = None
+    if str(mode).strip().lower() == "infer":
+        prepared_gt = _copy_ground_truth_trajectory(cfg, run_dir)
 
     legal_grid = build_legal_grid(
         num_frames=len(geometry.frames),
@@ -168,6 +210,7 @@ def _run_single_prepare(
             "prepared_to_abs_time_sec": [float(item) for item in sampled.prepared_to_abs_time_sec],
             "prepared_to_ros_time_sec": [float(item) for item in sampled.prepared_to_ros_time_sec],
         },
+        ground_truth_trajectory=prepared_gt.name if prepared_gt is not None else "",
     )
     save_prepare_result(result, result_path)
     print(
@@ -192,6 +235,7 @@ def infer_prepare(
     run_id=None,
     output_root=None,
     output_dir=None,
+    frame_dir=None,
 ):
     return _run_single_prepare(
         mode="infer",
@@ -204,6 +248,7 @@ def infer_prepare(
         run_id=run_id,
         output_root=output_root,
         output_dir=output_dir,
+        frame_dir=frame_dir,
     )
 
 
@@ -283,6 +328,7 @@ def train_prepare(
     run_id=None,
     output_root=None,
     output_dir=None,
+    frame_dir=None,
 ):
     if sequence_name:
         return _run_single_prepare(
@@ -296,6 +342,7 @@ def train_prepare(
             run_id=run_id,
             output_root=output_root,
             output_dir=output_dir,
+            frame_dir=frame_dir,
         )
 
     results = []
@@ -330,6 +377,7 @@ def run_prepare(
     run_id=None,
     output_root=None,
     output_dir=None,
+    frame_dir=None,
 ):
     mode_value = str(mode or "").strip().lower()
     if mode_value == "infer":
@@ -345,6 +393,7 @@ def run_prepare(
             run_id=run_id,
             output_root=output_root,
             output_dir=output_dir,
+            frame_dir=frame_dir,
         )
     if mode_value == "train":
         return train_prepare(
@@ -355,12 +404,13 @@ def run_prepare(
             run_id=run_id,
             output_root=output_root,
             output_dir=output_dir,
+            frame_dir=frame_dir,
         )
     raise RuntimeError("unsupported prepare mode: {}".format(mode))
 
 
 def run(runtime):
-    mode = str(runtime.args.mode).strip().lower()
+    mode = str(runtime.execution_plan.mode).strip().lower()
     if mode == "infer":
         runtime.ensure_clean_exp_dir()
         runtime.paths.prepare_dir.mkdir(parents=True, exist_ok=True)
@@ -373,9 +423,9 @@ def run(runtime):
             dur_sec=float(runtime.spec.dur),
             run_id=runtime.spec.exp_name,
             output_dir=runtime.paths.prepare_dir,
+            frame_dir=runtime.paths.prepare_frames_dir,
         )
         runtime._prepare_result_cache = result.to_dict()
-        runtime.write_meta_snapshot()
         return runtime.paths.prepare_dir
 
     if mode != "train":
@@ -384,8 +434,6 @@ def run(runtime):
     runtime.ensure_clean_exp_dir()
     runtime.paths.prepare_dir.mkdir(parents=True, exist_ok=True)
     runtime.paths.prepare_sequences_dir.mkdir(parents=True, exist_ok=True)
-    runtime.write_meta_snapshot()
-
     if runtime.spec.sequence:
         sequence_names = [runtime.spec.sequence]
     else:
@@ -408,6 +456,7 @@ def run(runtime):
                 dur_sec=None,
                 run_id=runtime.spec.exp_name,
                 output_dir=out_dir,
+                frame_dir=runtime.paths.prepare_sequence_frames_dir(sequence_name),
             )
             entries.append(
                 _train_prepare_ok_entry(
@@ -423,7 +472,6 @@ def run(runtime):
             if first_error is None:
                 first_error = exc
             _write_train_prepare_index(runtime, entries)
-            runtime.write_meta_snapshot()
             raise
 
     index_payload = _write_train_prepare_index(runtime, entries)
@@ -434,44 +482,4 @@ def run(runtime):
                 first_error,
             )
         )
-    runtime.write_meta_snapshot()
     return runtime.paths.prepare_dir
-
-
-def _build_parser():
-    parser = argparse.ArgumentParser(description="ExpHub prepare foundation entrypoint")
-    parser.add_argument("--mode", choices=["infer", "train"], required=True)
-    parser.add_argument("--config", required=True, help="Path to datasets.json")
-    parser.add_argument("--dataset", required=True)
-    parser.add_argument("--sequence", default=None)
-    parser.add_argument("--fps", type=int, required=True)
-    parser.add_argument("--start-sec", type=float, default=None)
-    parser.add_argument("--dur-sec", type=float, default=None)
-    parser.add_argument("--run-id", default=None)
-    parser.add_argument("--output-root", default=None)
-    return parser
-
-
-def main(argv=None):
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-    if args.mode == "infer" and not args.sequence:
-        parser.error("--sequence is required for --mode infer")
-    result = run_prepare(
-        mode=args.mode,
-        config_path=args.config,
-        dataset_name=args.dataset,
-        sequence_name=args.sequence,
-        target_fps=args.fps,
-        start_sec=args.start_sec,
-        dur_sec=args.dur_sec,
-        run_id=args.run_id,
-        output_root=args.output_root,
-    )
-    if isinstance(result, list):
-        print("[INFO] prepare batch results={}".format(len(result)))
-    return result
-
-
-if __name__ == "__main__":
-    main()

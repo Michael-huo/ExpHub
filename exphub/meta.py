@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Tuple
 
 
 StageName = str
-KeepLevel = str
 
 STAGE_ORDER: Tuple[StageName, ...] = ("prepare", "encode", "decode", "eval")
+DEFAULT_KF_GAP_INPUT = 0
 
 
 def sanitize_token(text: str, max_len: int = 64) -> str:
@@ -70,8 +69,7 @@ class ExperimentSpec:
     start: str
     dur: str
     fps: float
-    kf_gap_input: int
-    exp_root_override: Optional[Path] = None
+    kf_gap_input: int = DEFAULT_KF_GAP_INPUT
 
     @staticmethod
     def build_exp_name(tag, start, dur, fps) -> str:
@@ -147,33 +145,14 @@ class ExperimentSpec:
         return format_intlike(self.fps)
 
 
-@dataclass
-class ExpPaths:
-    exphub: Path
-    exp_root: Path
-    exp_dir: Path
-    encode_dir: Path
-
-
-def write_exp_meta(path: Path, meta: Dict[str, Any]) -> None:
-    path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def read_exp_meta(path: Path) -> Dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 __all__ = [
-    "ExpPaths",
     "ExperimentSpec",
-    "KeepLevel",
+    "DEFAULT_KF_GAP_INPUT",
     "STAGE_ORDER",
     "StageName",
     "canon_num_str",
     "dot_to_p",
     "format_intlike",
-    "read_exp_meta",
     "resolve_kf_gap",
     "sanitize_token",
-    "write_exp_meta",
 ]

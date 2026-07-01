@@ -9,6 +9,10 @@ from exphub.common.io import list_frames_sorted, remove_path, write_json_atomic,
 from exphub.meta import sanitize_token
 
 
+TRAIN_CLIP_NUM_FRAMES = 73
+TRAIN_CLIP_STRIDE = 36
+
+
 def _as_dict(value):
     return value if isinstance(value, dict) else {}
 
@@ -109,14 +113,8 @@ def _quote_concat_path(path):
 class TrainExportSession:
     def __init__(self, runtime):
         self.runtime = runtime
-        self.target_num_frames = _positive_int(
-            getattr(runtime.args, "train_clip_num_frames", 73),
-            "train_clip_num_frames",
-        )
-        self.window_stride = _positive_int(
-            getattr(runtime.args, "train_clip_stride", 36),
-            "train_clip_stride",
-        )
+        self.target_num_frames = _positive_int(TRAIN_CLIP_NUM_FRAMES, "train_clip_num_frames")
+        self.window_stride = _positive_int(TRAIN_CLIP_STRIDE, "train_clip_stride")
         self.records = []
         self.clip_index = 0
         self.skipped_short_unit_count = 0

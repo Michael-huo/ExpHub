@@ -117,7 +117,7 @@ def build_generation_tasks(runtime):
         prompts_path=paths.encode_prompts_path,
         encode_result_path=paths.encode_result_path,
         decode_runs_dir=paths.decode_runs_dir,
-        seed_base=runtime.args.seed_base,
+        seed_base=runtime.config.seed,
     )
 
 
