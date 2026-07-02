@@ -13,6 +13,7 @@ from exphub.common.compression_benchmark import (
 )
 from exphub.eval import compression_benchmark
 from exphub.eval.compression_benchmark import run_compression_benchmark_eval
+from output_capture import silent_stdio
 
 
 PNG_HEADER = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x02\x00\x00\x00\x02"
@@ -143,7 +144,8 @@ class CompressionBenchmarkContractTests(unittest.TestCase):
                     "exphub.eval.compression_benchmark.run_evo_eval_single_track",
                     side_effect=evo_side_effect,
                 ) as evo:
-                    result = run_compression_benchmark_eval(_config(exp_dir))
+                    with silent_stdio():
+                        result = run_compression_benchmark_eval(_config(exp_dir))
 
             methods = result["summary"]["methods"]
             self.assertEqual(methods["raw"]["ape_rmse_m"], 0.111)
@@ -175,7 +177,8 @@ class CompressionBenchmarkContractTests(unittest.TestCase):
 
             with mock.patch("exphub.eval.compression_benchmark.run_single_slam_track", side_effect=slam_side_effect):
                 with mock.patch("exphub.eval.compression_benchmark.run_evo_eval_single_track", side_effect=evo_side_effect):
-                    result = run_compression_benchmark_eval(_config(exp_dir))
+                    with silent_stdio():
+                        result = run_compression_benchmark_eval(_config(exp_dir))
 
             h265 = result["summary"]["methods"]["h265"]
             self.assertEqual(h265["status"], "failed")

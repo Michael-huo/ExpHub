@@ -16,6 +16,7 @@ from exphub.meta import ExperimentSpec
 from exphub.prepare import prepare
 from exphub.provenance import update_run_status, write_run_start
 from exphub.runner import RunConfig
+from output_capture import silent_stdio
 
 
 class _Paths:
@@ -237,17 +238,18 @@ class ArtifactContractTests(unittest.TestCase):
             raw_frames = prepare_dir / "raw_frames"
 
             with self._patch_prepare_dependencies(root):
-                result = prepare._run_single_prepare(
-                    mode="infer",
-                    config_path=root / "config" / "datasets.json",
-                    dataset_name="dummy",
-                    sequence_name="seq",
-                    target_fps=24,
-                    start_sec=0,
-                    dur_sec=1,
-                    output_dir=prepare_dir,
-                    frame_dir=raw_frames,
-                )
+                with silent_stdio():
+                    result = prepare._run_single_prepare(
+                        mode="infer",
+                        config_path=root / "config" / "datasets.json",
+                        dataset_name="dummy",
+                        sequence_name="seq",
+                        target_fps=24,
+                        start_sec=0,
+                        dur_sec=1,
+                        output_dir=prepare_dir,
+                        frame_dir=raw_frames,
+                    )
 
             self.assertEqual(Path(result.frame_dir), raw_frames.resolve())
             self.assertTrue((raw_frames / "000000.png").is_file())
@@ -286,7 +288,8 @@ class ArtifactContractTests(unittest.TestCase):
                     self.paths.exp_dir.mkdir(parents=True, exist_ok=True)
 
             with self._patch_prepare_dependencies(root):
-                out_dir = prepare.run(Runtime())
+                with silent_stdio():
+                    out_dir = prepare.run(Runtime())
 
             self.assertEqual(out_dir, prepare_dir)
             self.assertTrue((raw_frames / "000000.png").is_file())
@@ -301,15 +304,16 @@ class ArtifactContractTests(unittest.TestCase):
             frames = sequence_dir / "frames"
 
             with self._patch_prepare_dependencies(root):
-                result = prepare._run_single_prepare(
-                    mode="train",
-                    config_path=root / "config" / "datasets.json",
-                    dataset_name="dummy",
-                    sequence_name="seq",
-                    target_fps=24,
-                    output_dir=sequence_dir,
-                    frame_dir=frames,
-                )
+                with silent_stdio():
+                    result = prepare._run_single_prepare(
+                        mode="train",
+                        config_path=root / "config" / "datasets.json",
+                        dataset_name="dummy",
+                        sequence_name="seq",
+                        target_fps=24,
+                        output_dir=sequence_dir,
+                        frame_dir=frames,
+                    )
 
             self.assertEqual(Path(result.frame_dir), frames.resolve())
             self.assertTrue((frames / "000000.png").is_file())
@@ -369,7 +373,8 @@ class ArtifactContractTests(unittest.TestCase):
                 "evo_result": {"ori_ape_rmse": 0.1, "rec_ape_rmse": 0.2},
                 "eval_runtime_sec": 4.0,
             }
-            build_eval_summary(dict(config, complete_main_chain=False, stage_times={"eval": 4.0}))
+            with silent_stdio():
+                build_eval_summary(dict(config, complete_main_chain=False, stage_times={"eval": 4.0}))
             partial = json.loads((exp_dir / "eval" / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(partial["runtime"]["eval_time_s"], 4.0)
             self.assertIsNone(partial["runtime"]["main_pipeline_time_s"])
@@ -382,15 +387,16 @@ class ArtifactContractTests(unittest.TestCase):
             self.assertFalse((exp_dir / "eval" / ("eval_" + "details.csv")).exists())
             self.assertFalse((exp_dir / "eval" / ("eval_" + "compression_report.json")).exists())
 
-            build_eval_summary(
-                dict(
-                    config,
-                    complete_main_chain=True,
-                    stage_times={"prepare": 1.0, "encode": 2.0, "decode": 3.0},
-                    eval_runtime_sec=4.0,
-                    main_pipeline_wall_time_s=9.5,
+            with silent_stdio():
+                build_eval_summary(
+                    dict(
+                        config,
+                        complete_main_chain=True,
+                        stage_times={"prepare": 1.0, "encode": 2.0, "decode": 3.0},
+                        eval_runtime_sec=4.0,
+                        main_pipeline_wall_time_s=9.5,
+                    )
                 )
-            )
             full = json.loads((exp_dir / "eval" / "summary.json").read_text(encoding="utf-8"))
             self.assertEqual(full["runtime"]["prepare_time_s"], 1.0)
             self.assertEqual(full["runtime"]["main_pipeline_time_s"], 9.5)

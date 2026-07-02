@@ -10,6 +10,7 @@ from exphub.eval import eval as eval_pipeline
 from exphub.execution_plan import build_execution_plan
 from exphub import runner as runner_pipeline
 from exphub.runner import RunConfig, build_runtime, run_runtime
+from output_capture import silent_stdio
 
 
 class _EvalPaths:
@@ -82,7 +83,8 @@ def _infer_config() -> RunConfig:
 class RuntimeBoundaryTests(unittest.TestCase):
     def test_runtime_has_no_argparse_namespace_or_args_bag(self):
         plan = build_execution_plan(mode="infer", requested_step="encode", seed=12345)
-        runtime = build_runtime(_infer_config(), plan)
+        with silent_stdio():
+            runtime = build_runtime(_infer_config(), plan)
 
         self.assertFalse(hasattr(runtime, "args"))
         self.assertNotIsInstance(runtime.config, argparse.Namespace)
@@ -91,20 +93,21 @@ class RuntimeBoundaryTests(unittest.TestCase):
 
     def test_runtime_does_not_carry_legacy_fields(self):
         plan = build_execution_plan(mode="train", requested_step=None, seed=12345)
-        runtime = build_runtime(
-            RunConfig(
-                dataset="dummy",
-                sequence="",
-                tag="tag",
-                fps=1,
-                start="",
-                dur="",
-                seed=12345,
-                decode_profile="",
-                log_level="quiet",
-            ),
-            plan,
-        )
+        with silent_stdio():
+            runtime = build_runtime(
+                RunConfig(
+                    dataset="dummy",
+                    sequence="",
+                    tag="tag",
+                    fps=1,
+                    start="",
+                    dur="",
+                    seed=12345,
+                    decode_profile="",
+                    log_level="quiet",
+                ),
+                plan,
+            )
 
         for field in (
             "keep_level",
@@ -123,26 +126,29 @@ class RuntimeBoundaryTests(unittest.TestCase):
             runtime = _EvalRuntime(Path(tmp))
             _touch_required_eval_inputs(runtime.paths)
             with mock.patch("exphub.eval.eval.get_platform_config") as get_platform_config:
-                with self.assertRaisesRegex(
-                    RuntimeError,
-                    "missing prepare/gt_traj.tum; rerun prepare or manually materialize the known GT artifact",
-                ):
-                    eval_pipeline.run(runtime)
+                with silent_stdio():
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "missing prepare/gt_traj.tum; rerun prepare or manually materialize the known GT artifact",
+                    ):
+                        eval_pipeline.run(runtime)
             get_platform_config.assert_not_called()
 
     def test_partial_stage_run_dispatches_only_requested_stage(self):
         plan = build_execution_plan(mode="infer", requested_step="decode", seed=12345)
-        runtime = build_runtime(_infer_config(), plan)
+        with silent_stdio():
+            runtime = build_runtime(_infer_config(), plan)
         fake_decode = mock.Mock()
         fake_decode.run.return_value = runtime.paths.decode_dir
         services = dict(runner_pipeline._SERVICE_BY_STAGE)
         services["decode"] = fake_decode
 
-        with mock.patch("exphub.runner._validate_scripts_for_stages") as validate_scripts:
-            with mock.patch("exphub.runner._SERVICE_BY_STAGE", services):
-                with mock.patch("exphub.runner.write_run_start", return_value="start"):
-                    with mock.patch("exphub.runner.update_run_status"):
-                        run_runtime(runtime, plan)
+        with silent_stdio():
+            with mock.patch("exphub.runner._validate_scripts_for_stages") as validate_scripts:
+                with mock.patch("exphub.runner._SERVICE_BY_STAGE", services):
+                    with mock.patch("exphub.runner.write_run_start", return_value="start"):
+                        with mock.patch("exphub.runner.update_run_status"):
+                            run_runtime(runtime, plan)
 
         validate_scripts.assert_called_once_with(runtime, ("decode",))
         fake_decode.run.assert_called_once_with(runtime)
@@ -195,7 +201,8 @@ class RuntimeBoundaryTests(unittest.TestCase):
                         with mock.patch("exphub.lora.lora._resolve_launcher", return_value=["python"]):
                             with mock.patch("exphub.lora.lora.run_cmd", return_value=0):
                                 with mock.patch("exphub.lora.lora.subprocess.run") as subprocess_run:
-                                    lora.run(runtime)
+                                    with silent_stdio():
+                                        lora.run(runtime)
             subprocess_run.assert_not_called()
 
 

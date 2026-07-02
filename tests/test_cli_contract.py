@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from exphub import cli
 from exphub.execution_plan import build_execution_plan
+from output_capture import captured_stdio
 
 
 BASE_TRAIN = ["--mode", "train", "--dataset", "dummy", "--tag", "dummy", "--fps", "1"]
@@ -57,8 +56,10 @@ class CliContractTests(unittest.TestCase):
 
         for option in ("--start", "--dur"):
             with self.subTest(option=option):
-                with self.assertRaises(SystemExit):
-                    self.parse_cli(BASE_TRAIN + [option, "1"])
+                with captured_stdio() as (_stdout, stderr):
+                    with self.assertRaises(SystemExit):
+                        self.parse_cli(BASE_TRAIN + [option, "1"])
+                self.assertIn("train mode does not accept {}".format(option), stderr.getvalue())
 
     def test_run_config_contains_only_retained_cli_values(self):
         run_config, _plan = self.parse_cli(BASE_INFER)
@@ -86,22 +87,30 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(plan.experiments, ("motion-benchmark", "image-quality"))
 
     def test_experiments_without_values_is_parser_error(self):
-        with self.assertRaises(SystemExit):
-            self.parse_cli(BASE_INFER + ["--experiments"])
+        with captured_stdio() as (_stdout, stderr):
+            with self.assertRaises(SystemExit):
+                self.parse_cli(BASE_INFER + ["--experiments"])
+        self.assertIn("argument --experiments: expected at least one argument", stderr.getvalue())
 
     def test_duplicate_experiment_is_plan_error(self):
-        with self.assertRaises(SystemExit):
-            self.parse_cli(BASE_INFER + ["--experiments", "motion-benchmark", "motion-benchmark"])
+        with captured_stdio() as (_stdout, stderr):
+            with self.assertRaises(SystemExit):
+                self.parse_cli(BASE_INFER + ["--experiments", "motion-benchmark", "motion-benchmark"])
+        self.assertIn("duplicate experiment: motion-benchmark", stderr.getvalue())
 
     def test_negative_seed_is_plan_error(self):
-        with self.assertRaises(SystemExit):
-            self.parse_cli(BASE_INFER + ["--seed", "-1"])
+        with captured_stdio() as (_stdout, stderr):
+            with self.assertRaises(SystemExit):
+                self.parse_cli(BASE_INFER + ["--seed", "-1"])
+        self.assertIn("--seed must be a non-negative integer", stderr.getvalue())
 
     def test_invalid_plan_does_not_build_runtime_or_load_platform(self):
         with mock.patch("exphub.cli.build_runtime") as build_runtime:
             with mock.patch("exphub.config.get_platform_config") as get_platform_config:
-                with self.assertRaises(SystemExit):
-                    cli.main(BASE_TRAIN + ["--step", "decode"])
+                with captured_stdio() as (_stdout, stderr):
+                    with self.assertRaises(SystemExit):
+                        cli.main(BASE_TRAIN + ["--step", "decode"])
+                self.assertIn("train + decode is invalid", stderr.getvalue())
         build_runtime.assert_not_called()
         get_platform_config.assert_not_called()
 
@@ -125,8 +134,7 @@ class CliContractTests(unittest.TestCase):
             with mock.patch("exphub.cli.build_runtime", return_value=runtime):
                 with mock.patch("exphub.cli.run_runtime", return_value=result):
                     with mock.patch("exphub.cli._read_json_dict", side_effect=AssertionError("stale eval read")):
-                        output = io.StringIO()
-                        with redirect_stdout(output):
+                        with captured_stdio() as (output, _stderr):
                             cli.main(BASE_INFER + ["--step", "decode"])
 
             text = output.getvalue()
@@ -238,8 +246,7 @@ class CliContractTests(unittest.TestCase):
                 seed=12345,
             )
 
-            output = io.StringIO()
-            with redirect_stdout(output):
+            with captured_stdio() as (output, _stderr):
                 cli._print_completion_report(result, plan)
 
             text = output.getvalue()
@@ -275,8 +282,7 @@ class CliContractTests(unittest.TestCase):
             seed=12345,
         )
 
-        output = io.StringIO()
-        with redirect_stdout(output):
+        with captured_stdio() as (output, _stderr):
             cli._print_runtime_times(result, plan)
 
         text = output.getvalue()
@@ -335,10 +341,9 @@ class CliContractTests(unittest.TestCase):
                 )
                 return result
 
-            output = io.StringIO()
             with mock.patch("exphub.cli.build_runtime", return_value=runtime):
                 with mock.patch("exphub.cli.run_runtime", side_effect=write_final_summaries):
-                    with redirect_stdout(output):
+                    with captured_stdio() as (output, _stderr):
                         cli.main(BASE_INFER + ["--experiments", "motion-benchmark", "compression-benchmark", "image-quality"])
 
             text = output.getvalue()
@@ -373,14 +378,18 @@ class CliContractTests(unittest.TestCase):
         ]
         for flag in removed_flags:
             with self.subTest(flag=flag):
-                with self.assertRaises(SystemExit):
-                    cli._build_arg_parser().parse_args(BASE_TRAIN + [flag])
+                with captured_stdio() as (_stdout, stderr):
+                    with self.assertRaises(SystemExit):
+                        cli._build_arg_parser().parse_args(BASE_TRAIN + [flag])
+                self.assertIn("unrecognized arguments: {}".format(flag), stderr.getvalue())
 
     def test_long_option_abbreviations_are_rejected(self):
         for flag in ("--decode-prof", "--log-lev", "--exper"):
             with self.subTest(flag=flag):
-                with self.assertRaises(SystemExit):
-                    cli._build_arg_parser().parse_args(BASE_INFER + [flag, "x"])
+                with captured_stdio() as (_stdout, stderr):
+                    with self.assertRaises(SystemExit):
+                        cli._build_arg_parser().parse_args(BASE_INFER + [flag, "x"])
+                self.assertIn("unrecognized arguments: {} x".format(flag), stderr.getvalue())
 
 
 if __name__ == "__main__":
