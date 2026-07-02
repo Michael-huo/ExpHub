@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import io
 import tempfile
 import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 from exphub import experiments
 from exphub.encode import encode as encode_pipeline
 from exphub.execution_plan import build_execution_plan
+from output_capture import captured_stdio, silent_stdio
 
 
 class _Paths:
@@ -140,7 +139,7 @@ class ExperimentDispatchTests(unittest.TestCase):
                             return {}
 
                         runtime.step_runner.run_env_python.side_effect = eval_side_effect
-                        with redirect_stdout(io.StringIO()):
+                        with silent_stdio():
                             experiments.run_requested_experiments(runtime, plan)
 
             enc.assert_called_once_with(runtime)
@@ -174,7 +173,7 @@ class ExperimentDispatchTests(unittest.TestCase):
                 return {}
 
             with mock.patch("exphub.experiments.run_decode_image_quality_subprocess", side_effect=image_quality_side_effect) as image_quality:
-                with redirect_stdout(io.StringIO()):
+                with silent_stdio():
                     experiments.run_requested_experiments(runtime, plan)
 
             image_quality.assert_called_once_with(
@@ -216,7 +215,6 @@ class ExperimentDispatchTests(unittest.TestCase):
                 runtime_arg.paths.decode_image_quality_canonical_json_path.write_text("{}", encoding="utf-8")
                 runtime_arg.paths.decode_image_quality_canonical_csv_path.write_text("metric\n", encoding="utf-8")
 
-            output = io.StringIO()
             with mock.patch("exphub.experiments.get_platform_config", return_value={"repos": {}, "models": {}}):
                 with mock.patch("exphub.experiments.encode_pipeline.run_motion_benchmark_extra", side_effect=motion_side_effect):
                     with mock.patch("exphub.experiments.encode_pipeline.run_compression_benchmark_encode_extra"):
@@ -226,7 +224,7 @@ class ExperimentDispatchTests(unittest.TestCase):
                                 "exphub.experiments.run_decode_image_quality_subprocess",
                                 side_effect=image_quality_side_effect,
                             ):
-                                with redirect_stdout(output):
+                                with captured_stdio() as (output, _stderr):
                                     experiments.run_requested_experiments(runtime, plan)
 
             text = output.getvalue()
@@ -287,7 +285,8 @@ class ExperimentDispatchTests(unittest.TestCase):
                         with mock.patch("exphub.encode.encode.write_encode_outputs", side_effect=write_outputs_side_effect):
                             with mock.patch("exphub.encode.encode.run_motion_benchmark") as motion_benchmark:
                                 with mock.patch("exphub.encode.encode._run_infer_payload_hooks"):
-                                    encode_pipeline._run_single_encode(runtime, paths)
+                                    with silent_stdio():
+                                        encode_pipeline._run_single_encode(runtime, paths)
             motion_overview_exists = (Path(tmp) / "encode" / "motion_overview.png").is_file()
 
         build_motion.assert_called_once()
